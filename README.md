@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/typer-CLI-green" alt="Typer">
-  <img src="https://img.shields.io/badge/agents-Claude_Code_%7C_Codex_%7C_Any_CLI-blueviolet" alt="Agents">
+  <img src="https://img.shields.io/badge/agents-OpenClaw_%7C_Claude_Code_%7C_Codex_%7C_Any_CLI-blueviolet" alt="Agents">
   <img src="https://img.shields.io/badge/transport-File_%7C_ZeroMQ_P2P-orange" alt="Transport">
   <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/Feishu-Group-E9DBFC?style=flat&logo=feishu&logoColor=white" alt="Feishu"></a>
   <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat&logo=wechat&logoColor=white" alt="WeChat"></a>
@@ -347,7 +347,78 @@ pip install -e .
 pip install -e ".[p2p]"
 ```
 
-Requires **Python 3.10+**, **tmux**, and a CLI coding agent (e.g. `claude`, `codex`). Python dependencies: `typer`, `pydantic`, `rich`.
+Requires **Python 3.10+**, **tmux**, and a CLI coding agent (e.g. `openclaw`, `claude`, `codex`). Python dependencies: `typer`, `pydantic`, `rich`.
+
+---
+
+## 🦞 OpenClaw Integration
+
+This fork is fully adapted for [OpenClaw](https://openclaw.ai) as the **default agent backend**. OpenClaw agents can use ClawTeam through natural language via the included skill.
+
+### Setup for OpenClaw
+
+```bash
+# 1. Install ClawTeam
+pip install clawteam
+# Or from this repo:
+git clone https://github.com/win4r/ClawTeam-OpenClaw.git && cd ClawTeam-OpenClaw && pip install -e .
+
+# 2. Install the OpenClaw skill (enables natural language usage)
+cp skills/openclaw/SKILL.md ~/.openclaw/workspace/skills/clawteam/SKILL.md
+
+# 3. Verify
+clawteam --version
+openclaw skills list | grep clawteam
+```
+
+### Natural Language Usage via OpenClaw Bot
+
+Once the skill is installed, you can talk to your OpenClaw bot in any channel (Telegram, Discord, TUI, etc.):
+
+| What you say | What happens |
+|-------------|-------------|
+| "Create a 5-agent team to build a web app" | Creates team, tasks, and spawns 5 openclaw agents in tmux |
+| "Launch a hedge-fund analysis team" | Runs `clawteam launch hedge-fund` with 7 agents |
+| "Check the status of my agent team" | Runs `clawteam board show` and reports kanban status |
+| "Broadcast to all agents: focus on auth module first" | Sends `clawteam inbox broadcast` |
+
+### How It Works with OpenClaw
+
+| Component | Behavior |
+|-----------|----------|
+| **Default spawn** | `clawteam spawn` launches `openclaw tui --message <prompt>` in tmux |
+| **Subprocess mode** | `clawteam spawn subprocess` launches `openclaw agent --message <prompt>` |
+| **Environment vars** | Supports `OPENCLAW_*` prefix (e.g. `OPENCLAW_AGENT_NAME`) alongside `CLAWTEAM_*` |
+| **Templates** | All built-in templates (hedge-fund, code-review, research-paper) use `openclaw` |
+| **Skill** | `skills/openclaw/SKILL.md` teaches OpenClaw the full ClawTeam CLI |
+
+### OpenClaw + ClawTeam Architecture
+
+```
+  You (Telegram/Discord/TUI)
+         │
+         ▼
+  ┌──────────────────┐
+  │  OpenClaw Gateway │  ← recognizes "clawteam" skill
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐     clawteam spawn     ┌────────────────────┐
+  │ 🦞 Leader Agent  │ ───────────────────►   │ 🤖 openclaw tui    │
+  │ (openclaw)       │ ───┐                   │ (tmux window)      │
+  │                  │    │                   │ git worktree       │
+  │ Uses clawteam    │    │                   └────────────────────┘
+  │ CLI to manage    │    │
+  │ the swarm        │    ▼                   ┌────────────────────┐
+  └──────────────────┘ ──────────────────►    │ 🤖 openclaw tui    │
+                          │                   │ (tmux window)      │
+                          ▼                   │ git worktree       │
+                    ┌────────────────────┐    └────────────────────┘
+                    │ 🤖 openclaw tui    │
+                    │ (tmux window)      │    All agents coordinate via:
+                    │ git worktree       │    ~/.clawteam/ (tasks, inboxes)
+                    └────────────────────┘
+```
 
 ---
 
@@ -355,8 +426,14 @@ Requires **Python 3.10+**, **tmux**, and a CLI coding agent (e.g. `claude`, `cod
 
 ### ⚡ Option 1: Let the Agent Drive (Recommended)
 
-ClawTeam ships with a **Claude Code skill** that auto-activates. Just install and prompt:
+ClawTeam ships with agent skills that auto-activate. Just install and prompt your agent:
 
+**With OpenClaw** (default):
+```
+"Build a web app. Use clawteam to split the work across multiple agents."
+```
+
+**With Claude Code**:
 ```
 "Build a web app. Use clawteam to split the work across multiple agents."
 ```
@@ -389,9 +466,9 @@ ClawTeam works with **any CLI agent** that can execute shell commands:
 
 | Agent | Spawn Command | Status |
 |-------|--------------|--------|
+| [OpenClaw](https://openclaw.ai) | `clawteam spawn tmux openclaw --team ...` | ✅ **Default** — first-class support |
 | [Claude Code](https://claude.ai/claude-code) | `clawteam spawn tmux claude --team ...` | ✅ Full support |
 | [Codex](https://openai.com/codex) | `clawteam spawn tmux codex --team ...` | ✅ Full support |
-| [OpenClaw](https://github.com/nicepkg/OpenClaw) | `clawteam spawn tmux openclaw --team ...` | ✅ Full support |
 | [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn tmux nanobot --team ...` | ✅ Full support |
 | [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | 🔮 Experimental |
 | Custom scripts | `clawteam spawn subprocess python --team ...` | ✅ Full support |
@@ -457,7 +534,7 @@ ClawTeam works with **any CLI agent** that can execute shell commands:
 | 🌐 **Cross-Machine** | Shared filesystem (NFS/SSHFS) or P2P transport for distributed teams |
 | 👥 **Multi-User** | Namespace agents by user — multiple humans can share a team |
 | ⚙️ **Configuration** | Persistent config: env var > config file > default priority |
-| 🔌 **Claude Code Skill** | Auto-triggers when users ask about multi-agent coordination |
+| 🔌 **Agent Skills** | OpenClaw skill + Claude Code skill — auto-triggers on multi-agent requests |
 
 ---
 
@@ -603,7 +680,7 @@ All state lives in `~/.clawteam/` as JSON files. No database, no server, no clou
 | Spawn Default | Value | Override |
 |---------------|-------|----------|
 | Backend | `tmux` | `clawteam spawn subprocess ...` |
-| Command | `claude` | `clawteam spawn tmux codex ...` |
+| Command | `openclaw` | `clawteam spawn tmux claude ...` |
 | Workspace | `auto` (git worktree) | `--no-workspace` |
 | Permissions | skip | `--no-skip-permissions` |
 
@@ -642,6 +719,7 @@ We welcome contributions! ClawTeam is designed to be extensible:
 ## 📖 Acknowledgements
 
 - [@karpathy/autoresearch](https://github.com/karpathy/autoresearch) — the autonomous ML research framework used in our 8-agent swarm demo
+- [OpenClaw](https://openclaw.ai) — the default agent backend for this fork, with first-class TUI and agent mode support
 - [Claude Code](https://claude.ai/claude-code) and [Codex](https://openai.com/codex) — AI coding agents that work as ClawTeam team members
 - [ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) — inspiration for the multi-analyst hedge fund template
 - [CLI-Anything](https://github.com/HKUDS/CLI-Anything) — sister project making all software agent-native
