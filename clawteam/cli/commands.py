@@ -575,17 +575,18 @@ def inbox_broadcast(
     content: str = typer.Argument(..., help="Message content"),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Optional routing key"),
     msg_type: str = typer.Option("broadcast", "--type", help="Message type"),
+    from_agent: Optional[str] = typer.Option(None, "--from", "-f", help="Override sender name (default: from env identity)"),
 ):
     """Broadcast a message to all team members (broadcast)."""
     from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.models import MessageType
 
-    identity = AgentIdentity.from_env()
+    sender = from_agent or AgentIdentity.from_env().agent_name
     mailbox = MailboxManager(team)
     mt = MessageType(msg_type)
     messages = mailbox.broadcast(
-        from_agent=identity.agent_name,
+        from_agent=sender,
         content=content,
         msg_type=mt,
         key=key,
