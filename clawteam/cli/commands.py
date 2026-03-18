@@ -599,9 +599,10 @@ def inbox_receive(
     """Receive and consume messages from inbox."""
     from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = agent or identity.agent_name
+    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
     messages = mailbox.receive(agent_name, limit=limit)
 
@@ -629,9 +630,10 @@ def inbox_peek(
     """Peek at messages without consuming them."""
     from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = agent or identity.agent_name
+    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
 
@@ -697,10 +699,11 @@ def inbox_watch(
     """
     from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
     from clawteam.team.watcher import InboxWatcher
 
     identity = AgentIdentity.from_env()
-    agent_name = agent or identity.agent_name
+    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
 
     if not _json_output:
@@ -1043,10 +1046,15 @@ def task_wait(
     # Resolve agent name for inbox monitoring
     agent_name = agent
     if not agent_name:
-        agent_name = TeamManager.get_leader_name(team)
+        agent_name = TeamManager.get_leader_inbox(team)
     if not agent_name:
         from clawteam.identity import AgentIdentity
-        agent_name = AgentIdentity.from_env().agent_name
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, identity.agent_name, identity.user)
+    elif agent:
+        from clawteam.identity import AgentIdentity
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, agent_name, identity.user)
 
     mailbox = MailboxManager(team)
     store = TaskStore(team)

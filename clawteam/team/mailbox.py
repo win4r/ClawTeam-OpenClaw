@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from pathlib import Path
 
 from clawteam.team.models import MessageType, TeamMessage, get_data_dir
 from clawteam.transport.base import Transport
@@ -87,6 +86,9 @@ class MailboxManager:
         last_task: str | None = None,
         status: str | None = None,
     ) -> TeamMessage:
+        from clawteam.team.manager import TeamManager
+
+        delivery_target = TeamManager.resolve_inbox(self.team_name, to)
         msg = TeamMessage(
             type=msg_type,
             from_agent=from_agent,
@@ -108,7 +110,7 @@ class MailboxManager:
             status=status,
         )
         data = msg.model_dump_json(indent=2, by_alias=True, exclude_none=True).encode("utf-8")
-        self._transport.deliver(to, data)
+        self._transport.deliver(delivery_target, data)
         self._log_event(msg)
         return msg
 

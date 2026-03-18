@@ -45,6 +45,25 @@ class TeamManager:
     """Manages team lifecycle operations."""
 
     @staticmethod
+    def get_member(
+        team_name: str,
+        member_name: str,
+        user: str = "",
+    ) -> TeamMember | None:
+        """Return a member by logical name, optionally scoped by user."""
+        config = _load_config(team_name)
+        if not config:
+            return None
+        if user:
+            for member in config.members:
+                if member.name == member_name and member.user == user:
+                    return member
+        matches = [member for member in config.members if member.name == member_name]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    @staticmethod
     def create_team(
         name: str,
         leader_name: str,
@@ -186,6 +205,14 @@ class TeamManager:
     def inbox_name_for(member: TeamMember) -> str:
         """Return the inbox directory name for a member."""
         return f"{member.user}_{member.name}" if member.user else member.name
+
+    @staticmethod
+    def resolve_inbox(team_name: str, recipient: str, user: str = "") -> str:
+        """Resolve a logical agent name to its on-disk inbox directory."""
+        member = TeamManager.get_member(team_name, recipient, user=user)
+        if member:
+            return TeamManager.inbox_name_for(member)
+        return recipient
 
     @staticmethod
     def get_leader_inbox(team_name: str) -> str | None:
