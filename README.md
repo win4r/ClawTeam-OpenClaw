@@ -361,6 +361,43 @@ Requires **Python 3.10+**, **tmux**, and a CLI coding agent (e.g. `openclaw`, `c
 
 This fork is fully adapted for [OpenClaw](https://openclaw.ai) as the **default agent backend**. OpenClaw agents can use ClawTeam through natural language via the included skill.
 
+### What ClawTeam Brings to OpenClaw
+
+Without ClawTeam, each OpenClaw agent works in isolation — no collaboration, no shared tasks, no parallel development. ClawTeam transforms OpenClaw from a **single-agent tool** into a **multi-agent autonomous platform**.
+
+| Capability | OpenClaw Alone | OpenClaw + ClawTeam |
+|-----------|---------------|-------------------|
+| **Task assignment** | AGI manually messages each agent | Leader agent autonomously splits, assigns, and monitors |
+| **Parallel development** | Impossible — agents share the same working directory | Each agent gets its own git worktree, true parallel coding |
+| **Dependency management** | Manual polling of JSON files | `--blocked-by` with automatic unblocking on completion |
+| **Inter-agent communication** | Only through AGI relay | Direct point-to-point inbox + broadcast |
+| **Observability** | Read logs and guess status | Kanban board + tmux tiled view of all agents working |
+| **Startup complexity** | Write dispatch scripts + multiple sessions_send | One command: `clawteam launch hedge-fund` |
+| **Cost tracking** | None | Per-agent token usage, cost, and budget management |
+| **Scaling** | Modify config + routing for each new agent | `clawteam spawn` to add workers on the fly |
+
+**Example — "Build a full-stack app with auth":**
+
+```
+User → "Build a full-stack app with auth"
+OpenClaw AGI → activates clawteam skill
+  → Creates 5-agent team (architect + 2 backend + frontend + tester)
+  → Each agent works in its own git branch in parallel
+  → Dependencies auto-managed (architecture done → backend unlocks → tests unlock)
+  → All branches merged when complete
+```
+
+**Example — "Analyze NVDA, AAPL, MSFT for investment":**
+
+```
+User → "Analyze these stocks"
+OpenClaw AGI → clawteam launch hedge-fund
+  → 7 agents work simultaneously (value/growth/technical/fundamentals/sentiment + risk + portfolio manager)
+  → All analysts run in parallel
+  → Risk manager auto-unblocks when all signals arrive
+  → Portfolio manager synthesizes final recommendation
+```
+
 ### Setup for OpenClaw
 
 #### Option A: One-Command Install (Recommended)
