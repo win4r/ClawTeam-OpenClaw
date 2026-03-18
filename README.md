@@ -648,19 +648,7 @@ We welcome contributions! ClawTeam is designed to be extensible:
 
 ## ⭐ Star History
 
-If ClawTeam helps your AI agents work in teams, give us a star! ⭐
-
-<div align="center">
-  <a href="https://star-history.com/#HKUDS/ClawTeam&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=HKUDS/ClawTeam&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=HKUDS/ClawTeam&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=HKUDS/ClawTeam&type=Date" />
-    </picture>
-  </a>
-</div>
-
----
+If you find ClawTeam helpful, please consider to give us a star! ⭐
 
 ## 📄 License
 
