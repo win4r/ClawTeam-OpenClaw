@@ -178,6 +178,8 @@ class TeamManager:
         except Exception:
             pass
 
+        # Load config before deleting team dir so we know member names for plan cleanup
+        config = _load_config(team_name)
         team_dir = _team_dir(team_name)
         tasks_dir = get_data_dir() / "tasks" / team_name
         costs_dir = get_data_dir() / "costs" / team_name
@@ -188,12 +190,19 @@ class TeamManager:
             if d.exists():
                 shutil.rmtree(d)
                 cleaned = True
-        if plans_dir.exists():
+        # Only delete plan files belonging to this team's members
+        if plans_dir.exists() and config:
+            member_names = {m.name for m in config.members}
             for f in plans_dir.glob("*.md"):
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
+                # Plan files are named {agent_name}-{plan_id}.md
+                # Extract agent name (everything before the last dash + 12-char hex id)
+                stem = f.stem
+                parts = stem.rsplit("-", 1)
+                if len(parts) == 2 and parts[0] in member_names:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
         return cleaned
 
     @staticmethod
