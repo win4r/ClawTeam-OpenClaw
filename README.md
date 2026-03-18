@@ -122,8 +122,6 @@ https://github.com/user-attachments/assets/7e2f0ecd-8fe3-4970-90ac-5c9669ff060c
 
 🧠 The system synthesizes breakthroughs across teams and evolves strategies independently — achieving full research automation without human intervention.
 
----
-
 <p align="center">
   <img src="assets/teaser.png" alt="ClawTeam - AI agents orchestrating themselves" width="800">
 </p>
