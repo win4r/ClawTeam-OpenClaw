@@ -27,10 +27,6 @@ Human provides the goal. The Agent Team orchestrates everything else.
 
 Full compatibility with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [OpenClaw](https://github.com/nicepkg/OpenClaw), [nanobot](https://github.com/AbanteAI/nanobot), [Cursor](https://cursor.com), and any CLI agent.&nbsp;&nbsp;[**中文文档**](README_CN.md) | [**한국어**](README_KR.md)
 
-<p align="center">
-  <img src="assets/teaser.png" alt="ClawTeam - AI agents orchestrating themselves" width="800">
-</p>
-
 ---
 
 ## ✨ ClawTeam's Key Features
@@ -125,6 +121,12 @@ https://github.com/user-attachments/assets/7e2f0ecd-8fe3-4970-90ac-5c9669ff060c
 ☝️ Intelligent leader agent orchestrates 8 specialized sub-agents across 8 H100 GPUs, autonomously designing experiments and dynamically reallocating resources based on real-time performance.
 
 🧠 The system synthesizes breakthroughs across teams and evolves strategies independently — achieving full research automation without human intervention.
+
+---
+
+<p align="center">
+  <img src="assets/teaser.png" alt="ClawTeam - AI agents orchestrating themselves" width="800">
+</p>
 
 ---
 
