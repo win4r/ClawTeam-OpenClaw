@@ -347,7 +347,7 @@ pip install -e .
 pip install -e ".[p2p]"
 ```
 
-Requires **Python 3.10+**. Dependencies: `typer`, `pydantic`, `rich`.
+Requires **Python 3.10+**, **tmux**, and a CLI coding agent (e.g. `claude`, `codex`). Python dependencies: `typer`, `pydantic`, `rich`.
 
 ---
 
