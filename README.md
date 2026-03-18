@@ -25,7 +25,7 @@
 
 Human provides the goal. The Agent Team orchestrates everything else.
 
-Full compatibility with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [OpenClaw](https://github.com/nicepkg/OpenClaw), [nanobot](https://github.com/AbanteAI/nanobot), [Cursor](https://cursor.com), and any CLI agent.&nbsp;&nbsp;[**中文文档**](README_CN.md)
+Full compatibility with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [OpenClaw](https://github.com/nicepkg/OpenClaw), [nanobot](https://github.com/AbanteAI/nanobot), [Cursor](https://cursor.com), and any CLI agent.&nbsp;&nbsp;[**中文文档**](README_CN.md) | [**한국어**](README_KR.md)
 
 <p align="center">
   <img src="assets/teaser.png" alt="ClawTeam - AI agents orchestrating themselves" width="800">
