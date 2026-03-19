@@ -172,9 +172,10 @@ clawteam --json team status my-team
 2. **You do**: `clawteam team spawn-team webapp -d "Build web app" -n leader`
 3. **Create tasks**: Use `clawteam task create` with `--blocked-by` for dependencies
 4. **Spawn agents**: Use `clawteam spawn` for each worker
-5. **Monitor**: Use `clawteam board show` to check progress
+5. **Monitor**: Start a background polling loop immediately — do NOT wait for user to ask
 6. **Communicate**: Use `clawteam inbox broadcast` for team-wide updates
-7. **Cleanup**: `clawteam team cleanup webapp --force` when done
+7. **Deliver**: Proactively send final results to the user as soon as all tasks complete
+8. **Cleanup**: `clawteam cost show`, `clawteam task stats`, merge worktrees, then `clawteam team cleanup webapp --force`
 
 ## Leader Orchestration Pattern
 
@@ -211,6 +212,9 @@ clawteam spawn -t <team> -n tester --task "Write and run integration tests"
 ```
 
 ### Phase 4: Monitor Loop
+
+**IMPORTANT**: Start monitoring immediately after spawning — do NOT wait for the user to ask for status updates. Run the monitor loop in the background right away so you can proactively report completion and deliver results without user intervention.
+
 ```bash
 # Poll task status every 30-60 seconds
 while true; do
@@ -229,21 +233,27 @@ done
 ```
 
 ### Phase 5: Converge & Report
+
+**IMPORTANT**: Proactively deliver results to the user as soon as all tasks complete. Do NOT wait for the user to ask. Include the final output, a summary, and cost/timing stats.
+
 ```bash
 # After all tasks complete:
 clawteam board show <team>           # Final status
 clawteam cost show <team>            # Total cost
+clawteam task stats <team>           # Timing stats
 clawteam workspace merge <team> --agent <name>  # Merge each worker's branch
 clawteam team cleanup <team> --force  # Clean up
+# Then: send the final deliverables to the user immediately
 ```
 
 ### Decision Rules for the Leader
 - **Independent tasks** → spawn workers in parallel
 - **Sequential tasks** → use `--blocked-by` to chain them; ClawTeam auto-unblocks
 - **Worker asks for help** → check inbox, provide guidance via `inbox send`
-- **Worker stuck** → check task status; if `in_progress` too long, send a nudge
+- **Worker stuck** → check task status; if `in_progress` too long, send a nudge via `inbox send`
 - **Worker done** → verify result via inbox message, then move to next phase
-- **All done** → merge worktrees, report to user, cleanup
+- **All done** → merge worktrees, deliver results to user proactively, then cleanup
+- **Always** → start background monitoring immediately after spawn; never wait for user to ask for status
 
 ## Data Location
 
