@@ -73,6 +73,8 @@ clawteam board serve --port 8080   # Web dashboard
 
 **Dependency auto-resolution**: When a blocking task completes, dependent tasks automatically change from `blocked` to `pending`.
 
+**Task locking**: When a task moves to `in_progress`, it is locked by the calling agent. Other agents cannot claim it unless they use `--force`. Stale locks from dead agents are automatically released.
+
 ### Agent Spawning
 
 ```bash
@@ -92,6 +94,11 @@ Each spawned agent gets:
 - Its own git worktree branch (`clawteam/{team}/{agent}`)
 - An auto-injected coordination prompt (how to use clawteam CLI)
 - Environment variables: `CLAWTEAM_AGENT_NAME`, `CLAWTEAM_TEAM_NAME`, etc.
+
+**Spawn safety features:**
+- Commands are pre-validated before launch — you get a clear error if the agent CLI is not installed
+- If a spawn fails, the registered team member and worktree are automatically rolled back
+- Claude Code and Codex workspace trust prompts are auto-confirmed in fresh worktrees
 
 ### Messaging
 
@@ -146,7 +153,7 @@ clawteam config health                         # System health check
 |---------|-------------|
 | `clawteam lifecycle idle <team> --agent <name>` | Report agent idle |
 | `clawteam session save <team> --session-id <id>` | Save session for resume |
-| `clawteam plan submit <team> "<plan>" --from <agent>` | Submit plan for approval |
+| `clawteam plan submit <team> "<plan>" --from <agent>` | Submit plan for approval (team-scoped storage) |
 | `clawteam workspace list <team>` | List git worktrees |
 | `clawteam workspace merge <team> --agent <name>` | Merge agent branch |
 
@@ -242,6 +249,7 @@ clawteam team cleanup <team> --force  # Clean up
 
 All state stored in `~/.clawteam/`:
 - Teams: `~/.clawteam/teams/<team>/config.json`
-- Tasks: `~/.clawteam/tasks/<team>/task-<id>.json`
+- Tasks: `~/.clawteam/tasks/<team>/task-<id>.json` (with `fcntl` file locking for concurrent safety)
+- Plans: `~/.clawteam/plans/<team>/<agent>-<plan_id>.md` (team-scoped, isolated per team)
 - Messages: `~/.clawteam/teams/<team>/inboxes/<agent>/msg-*.json`
 - Costs: `~/.clawteam/costs/<team>/`

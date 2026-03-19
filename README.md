@@ -456,6 +456,9 @@ Once the skill is installed, you can talk to your OpenClaw bot in any channel (T
 | **Environment vars** | Supports `OPENCLAW_*` prefix (e.g. `OPENCLAW_AGENT_NAME`) alongside `CLAWTEAM_*` |
 | **Templates** | All built-in templates (hedge-fund, code-review, research-paper) use `openclaw` |
 | **Skill** | `skills/openclaw/SKILL.md` teaches OpenClaw the full ClawTeam CLI |
+| **Command validation** | Pre-validates agent commands before launch; clear error on missing CLI |
+| **Spawn rollback** | Failed spawns auto-remove the registered member and clean up worktrees |
+| **Concurrent safety** | Task store uses `fcntl` file locking — safe for parallel agent access |
 
 ### OpenClaw + ClawTeam Architecture
 
@@ -593,13 +596,16 @@ ClawTeam works with **any CLI agent** that can execute shell commands:
 
 | Feature | Description |
 |---------|-------------|
-| 📝 **Plan Approval** | Agents submit plans for leader review before execution |
+| 📝 **Plan Approval** | Agents submit plans for leader review before execution (team-scoped storage) |
 | 🔄 **Lifecycle Protocol** | Graceful shutdown request/approve/reject, idle notifications |
 | 📊 **JSON Output** | `--json` flag on all commands — agents parse structured output |
 | 🌐 **Cross-Machine** | Shared filesystem (NFS/SSHFS) or P2P transport for distributed teams |
 | 👥 **Multi-User** | Namespace agents by user — multiple humans can share a team |
 | ⚙️ **Configuration** | Persistent config: env var > config file > default priority |
 | 🔌 **Agent Skills** | OpenClaw skill + Claude Code skill — auto-triggers on multi-agent requests |
+| 🛡️ **Spawn Validation** | Pre-validates agent commands before launch; auto-rolls back on failure |
+| 🔒 **Concurrent Safety** | File locking on task writes prevents race conditions in multi-agent environments |
+| 🤝 **Workspace Trust** | Auto-confirms Claude Code / Codex workspace trust prompts in fresh worktrees |
 
 ---
 
@@ -740,7 +746,7 @@ clawteam config health
               └─────────────────────┘
 ```
 
-All state lives in `~/.clawteam/` as JSON files. No database, no server, no cloud. Atomic `tmp + rename` writes ensure crash safety.
+All state lives in `~/.clawteam/` as JSON files. No database, no server, no cloud. Atomic `tmp + rename` writes with `fcntl` file locking ensure crash safety and concurrent access from multiple agents.
 
 | Spawn Default | Value | Override |
 |---------------|-------|----------|
