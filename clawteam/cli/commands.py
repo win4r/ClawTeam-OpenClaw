@@ -776,8 +776,8 @@ def task_create(
     from clawteam.team.tasks import TaskStore
 
     store = TaskStore(team)
-    blocks_list = [b.strip() for b in blocks.split(",")] if blocks else []
-    blocked_by_list = [b.strip() for b in blocked_by.split(",")] if blocked_by else []
+    blocks_list = [b.strip() for b in blocks.split(",") if b.strip()] if blocks else []
+    blocked_by_list = [b.strip() for b in blocked_by.split(",") if b.strip()] if blocked_by else []
 
     task = store.create(
         subject=subject,
@@ -849,8 +849,8 @@ def task_update(
 
     store = TaskStore(team)
     ts = TaskStatus(status) if status else None
-    blocks_list = [b.strip() for b in add_blocks.split(",")] if add_blocks else None
-    blocked_by_list = [b.strip() for b in add_blocked_by.split(",")] if add_blocked_by else None
+    blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
+    blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
 
     caller = AgentIdentity.from_env().agent_name
 
@@ -1648,6 +1648,7 @@ def spawn_agent(
     cwd = None
     ws_branch = ""
     ws_mode = ""
+    ws_mgr = None
     if workspace is None:
         ws_mode, _ = get_effective("workspace")
         ws_mode = ws_mode or "auto"
@@ -1706,6 +1707,7 @@ def spawn_agent(
     import os as _os2
 
     from clawteam.team.manager import TeamManager
+    member_added = False
     try:
         TeamManager.add_member(
             team_name=_team,
@@ -1714,6 +1716,7 @@ def spawn_agent(
             agent_type=agent_type,
             user=_os2.environ.get("CLAWTEAM_USER", ""),
         )
+        member_added = True
     except ValueError:
         pass  # already a member, ignore
 
@@ -1727,6 +1730,17 @@ def spawn_agent(
         cwd=cwd,
         skip_permissions=skip_permissions,
     )
+
+    if result.startswith("Error"):
+        if member_added:
+            TeamManager.remove_member(_team, _name)
+        if ws_mgr is not None and cwd:
+            try:
+                ws_mgr.cleanup_workspace(_team, _name, auto_checkpoint=False)
+            except Exception:
+                pass
+        _output({"error": result}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
 
     _output(
         {"status": "spawned", "backend": backend, "agentName": _name, "agentId": _id, "message": result},

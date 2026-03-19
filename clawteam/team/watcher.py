@@ -41,16 +41,22 @@ class InboxWatcher:
         def _handle_signal(signum, frame):
             self._running = False
 
+        prev_int = signal.getsignal(signal.SIGINT)
+        prev_term = signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGINT, _handle_signal)
         signal.signal(signal.SIGTERM, _handle_signal)
 
-        while self._running:
-            messages = self.mailbox.receive(self.agent_name, limit=10)
-            for msg in messages:
-                self._output(msg)
-                if self.exec_cmd:
-                    self._run_callback(msg)
-            time.sleep(self.poll_interval)
+        try:
+            while self._running:
+                messages = self.mailbox.receive(self.agent_name, limit=10)
+                for msg in messages:
+                    self._output(msg)
+                    if self.exec_cmd:
+                        self._run_callback(msg)
+                time.sleep(self.poll_interval)
+        finally:
+            signal.signal(signal.SIGINT, prev_int)
+            signal.signal(signal.SIGTERM, prev_term)
 
     def _output(self, msg: TeamMessage) -> None:
         if self.json_output:

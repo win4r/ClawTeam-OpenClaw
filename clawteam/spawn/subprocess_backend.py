@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 
 from clawteam.spawn.base import SpawnBackend
+from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
+from clawteam.spawn.command_validation import normalize_spawn_command, validate_spawn_command
 
 
 class SubprocessBackend(SpawnBackend):
@@ -27,6 +30,7 @@ class SubprocessBackend(SpawnBackend):
         skip_permissions: bool = False,
     ) -> str:
         spawn_env = os.environ.copy()
+        clawteam_bin = resolve_clawteam_executable()
         spawn_env.update({
             "CLAWTEAM_AGENT_ID": agent_id,
             "CLAWTEAM_AGENT_NAME": agent_name,
@@ -46,18 +50,32 @@ class SubprocessBackend(SpawnBackend):
             spawn_env["CLAWTEAM_WORKSPACE_DIR"] = cwd
         if env:
             spawn_env.update(env)
+        spawn_env["PATH"] = build_spawn_path(spawn_env.get("PATH"))
+        if os.path.isabs(clawteam_bin):
+            spawn_env.setdefault("CLAWTEAM_BIN", clawteam_bin)
 
-        final_command = list(command)
+        normalized_command = normalize_spawn_command(command)
+
+        command_error = validate_spawn_command(normalized_command, path=spawn_env["PATH"], cwd=cwd)
+        if command_error:
+            return command_error
+
+        final_command = list(normalized_command)
         if skip_permissions:
-            if _is_claude_command(command):
+            if _is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
-            elif _is_codex_command(command):
+            elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-        if prompt:
-            if _is_codex_command(command):
+        if _is_nanobot_command(normalized_command):
+            if cwd and not _command_has_workspace_arg(normalized_command):
+                final_command.extend(["-w", cwd])
+            if prompt:
+                final_command.extend(["-m", prompt])
+        elif prompt:
+            if _is_codex_command(normalized_command):
                 # Codex accepts prompt as positional argument
                 final_command.append(prompt)
-            elif _is_openclaw_command(command):
+            elif _is_openclaw_command(normalized_command):
                 # OpenClaw agent mode: use --message for the prompt
                 if "agent" not in final_command and "tui" not in final_command:
                     final_command.insert(1, "agent")
@@ -66,10 +84,10 @@ class SubprocessBackend(SpawnBackend):
                 final_command.extend(["-p", prompt])
 
         # Wrap with on-exit hook so task status updates immediately on exit
-        import shlex
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
+        exit_cmd = shlex.quote(clawteam_bin) if os.path.isabs(clawteam_bin) else "clawteam"
         exit_hook = (
-            f"clawteam lifecycle on-exit --team {shlex.quote(team_name)} "
+            f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
             f"--agent {shlex.quote(agent_name)}"
         )
         shell_cmd = f"{cmd_str}; {exit_hook}"
@@ -91,7 +109,7 @@ class SubprocessBackend(SpawnBackend):
             agent_name=agent_name,
             backend="subprocess",
             pid=process.pid,
-            command=list(command),
+            command=list(normalized_command),
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"
@@ -128,3 +146,16 @@ def _is_openclaw_command(command: list[str]) -> bool:
         return False
     cmd = command[0].rsplit("/", 1)[-1]
     return cmd in ("openclaw",)
+
+
+def _is_nanobot_command(command: list[str]) -> bool:
+    """Check if the command is a nanobot CLI invocation."""
+    if not command:
+        return False
+    cmd = command[0].rsplit("/", 1)[-1]
+    return cmd == "nanobot"
+
+
+def _command_has_workspace_arg(command: list[str]) -> bool:
+    """Return True when a command already specifies a nanobot workspace."""
+    return "-w" in command or "--workspace" in command

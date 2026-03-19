@@ -37,8 +37,12 @@ class FileTransport(Transport):
         filename = f"msg-{ts}-{uid}.json"
         tmp = inbox / f".tmp-{uid}.json"
         target = inbox / filename
-        tmp.write_bytes(data)
-        tmp.rename(target)
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(target)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def fetch(self, agent_name: str, limit: int = 10, consume: bool = True) -> list[bytes]:
         inbox = _inbox_dir(self.team_name, agent_name)

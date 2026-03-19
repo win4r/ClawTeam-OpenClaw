@@ -27,10 +27,16 @@ class BoardHandler(BaseHTTPRequestHandler):
         elif path == "/api/overview":
             self._serve_json(self.collector.collect_overview())
         elif path.startswith("/api/team/"):
-            team_name = path[len("/api/team/"):]
+            team_name = path[len("/api/team/"):].strip("/")
+            if not team_name:
+                self.send_error(400, "Team name required")
+                return
             self._serve_team(team_name)
         elif path.startswith("/api/events/"):
-            team_name = path[len("/api/events/"):]
+            team_name = path[len("/api/events/"):].strip("/")
+            if not team_name:
+                self.send_error(400, "Team name required")
+                return
             self._serve_sse(team_name)
         else:
             self.send_error(404)

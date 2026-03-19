@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from clawteam.team.models import TeamConfig, TeamMember, get_data_dir
+from clawteam.team.plan import referenced_legacy_plan_paths, team_plans_path
 
 
 def _teams_root() -> Path:
@@ -27,8 +28,11 @@ def _load_config(team_name: str) -> TeamConfig | None:
     path = _config_path(team_name)
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return TeamConfig.model_validate(data)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return TeamConfig.model_validate(data)
+    except (json.JSONDecodeError, Exception):
+        return None
 
 
 def _save_config(config: TeamConfig) -> None:
@@ -178,31 +182,24 @@ class TeamManager:
         except Exception:
             pass
 
-        # Load config before deleting team dir so we know member names for plan cleanup
-        config = _load_config(team_name)
+        legacy_plan_paths = referenced_legacy_plan_paths(team_name)
         team_dir = _team_dir(team_name)
         tasks_dir = get_data_dir() / "tasks" / team_name
         costs_dir = get_data_dir() / "costs" / team_name
         sessions_dir = get_data_dir() / "sessions" / team_name
-        plans_dir = get_data_dir() / "plans"
+        plans_dir = team_plans_path(team_name)
         cleaned = False
-        for d in (team_dir, tasks_dir, costs_dir, sessions_dir):
+        for d in (team_dir, tasks_dir, costs_dir, sessions_dir, plans_dir):
             if d.exists():
                 shutil.rmtree(d)
                 cleaned = True
-        # Only delete plan files belonging to this team's members
-        if plans_dir.exists() and config:
-            member_names = {m.name for m in config.members}
-            for f in plans_dir.glob("*.md"):
-                # Plan files are named {agent_name}-{plan_id}.md
-                # Extract agent name (everything before the last dash + 12-char hex id)
-                stem = f.stem
-                parts = stem.rsplit("-", 1)
-                if len(parts) == 2 and parts[0] in member_names:
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
+        for path in legacy_plan_paths:
+            try:
+                if path.exists():
+                    path.unlink()
+                    cleaned = True
+            except OSError:
+                pass
         return cleaned
 
     @staticmethod
