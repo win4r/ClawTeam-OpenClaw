@@ -147,8 +147,9 @@ class TmuxBackend(SpawnBackend):
         # Send the prompt as input to the interactive claude session
         # (codex prompt is passed as positional arg above, so skip here)
         if prompt and _is_claude_command(normalized_command):
-            # Wait briefly for claude to start up
-            time.sleep(2)
+            # Wait for Claude Code to finish startup and show input prompt.
+            # Bedrock-backed instances can take 10+ seconds to initialize.
+            _wait_for_claude_ready(target, timeout_seconds=30)
             # Write prompt to a temp file and use load-buffer + paste-buffer
             # to avoid escaping issues for multi-line prompts.
             with tempfile.NamedTemporaryFile(
@@ -373,7 +374,9 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
         return False
 
     if _is_claude_command(command):
-        return "trust this folder" in pane_text and "enter to confirm" in pane_text
+        return ("trust this folder" in pane_text or "trust the contents" in pane_text) and (
+            "enter to confirm" in pane_text or "press enter" in pane_text or "enter to continue" in pane_text
+        )
 
     if _is_codex_command(command):
         return (
@@ -387,3 +390,39 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
 def _is_interactive_cli(command: list[str]) -> bool:
     """Check if the command is an interactive AI CLI."""
     return _is_claude_command(command) or _is_codex_command(command) or _is_nanobot_command(command)
+
+
+def _wait_for_claude_ready(
+    target: str,
+    timeout_seconds: float = 30.0,
+    poll_interval: float = 1.0,
+) -> bool:
+    """Poll tmux pane until Claude Code shows an input prompt.
+
+    Claude Code displays a ``>`` or ``❯`` prompt character when ready for
+    input.  Bedrock-backed instances can take 10+ seconds to initialize,
+    so the old fixed ``sleep(2)`` was insufficient.
+
+    Returns True if ready detected, False on timeout (caller should
+    still attempt injection as a best-effort).
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        pane = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", target],
+            capture_output=True,
+            text=True,
+        )
+        if pane.returncode == 0:
+            text = pane.stdout
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            tail = lines[-10:] if len(lines) >= 10 else lines
+            for line in tail:
+                # Claude Code shows these prompt characters when ready
+                if line.startswith(("❯", ">", "›")):
+                    return True
+                # Also detect the "Try ..." hint line
+                if "Try " in line and "write a test" in line:
+                    return True
+        time.sleep(poll_interval)
+    return False
