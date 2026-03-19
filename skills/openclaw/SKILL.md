@@ -215,7 +215,9 @@ clawteam spawn -t <team> -n tester --task "Write and run integration tests"
 
 ### Phase 4: Monitor Loop
 
-**IMPORTANT**: Start monitoring immediately after spawning — do NOT wait for the user to ask for status updates. Run the monitor loop in the background right away so you can proactively report completion and deliver results without user intervention.
+**IMPORTANT**: Start monitoring immediately after spawning — do NOT wait for the user to ask for status updates. Run the monitor loop in the background right away so you can:
+1. **Push mid-progress updates proactively** — when ~50% of tasks complete, send the user a brief status update (e.g. "4/7 agents done, 3 still working"). Do NOT wait for them to ask.
+2. **Deliver final results immediately** when all tasks complete.
 
 ```bash
 # Poll task status every 30-60 seconds
@@ -230,21 +232,25 @@ if done == total: print('ALL DONE'); sys.exit(0)
 "
   # Check for messages from workers
   clawteam inbox receive <team>
+  # IMPORTANT: Send a mid-progress update to the user when roughly half the tasks are done
   sleep 30
 done
 ```
 
 ### Phase 5: Converge & Report
 
-**IMPORTANT**: Proactively deliver results to the user as soon as all tasks complete. Do NOT wait for the user to ask. Include the final output, a summary, and cost/timing stats.
+**IMPORTANT**: Proactively deliver results to the user as soon as all tasks complete. Do NOT wait for the user to ask. Include the final output, a summary, and cost/timing stats. ALWAYS merge worktrees and clean up.
 
 ```bash
-# After all tasks complete:
+# After all tasks complete — do ALL of these steps:
 clawteam board show <team>           # Final status
-clawteam cost show <team>            # Total cost
-clawteam task stats <team>           # Timing stats
-clawteam workspace merge <team> --agent <name>  # Merge each worker's branch
-clawteam team cleanup <team> --force  # Clean up
+clawteam cost show <team>            # Total cost — include in report to user
+clawteam task stats <team>           # Timing stats — include in report to user
+# Merge each worker's branch back to main
+for agent in <agent1> <agent2> ...; do
+  clawteam workspace merge <team> --agent $agent
+done
+clawteam team cleanup <team> --force  # Clean up — ALWAYS do this last
 # Then: send the final deliverables to the user immediately
 ```
 
