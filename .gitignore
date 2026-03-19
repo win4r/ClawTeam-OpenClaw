@@ -9,4 +9,5 @@ build/
 .env
 .venv/
 venv/
+uv.lock
 .claude/*.local.md
