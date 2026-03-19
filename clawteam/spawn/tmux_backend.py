@@ -80,15 +80,20 @@ class TmuxBackend(SpawnBackend):
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
-        # OpenClaw TUI: pass --message for initial prompt
-        if prompt and _is_openclaw_command(normalized_command):
-            # Use openclaw tui with initial message for interactive tmux usage
+        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
+        if _is_openclaw_command(normalized_command):
+            session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
-                final_command = [final_command[0], "tui", "--message", prompt]
+                final_command = [final_command[0], "tui", "--session", session_key]
+                if prompt:
+                    final_command.extend(["--message", prompt])
             elif "tui" in final_command:
-                final_command.extend(["--message", prompt])
+                final_command.extend(["--session", session_key])
+                if prompt:
+                    final_command.extend(["--message", prompt])
             elif "agent" in final_command:
-                final_command.extend(["--message", prompt])
+                if prompt:
+                    final_command.extend(["--message", prompt])
 
         if _is_nanobot_command(normalized_command):
             if cwd and not _command_has_workspace_arg(normalized_command):

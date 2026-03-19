@@ -79,7 +79,9 @@ class SubprocessBackend(SpawnBackend):
                 # OpenClaw agent mode: use --message for the prompt
                 if "agent" not in final_command and "tui" not in final_command:
                     final_command.insert(1, "agent")
-                final_command.extend(["--message", prompt])
+                # Isolate each agent in its own session
+                session_key = f"clawteam-{team_name}-{agent_name}"
+                final_command.extend(["--session-id", session_key, "--message", prompt])
             else:
                 final_command.extend(["-p", prompt])
 
