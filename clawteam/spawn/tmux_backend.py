@@ -11,7 +11,16 @@ import time
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
-from clawteam.spawn.command_validation import normalize_spawn_command, validate_spawn_command
+from clawteam.spawn.command_validation import (
+    command_has_workspace_arg,
+    is_claude_command,
+    is_codex_command,
+    is_gemini_command,
+    is_nanobot_command,
+    is_openclaw_command,
+    normalize_spawn_command,
+    validate_spawn_command,
+)
 
 
 class TmuxBackend(SpawnBackend):
@@ -76,13 +85,15 @@ class TmuxBackend(SpawnBackend):
         # Build the command (without prompt — we'll send it via send-keys)
         final_command = list(normalized_command)
         if skip_permissions:
-            if _is_claude_command(normalized_command):
+            if is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
-            elif _is_codex_command(normalized_command):
+            elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
+            elif is_gemini_command(normalized_command):
+                final_command.append("--yolo")
 
         # OpenClaw TUI: pass --message for initial prompt and --session for isolation
-        if _is_openclaw_command(normalized_command):
+        if is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
@@ -96,13 +107,15 @@ class TmuxBackend(SpawnBackend):
                 if prompt:
                     final_command.extend(["--message", prompt])
 
-        if _is_nanobot_command(normalized_command):
-            if cwd and not _command_has_workspace_arg(normalized_command):
+        if is_nanobot_command(normalized_command):
+            if cwd and not command_has_workspace_arg(normalized_command):
                 final_command.extend(["-w", cwd])
             if prompt:
                 final_command.extend(["-m", prompt])
-        elif prompt and _is_codex_command(normalized_command):
+        elif prompt and is_codex_command(normalized_command):
             final_command.append(prompt)
+        elif prompt and is_gemini_command(normalized_command):
+            final_command.extend(["-p", prompt])
 
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
         # Append on-exit hook: runs immediately when agent process exits
@@ -161,10 +174,11 @@ class TmuxBackend(SpawnBackend):
         _confirm_workspace_trust_if_prompted(target, normalized_command)
 
         # Send the prompt as input to the interactive session
-        # OpenClaw TUI, Codex, and nanobot already received prompt via command args, skip here.
-        if prompt and _is_claude_command(normalized_command):
-            # Wait briefly for claude to start up
-            time.sleep(2)
+        # OpenClaw TUI, Codex, nanobot, and Gemini already received prompt via command args, skip here.
+        if prompt and is_claude_command(normalized_command):
+            # Wait for Claude Code to finish startup and show input prompt.
+            # Bedrock-backed instances can take 10+ seconds to initialize.
+            _wait_for_claude_ready(target, timeout_seconds=30)
             # Write prompt to a temp file and use load-buffer + paste-buffer
             # to avoid escaping issues for multi-line prompts.
             with tempfile.NamedTemporaryFile(
@@ -203,7 +217,7 @@ class TmuxBackend(SpawnBackend):
                 stderr=subprocess.PIPE,
             )
             os.unlink(tmp_path)
-        elif prompt and not _is_codex_command(normalized_command) and not _is_openclaw_command(normalized_command) and not _is_nanobot_command(normalized_command):
+        elif prompt and not is_codex_command(normalized_command) and not is_openclaw_command(normalized_command) and not is_nanobot_command(normalized_command) and not is_gemini_command(normalized_command):
             # Generic command: append prompt via send-keys
             time.sleep(1)
             subprocess.run(
@@ -318,43 +332,6 @@ class TmuxBackend(SpawnBackend):
         return result
 
 
-def _is_claude_command(command: list[str]) -> bool:
-    """Check if the command is a claude CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]  # basename
-    return cmd in ("claude", "claude-code")
-
-
-def _is_codex_command(command: list[str]) -> bool:
-    """Check if the command is a codex CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]  # basename
-    return cmd in ("codex", "codex-cli")
-
-
-def _is_openclaw_command(command: list[str]) -> bool:
-    """Check if the command is an OpenClaw CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]  # basename
-    return cmd in ("openclaw",)
-
-
-def _is_nanobot_command(command: list[str]) -> bool:
-    """Check if the command is a nanobot CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]
-    return cmd == "nanobot"
-
-
-def _command_has_workspace_arg(command: list[str]) -> bool:
-    """Return True when a command already specifies a nanobot workspace."""
-    return "-w" in command or "--workspace" in command
-
-
 def _confirm_workspace_trust_if_prompted(
     target: str,
     command: list[str],
@@ -368,7 +345,7 @@ def _confirm_workspace_trust_if_prompted(
     injection and accept it with a single Enter so the interactive TUI remains
     intact.
     """
-    if not (_is_claude_command(command) or _is_codex_command(command)):
+    if not (is_claude_command(command) or is_codex_command(command) or is_gemini_command(command)):
         return False
 
     deadline = time.monotonic() + timeout_seconds
@@ -398,18 +375,54 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
     if not pane_text:
         return False
 
-    if _is_claude_command(command):
-        return "trust this folder" in pane_text and "enter to confirm" in pane_text
+    if is_claude_command(command):
+        return ("trust this folder" in pane_text or "trust the contents" in pane_text) and (
+            "enter to confirm" in pane_text or "press enter" in pane_text or "enter to continue" in pane_text
+        )
 
-    if _is_codex_command(command):
+    if is_codex_command(command):
         return (
             "trust the contents of this directory" in pane_text
             and "press enter to continue" in pane_text
         )
 
+    if is_gemini_command(command):
+        return "trust folder" in pane_text or "trust parent folder" in pane_text
+
     return False
 
 
-def _is_interactive_cli(command: list[str]) -> bool:
-    """Check if the command is an interactive AI CLI."""
-    return _is_claude_command(command) or _is_codex_command(command) or _is_openclaw_command(command) or _is_nanobot_command(command)
+def _wait_for_claude_ready(
+    target: str,
+    timeout_seconds: float = 30.0,
+    poll_interval: float = 1.0,
+) -> bool:
+    """Poll tmux pane until Claude Code shows an input prompt.
+
+    Claude Code displays a ``>`` or ``\u276f`` prompt character when ready for
+    input.  Bedrock-backed instances can take 10+ seconds to initialize,
+    so the old fixed ``sleep(2)`` was insufficient.
+
+    Returns True if ready detected, False on timeout (caller should
+    still attempt injection as a best-effort).
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        pane = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", target],
+            capture_output=True,
+            text=True,
+        )
+        if pane.returncode == 0:
+            text = pane.stdout
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            tail = lines[-10:] if len(lines) >= 10 else lines
+            for line in tail:
+                # Claude Code shows these prompt characters when ready
+                if line.startswith(("\u276f", ">", "\u203a")):
+                    return True
+                # Also detect the "Try ..." hint line
+                if "Try " in line and "write a test" in line:
+                    return True
+        time.sleep(poll_interval)
+    return False

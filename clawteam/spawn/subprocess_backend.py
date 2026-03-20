@@ -8,7 +8,16 @@ import subprocess
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
-from clawteam.spawn.command_validation import normalize_spawn_command, validate_spawn_command
+from clawteam.spawn.command_validation import (
+    command_has_workspace_arg,
+    is_claude_command,
+    is_codex_command,
+    is_gemini_command,
+    is_nanobot_command,
+    is_openclaw_command,
+    normalize_spawn_command,
+    validate_spawn_command,
+)
 
 
 class SubprocessBackend(SpawnBackend):
@@ -63,20 +72,21 @@ class SubprocessBackend(SpawnBackend):
 
         final_command = list(normalized_command)
         if skip_permissions:
-            if _is_claude_command(normalized_command):
+            if is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
-            elif _is_codex_command(normalized_command):
+            elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-        if _is_nanobot_command(normalized_command):
-            if cwd and not _command_has_workspace_arg(normalized_command):
+            elif is_gemini_command(normalized_command):
+                final_command.append("--yolo")
+        if is_nanobot_command(normalized_command):
+            if cwd and not command_has_workspace_arg(normalized_command):
                 final_command.extend(["-w", cwd])
             if prompt:
                 final_command.extend(["-m", prompt])
         elif prompt:
-            if _is_codex_command(normalized_command):
-                # Codex accepts prompt as positional argument
+            if is_codex_command(normalized_command):
                 final_command.append(prompt)
-            elif _is_openclaw_command(normalized_command):
+            elif is_openclaw_command(normalized_command):
                 # OpenClaw agent mode: use --message for the prompt
                 if "agent" not in final_command and "tui" not in final_command:
                     final_command.insert(1, "agent")
@@ -125,40 +135,3 @@ class SubprocessBackend(SpawnBackend):
             else:
                 self._processes.pop(name, None)
         return result
-
-
-def _is_claude_command(command: list[str]) -> bool:
-    """Check if the command is a claude CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]
-    return cmd in ("claude", "claude-code")
-
-
-def _is_codex_command(command: list[str]) -> bool:
-    """Check if the command is a codex CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]
-    return cmd in ("codex", "codex-cli")
-
-
-def _is_openclaw_command(command: list[str]) -> bool:
-    """Check if the command is an OpenClaw CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]
-    return cmd in ("openclaw",)
-
-
-def _is_nanobot_command(command: list[str]) -> bool:
-    """Check if the command is a nanobot CLI invocation."""
-    if not command:
-        return False
-    cmd = command[0].rsplit("/", 1)[-1]
-    return cmd == "nanobot"
-
-
-def _command_has_workspace_arg(command: list[str]) -> bool:
-    """Return True when a command already specifies a nanobot workspace."""
-    return "-w" in command or "--workspace" in command
