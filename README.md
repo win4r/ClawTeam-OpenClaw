@@ -1,4 +1,4 @@
-<h1 align="center">ClawTeam-OpenClaw</h1>
+<h1 align="center">🦞ClawTeam-OpenClaw</h1>
 
 <p align="center">
   <strong>Multi-agent swarm coordination for CLI coding agents — <a href="https://openclaw.ai">OpenClaw</a> as default</strong>
