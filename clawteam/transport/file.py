@@ -35,6 +35,21 @@ def _claimable_paths(inbox: Path) -> list[Path]:
     return sorted(paths)
 
 
+def _is_locked(path: Path) -> bool:
+    try:
+        handle = path.open("rb")
+    except Exception:
+        return True
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        return False
+    finally:
+        handle.close()
+
+
 class FileTransport(Transport):
     """Transport backed by the local filesystem.
 
@@ -160,6 +175,8 @@ class FileTransport(Transport):
         files = _claimable_paths(inbox)
         messages: list[bytes] = []
         for f in files[:limit]:
+            if f.suffix == ".consumed" and _is_locked(f):
+                continue
             try:
                 messages.append(f.read_bytes())
             except Exception:
@@ -168,7 +185,11 @@ class FileTransport(Transport):
 
     def count(self, agent_name: str) -> int:
         inbox = _inbox_dir(self.team_name, agent_name)
-        return len(_claimable_paths(inbox))
+        return sum(
+            1
+            for path in _claimable_paths(inbox)
+            if path.suffix != ".consumed" or not _is_locked(path)
+        )
 
     def list_recipients(self) -> list[str]:
         inboxes_dir = _teams_root() / self.team_name / "inboxes"

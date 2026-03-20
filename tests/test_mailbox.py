@@ -329,6 +329,28 @@ class TestReceiveQuarantine:
         received = mb.receive("bob", limit=10)
         assert [msg.content for msg in received] == ["locked"]
 
+    def test_peek_and_count_skip_locked_preclaimed_consumed_message(self, team_name):
+        mb = _make_mailbox(team_name)
+        inbox = _inbox_path(team_name, "bob")
+        consumed = inbox / "msg-0001-valid.consumed"
+
+        consumed.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "from": "alice",
+                    "to": "bob",
+                    "content": "locked",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with consumed.open("rb") as locked_file:
+            fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            assert mb.peek("bob") == []
+            assert mb.peek_count("bob") == 0
+
 
 class TestFileTransport:
     def test_fetch_consume_skips_message_if_claim_fails(self, team_name, monkeypatch):
