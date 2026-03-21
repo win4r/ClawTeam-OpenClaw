@@ -17,6 +17,7 @@ class ClawTeamConfig(BaseModel):
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
     default_backend: str = "tmux"  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
+    openclaw_agent: str = ""  # explicit OpenClaw agent id for spawned workers
 
 
 def config_path() -> Path:
@@ -58,6 +59,7 @@ def get_effective(key: str) -> tuple[str, str]:
         "workspace": "CLAWTEAM_WORKSPACE",
         "default_backend": "CLAWTEAM_DEFAULT_BACKEND",
         "skip_permissions": "CLAWTEAM_SKIP_PERMISSIONS",
+        "openclaw_agent": "CLAWTEAM_OPENCLAW_AGENT",
     }
     defaults = ClawTeamConfig()
     cfg = load_config()
