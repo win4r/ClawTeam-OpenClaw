@@ -105,6 +105,48 @@ def build_openclaw_agent_command(
     return final
 
 
+def detect_worker_replacement(
+    *,
+    team_name: str,
+    agent_name: str,
+    data_dir: str | None = None,
+    parent_pid: int | None = None,
+) -> bool:
+    from clawteam.spawn.registry import current_runtime_generation, get_agent_record
+
+    record = get_agent_record(team_name, agent_name, data_dir)
+    if not record:
+        return False
+
+    recorded_generation = str(record.get("runtime_generation") or "").strip()
+    if recorded_generation and recorded_generation != current_runtime_generation():
+        return True
+
+    recorded_pid = int(record.get("pid", 0) or 0)
+    observed_parent = parent_pid if parent_pid is not None else os.getppid()
+    return recorded_pid > 0 and observed_parent > 0 and recorded_pid != observed_parent
+
+
+def clear_replaced_worker_unfinished_tasks(
+    *,
+    team_name: str,
+    agent_name: str,
+    data_dir: str | None = None,
+    parent_pid: int | None = None,
+) -> list[str]:
+    if not detect_worker_replacement(
+        team_name=team_name,
+        agent_name=agent_name,
+        data_dir=data_dir,
+        parent_pid=parent_pid,
+    ):
+        return []
+
+    store = TaskStore(team_name)
+    cleared = store.clear_unfinished_tasks_for_owner(agent_name)
+    return [task.id for task in cleared]
+
+
 def run_worker_iteration(
     *,
     team_name: str,

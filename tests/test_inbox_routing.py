@@ -66,6 +66,9 @@ def test_inbox_peek_defaults_to_resolved_member_inbox(
             "CLAWTEAM_USER": "alice",
             "CLAWTEAM_AGENT_ID": "leader001",
             "CLAWTEAM_AGENT_NAME": "leader",
+            "CLAWTEAM_AGENT_TYPE": "leader",
+            "CLAWTEAM_TEAM_NAME": "demo",
+            "CLAWTEAM_AGENT_LEADER": "1",
         },
     )
 

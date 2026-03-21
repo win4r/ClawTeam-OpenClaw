@@ -151,13 +151,13 @@ def test_task_release_respawns_dead_owner_before_wake(monkeypatch, tmp_path):
     call = backend.calls[0]
     assert call["agent_name"] == "qa1"
     assert call["cwd"] == str(workspace)
-    assert "Functional QA" in call["prompt"]
-    assert "Start immediately" in call["prompt"]
-    assert call_order.index("spawn") < call_order.index("send")
+    assert "previous worker runtime was replaced" in call["prompt"]
+    assert "Do not resume old work" in call["prompt"]
+    assert "send" not in call_order
+    assert store.get(task.id) is None
 
     inbox = MailboxManager("demo")
-    messages = inbox.peek("qa1")
-    assert any("Start immediately" in (msg.content or "") for msg in messages)
+    assert inbox.peek("qa1") == []
 
 
 def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
@@ -606,4 +606,6 @@ def test_task_release_terminates_stale_owner_before_wake(monkeypatch, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert len(backend.calls) == 1
-    assert call_order.index("terminate") < call_order.index("send")
+    assert "terminate" in call_order
+    assert "send" not in call_order
+    assert store.get(task.id) is None
