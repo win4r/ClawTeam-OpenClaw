@@ -1614,6 +1614,7 @@ def spawn_agent(
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path (default: cwd)"),
     skip_permissions: Optional[bool] = typer.Option(None, "--skip-permissions/--no-skip-permissions", help="Skip tool approval for claude (default: from config, true)"),
     resume: bool = typer.Option(False, "--resume", "-r", help="Resume previous session if available"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model alias or ID (passed to backend via --model)"),
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
@@ -1729,6 +1730,7 @@ def spawn_agent(
         prompt=prompt,
         cwd=cwd,
         skip_permissions=skip_permissions,
+        model=model,
     )
 
     if result.startswith("Error"):
@@ -2150,10 +2152,14 @@ def launch_team(
     workspace: bool = typer.Option(False, "--workspace/--no-workspace", "-w"),
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path"),
     command_override: Optional[list[str]] = typer.Option(None, "--command", help="Override agent command"),
+    model_override: Optional[str] = typer.Option(None, "--model", help="Override model for ALL agents"),
+    model_strategy_override: Optional[str] = typer.Option(None, "--model-strategy", help="Model strategy: auto | none"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
 
+    from clawteam.config import load_config as _load_config
+    from clawteam.model_resolution import resolve_model
     from clawteam.spawn import get_backend
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
@@ -2268,6 +2274,19 @@ def launch_team(
         sp_val, _ = get_effective("skip_permissions")
         _skip = str(sp_val).lower() not in ("false", "0", "no", "")
 
+        # Resolve model for this agent (CLI override > agent > tier > strategy > template > config)
+        _cfg = _load_config()
+        resolved_model = resolve_model(
+            cli_model=model_override,
+            agent_model=agent.model,
+            agent_model_tier=agent.model_tier,
+            template_model_strategy=model_strategy_override or tmpl.model_strategy,
+            template_model=tmpl.model,
+            config_default_model=_cfg.default_model,
+            agent_type=agent.type,
+            tier_overrides=_cfg.model_tiers or None,
+        )
+
         result = be.spawn(
             command=a_cmd,
             agent_name=agent.name,
@@ -2277,6 +2296,7 @@ def launch_team(
             prompt=prompt,
             cwd=cwd,
             skip_permissions=_skip,
+            model=resolved_model,
         )
         spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
 
