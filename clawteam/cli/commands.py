@@ -70,6 +70,34 @@ def _dump(model) -> dict:
     return json.loads(model.model_dump_json(by_alias=True, exclude_none=True))
 
 
+def _handle_failed_task_notice(team: str, task, caller: str) -> dict | None:
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
+
+    failure_kind = task.metadata.get("failure_kind", "complex")
+    if failure_kind != "complex":
+        return {"failureNotice": "skipped", "failureKind": failure_kind}
+
+    leader_name = TeamManager.get_leader_name(team)
+    if not leader_name:
+        return {"failureNotice": "no-leader", "failureKind": failure_kind}
+
+    summary = task.metadata.get("failure_note") or "No failure note provided."
+    content = (
+        f"COMPLEX FAIL: task '{task.subject}' ({task.id}) failed. "
+        f"Owner={task.owner or '(unassigned)'}. "
+        f"Reason/evidence: {summary}"
+    )
+    mailbox = MailboxManager(team)
+    msg = mailbox.send(from_agent=caller, to=leader_name, content=content)
+    return {
+        "failureNotice": "sent",
+        "failureKind": failure_kind,
+        "failureLeader": leader_name,
+        "failureMessageId": msg.request_id,
+    }
+
+
 def _output(data: dict | list, human_fn=None):
     """Output data as JSON or human-readable."""
     if _json_output:
@@ -991,12 +1019,14 @@ def task_get(
 def task_update(
     team: str = typer.Argument(..., help="Team name"),
     task_id: str = typer.Argument(..., help="Task ID"),
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="New status: pending, in_progress, completed, blocked"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="New status: pending, in_progress, completed, blocked, failed"),
     owner: Optional[str] = typer.Option(None, "--owner", "-o", help="New owner"),
     subject: Optional[str] = typer.Option(None, "--subject", help="New subject"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="New description"),
     add_blocks: Optional[str] = typer.Option(None, "--add-blocks", help="Comma-separated task IDs this blocks"),
     add_blocked_by: Optional[str] = typer.Option(None, "--add-blocked-by", help="Comma-separated task IDs blocking this"),
+    failure_kind: Optional[str] = typer.Option(None, "--failure-kind", help="Failure routing kind when status=failed: regular or complex"),
+    failure_note: Optional[str] = typer.Option(None, "--failure-note", help="Concrete failure summary/evidence when status=failed"),
     wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
     message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
@@ -1011,6 +1041,19 @@ def task_update(
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
 
+    failure_metadata = None
+    if ts == TaskStatus.failed:
+        kind = (failure_kind or "complex").strip().lower()
+        if kind not in ("regular", "complex"):
+            _output({"error": "--failure-kind must be regular or complex"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+            raise typer.Exit(1)
+        failure_metadata = {"failure_kind": kind}
+        if failure_note:
+            failure_metadata["failure_note"] = failure_note.strip()
+    elif failure_kind or failure_note:
+        _output({"error": "--failure-kind/--failure-note require --status failed"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
     caller = AgentIdentity.from_env().agent_name
 
     try:
@@ -1022,6 +1065,7 @@ def task_update(
             description=description,
             add_blocks=blocks_list,
             add_blocked_by=blocked_by_list,
+            metadata=failure_metadata,
             caller=caller,
             force=force,
         )
@@ -1041,7 +1085,13 @@ def task_update(
             _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
             raise typer.Exit(1)
 
+    failure_notice = None
+    if task.status == TaskStatus.failed:
+        failure_notice = _handle_failed_task_notice(team, task, caller)
+
     data = _dump(task)
+    if failure_notice is not None:
+        data.update(failure_notice)
     if wake is None:
         _output(data, lambda d: console.print(f"[green]OK[/green] Task {d['id']} updated"))
     else:

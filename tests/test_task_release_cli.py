@@ -148,3 +148,68 @@ def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
     assert "Regression QA" in call["prompt"]
     assert "Release QA now" in call["prompt"]
     assert TaskStore("demo").get(task.id).status.value == "pending"
+
+
+def test_task_update_failed_complex_notifies_leader(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Regression QA", owner="qa1")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", task.id,
+            "--status", "failed",
+            "--failure-kind", "complex",
+            "--failure-note", "Need leader decision on ownership",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    updated = TaskStore("demo").get(task.id)
+    assert updated.status.value == "failed"
+    assert updated.metadata["failure_kind"] == "complex"
+    assert updated.metadata["failure_note"] == "Need leader decision on ownership"
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("leader")
+    assert any("COMPLEX FAIL" in (msg.content or "") for msg in messages)
+    assert any(task.id in (msg.content or "") for msg in messages)
+
+
+def test_task_update_failed_regular_does_not_notify_leader(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Regression QA", owner="qa1")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", task.id,
+            "--status", "failed",
+            "--failure-kind", "regular",
+            "--failure-note", "Clear repro, return to implement",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    updated = TaskStore("demo").get(task.id)
+    assert updated.metadata["failure_kind"] == "regular"
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("leader")
+    assert messages == []
