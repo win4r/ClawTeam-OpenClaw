@@ -345,6 +345,7 @@ Templates are TOML files — **create your own** for any domain.
 - TOML files define team archetypes (roles, tasks, prompts)
 - One command: `clawteam launch <template>`
 - Variable substitution: `{goal}`, `{team_name}`, `{agent_name}`
+- **Per-agent model assignment** (preview): assign different models to different roles — see [below](#per-agent-model-assignment-preview)
 
 </td>
 </tr>
@@ -503,6 +504,47 @@ clawteam config health
 ```
 
 </details>
+
+---
+
+## Per-Agent Model Assignment (Preview)
+
+> **Branch:** [`feat/per-agent-model-assignment`](https://github.com/win4r/ClawTeam-OpenClaw/tree/feat/per-agent-model-assignment)
+>
+> This feature is available for early testing on a separate branch. It will be merged into `main` once the companion OpenClaw `--model` flag is shipped.
+
+Assign different models to different agent roles for better cost/performance tradeoffs in multi-agent swarms.
+
+```bash
+# Install from the feature branch
+pip install -e "git+https://github.com/win4r/ClawTeam-OpenClaw.git@feat/per-agent-model-assignment#egg=clawteam"
+```
+
+**Per-agent model in templates:**
+```toml
+[template]
+name = "my-team"
+command = ["openclaw"]
+model = "sonnet-4.6"              # default for all agents
+model_strategy = "auto"           # or: leaders→strong, workers→balanced
+
+[template.leader]
+name = "lead"
+model = "opus"                    # override for leader
+
+[[template.agents]]
+name = "worker"
+model_tier = "cheap"              # cost tiers: strong / balanced / cheap
+```
+
+**CLI flags:**
+```bash
+clawteam spawn --model opus                          # single agent
+clawteam launch my-template --model gpt-5.4          # override all agents
+clawteam launch my-template --model-strategy auto     # auto-assign by role
+```
+
+See [issue #1](https://github.com/win4r/ClawTeam-OpenClaw/issues/1) for the full feature request and discussion.
 
 ---
 
