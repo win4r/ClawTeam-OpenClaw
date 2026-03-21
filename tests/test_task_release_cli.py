@@ -151,6 +151,55 @@ def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
     assert TaskStore("demo").get(task.id).status.value == "pending"
 
 
+def test_task_wake_can_be_acknowledged_then_claimed(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    task = TaskStore("demo").create("Regression QA", owner="qa1")
+
+    runner = CliRunner()
+    release = runner.invoke(
+        app,
+        ["task", "release", "demo", task.id, "--message", "Start immediately", "--no-respawn"],
+        env=env,
+    )
+    assert release.exit_code == 0, release.output
+
+    worker_env = {
+        **env,
+        "CLAWTEAM_AGENT_NAME": "qa1",
+        "CLAWTEAM_AGENT_ID": "qa1-id",
+        "CLAWTEAM_AGENT_TYPE": "general-purpose",
+        "CLAWTEAM_AGENT_LEADER": "0",
+    }
+    receive = runner.invoke(
+        app,
+        ["inbox", "receive", "demo", "--agent", "qa1", "--ack"],
+        env=worker_env,
+    )
+    assert receive.exit_code == 0, receive.output
+
+    ack_messages = MailboxManager("demo").peek("leader")
+    ack = next(msg for msg in ack_messages if msg.type.value == "ack")
+    assert ack.last_task == task.id
+    assert ack.key == f"task-wake:{task.id}"
+    assert ack.status == "acknowledged"
+
+    claim = runner.invoke(
+        app,
+        ["task", "update", "demo", task.id, "--status", "in_progress"],
+        env=worker_env,
+    )
+    assert claim.exit_code == 0, claim.output
+
+    claimed = TaskStore("demo").get(task.id)
+    assert claimed.status == TaskStatus.in_progress
+    assert claimed.locked_by == "qa1"
+
+
 def test_task_complete_auto_notifies_and_respawns_unblocked_owner(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])

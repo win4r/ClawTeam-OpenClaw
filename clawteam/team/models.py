@@ -43,6 +43,7 @@ class TaskStatus(str, Enum):
 
 class MessageType(str, Enum):
     message = "message"
+    ack = "ack"
     join_request = "join_request"
     join_approved = "join_approved"
     join_rejected = "join_rejected"
