@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +27,52 @@ def _registry_path(team_name: str) -> Path:
     return _workspaces_root() / team_name / "workspace-registry.json"
 
 
+def _registry_lock_path(team_name: str) -> Path:
+    return _workspaces_root() / team_name / ".workspace-registry.lock"
+
+
+def _acquire_file_lock(lock_file) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def _release_file_lock(lock_file) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _registry_write_lock(team_name: str):
+    lock_path = _registry_lock_path(team_name)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        _acquire_file_lock(lock_file)
+        try:
+            yield
+        finally:
+            _release_file_lock(lock_file)
+
+
 def _load_registry(team_name: str, repo_root: str) -> WorkspaceRegistry:
     path = _registry_path(team_name)
     if path.exists():
@@ -38,9 +87,18 @@ def _load_registry(team_name: str, repo_root: str) -> WorkspaceRegistry:
 def _save_registry(registry: WorkspaceRegistry) -> None:
     path = _registry_path(registry.team_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(registry.model_dump_json(indent=2), encoding="utf-8")
-    tmp.rename(path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix="workspace-registry-",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(registry.model_dump_json(indent=2))
+        Path(tmp_name).replace(path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 class WorkspaceManager:
@@ -90,13 +148,14 @@ class WorkspaceManager:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
-        registry = _load_registry(team_name, str(self.repo_root))
-        # Remove stale entry for the same agent, if any
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
-        registry.workspaces.append(info)
-        _save_registry(registry)
+        with _registry_write_lock(team_name):
+            registry = _load_registry(team_name, str(self.repo_root))
+            # Remove stale entry for the same agent, if any
+            registry.workspaces = [
+                w for w in registry.workspaces if w.agent_name != agent_name
+            ]
+            registry.workspaces.append(info)
+            _save_registry(registry)
 
         return info
 
@@ -146,11 +205,12 @@ class WorkspaceManager:
         except git.GitError as e:
             logger.warning("branch delete failed: %s", e)
 
-        registry = _load_registry(team_name, str(self.repo_root))
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
-        _save_registry(registry)
+        with _registry_write_lock(team_name):
+            registry = _load_registry(team_name, str(self.repo_root))
+            registry.workspaces = [
+                w for w in registry.workspaces if w.agent_name != agent_name
+            ]
+            _save_registry(registry)
         return True
 
     def cleanup_team(self, team_name: str) -> int:
