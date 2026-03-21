@@ -19,6 +19,12 @@ def build_agent_prompt(
     workspace_branch: str = "",
 ) -> str:
     """Build agent prompt: identity + task + optional workspace info."""
+    identity_prefix = (
+        f"CLAWTEAM_AGENT_NAME={agent_name} "
+        f"CLAWTEAM_AGENT_ID={agent_id} "
+        f"CLAWTEAM_AGENT_TYPE={agent_type} "
+        f"CLAWTEAM_TEAM_NAME={team_name}"
+    )
     lines = [
         "## Identity\n",
         f"- Name: {agent_name}",
@@ -58,17 +64,22 @@ def build_agent_prompt(
         "- A task is complete only when its stated Done when conditions are actually satisfied.",
         "",
         "## Coordination Protocol\n",
-        f"- Use `clawteam task list {team_name} --owner {agent_name}` to see your tasks.",
-        f"- Starting a task: `clawteam task update {team_name} <task-id> --status in_progress`",
-        f"- Finishing a task: `clawteam task update {team_name} <task-id> --status completed`",
-        f"- Regular fail with clear retry route: `clawteam task update {team_name} <task-id> --status failed --failure-kind regular --failure-note \"<evidence>\"`",
-        f"- Complex fail needing leader decision: `clawteam task update {team_name} <task-id> --status failed --failure-kind complex --failure-root-cause \"<cause>\" --failure-evidence \"<evidence>\" --failure-recommended-next-owner \"<owner>\" --failure-recommended-action \"<action>\"`",
+        "- IMPORTANT: OpenClaw shell/tool calls may not inherit your ClawTeam identity automatically.",
+        "- Before using `clawteam`, bootstrap your identity in the current shell:",
+        f'  `eval $({identity_prefix} clawteam identity set --agent-name {agent_name} --agent-id {agent_id} --agent-type {agent_type} --team {team_name})`',
+        "- If you run one-off commands instead of bootstrapping, prefix them explicitly with your identity:",
+        f"  `{identity_prefix} clawteam task list {team_name} --owner {agent_name}`",
+        f"- Use `{identity_prefix} clawteam task list {team_name} --owner {agent_name}` to see your tasks.",
+        f"- Starting a task: `{identity_prefix} clawteam task update {team_name} <task-id> --status in_progress`",
+        f"- Finishing a task: `{identity_prefix} clawteam task update {team_name} <task-id> --status completed`",
+        f"- Regular fail with clear retry route: `{identity_prefix} clawteam task update {team_name} <task-id> --status failed --failure-kind regular --failure-note \"<evidence>\"`",
+        f"- Complex fail needing leader decision: `{identity_prefix} clawteam task update {team_name} <task-id> --status failed --failure-kind complex --failure-root-cause \"<cause>\" --failure-evidence \"<evidence>\" --failure-recommended-next-owner \"<owner>\" --failure-recommended-action \"<action>\"`",
         "- When you finish all tasks, send a summary to the leader:",
-        f'  `clawteam inbox send {team_name} {leader_name} "All tasks completed. <brief summary>"`',
+        f'  `{identity_prefix} clawteam inbox send {team_name} {leader_name} "All tasks completed. <brief summary>"`',
         "- If you are blocked or need help, message the leader:",
-        f'  `clawteam inbox send {team_name} {leader_name} "Need help: <description>"`',
-        f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
-        f"- Before finishing, save your session: `clawteam session save {team_name} --session-id <id>`",
+        f'  `{identity_prefix} clawteam inbox send {team_name} {leader_name} "Need help: <description>"`',
+        f"- After finishing work, report your costs: `{identity_prefix} clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
+        f"- Before finishing, save your session: `{identity_prefix} clawteam session save {team_name} --session-id <id>`",
         "",
     ])
     return "\n".join(lines)
