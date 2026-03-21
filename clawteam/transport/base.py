@@ -14,7 +14,13 @@ class Transport(ABC):
 
     @abstractmethod
     def fetch(self, agent_name: str, limit: int = 10, consume: bool = True) -> list[bytes]:
-        """Fetch messages. consume=True removes them (receive), False keeps them (peek)."""
+        """Fetch opaque message bytes from a transport-specific inbox.
+
+        Transports only move raw bytes. Higher-level callers such as
+        ``MailboxManager.receive()`` are responsible for parsing those bytes
+        into ``TeamMessage`` objects and deciding whether malformed payloads
+        should be quarantined.
+        """
 
     @abstractmethod
     def count(self, agent_name: str) -> int:

@@ -119,12 +119,13 @@ class FileTransport(Transport):
     ) -> ClaimedMessage:
         def _ack() -> None:
             unlock(file_handle)
-            file_handle.close()
-            consumed_path.unlink(missing_ok=True)
+            try:
+                consumed_path.unlink(missing_ok=True)
+            finally:
+                file_handle.close()
 
         def _quarantine(error: str) -> None:
             unlock(file_handle)
-            file_handle.close()
             self._quarantine_bytes(
                 agent_name,
                 data,
@@ -132,6 +133,7 @@ class FileTransport(Transport):
                 source_name=original_path.name,
                 consumed_path=consumed_path,
             )
+            file_handle.close()
 
         return ClaimedMessage(data=data, ack=_ack, quarantine=_quarantine)
 
@@ -157,7 +159,7 @@ class FileTransport(Transport):
             if path.suffix == ".json":
                 consumed = path.with_suffix(".consumed")
                 try:
-                    path.replace(consumed)
+                    path.rename(consumed)
                 except OSError:
                     continue
             try:
