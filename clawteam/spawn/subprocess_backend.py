@@ -28,6 +28,7 @@ class SubprocessBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        model: str | None = None,
     ) -> str:
         spawn_env = os.environ.copy()
         clawteam_bin = resolve_clawteam_executable()
@@ -48,6 +49,8 @@ class SubprocessBackend(SpawnBackend):
             spawn_env["CLAWTEAM_TRANSPORT"] = transport
         if cwd:
             spawn_env["CLAWTEAM_WORKSPACE_DIR"] = cwd
+        if model:
+            spawn_env["CLAWTEAM_MODEL"] = model
         if env:
             spawn_env.update(env)
         spawn_env["PATH"] = build_spawn_path(spawn_env.get("PATH"))
@@ -66,6 +69,9 @@ class SubprocessBackend(SpawnBackend):
                 final_command.append("--dangerously-skip-permissions")
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
+        # Claude Code: pass --model if specified
+        if model and _is_claude_command(normalized_command):
+            final_command.extend(["--model", model])
         if _is_nanobot_command(normalized_command):
             if cwd and not _command_has_workspace_arg(normalized_command):
                 final_command.extend(["-w", cwd])
@@ -81,6 +87,8 @@ class SubprocessBackend(SpawnBackend):
                     final_command.insert(1, "agent")
                 # Isolate each agent in its own session
                 session_key = f"clawteam-{team_name}-{agent_name}"
+                if model:
+                    final_command.extend(["--model", model])
                 final_command.extend(["--session-id", session_key, "--message", prompt])
             else:
                 final_command.extend(["-p", prompt])

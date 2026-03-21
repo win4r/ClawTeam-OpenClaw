@@ -35,6 +35,7 @@ class TmuxBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        model: str | None = None,
     ) -> str:
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
@@ -58,6 +59,8 @@ class TmuxBackend(SpawnBackend):
             env_vars["CLAWTEAM_TRANSPORT"] = transport
         if cwd:
             env_vars["CLAWTEAM_WORKSPACE_DIR"] = cwd
+        if model:
+            env_vars["CLAWTEAM_MODEL"] = model
         if env:
             env_vars.update(env)
         env_vars["PATH"] = build_spawn_path(env_vars.get("PATH", os.environ.get("PATH")))
@@ -80,18 +83,28 @@ class TmuxBackend(SpawnBackend):
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
+        # Claude Code: pass --model if specified
+        if model and _is_claude_command(normalized_command):
+            final_command.extend(["--model", model])
+
         # OpenClaw TUI: pass --message for initial prompt and --session for isolation
         if _is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
+                if model:
+                    final_command.extend(["--model", model])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "tui" in final_command:
                 final_command.extend(["--session", session_key])
+                if model:
+                    final_command.extend(["--model", model])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "agent" in final_command:
+                if model:
+                    final_command.extend(["--model", model])
                 if prompt:
                     final_command.extend(["--message", prompt])
 
