@@ -54,6 +54,7 @@ class TaskWaiter:
         on_agent_dead: Callable[[str, list[TaskItem]], None] | None = None,
         max_respawn_attempts: int = 3,
         auto_respawn: bool = True,
+        max_concurrent_agents: int = 0,
     ):
         self.team_name = team_name
         self.agent_name = agent_name
@@ -66,10 +67,12 @@ class TaskWaiter:
         self.on_agent_dead = on_agent_dead
         self.max_respawn_attempts = max_respawn_attempts
         self.auto_respawn = auto_respawn
+        self.max_concurrent_agents = max_concurrent_agents
         self._running = False
         self._messages_received = 0
         self._known_dead: set[str] = set()
         self._respawn_attempts: dict[str, int] = {}
+        self._respawn_queue: list[str] = []
 
     def wait(self) -> WaitResult:
         """Block until all tasks are completed, timeout, or interrupted."""
@@ -196,17 +199,65 @@ class TaskWaiter:
             if abandoned and self.on_agent_dead:
                 self.on_agent_dead(agent_name, abandoned)
 
-            # Attempt auto-respawn
-            if self.auto_respawn:
-                self._respawn_agent(agent_name)
+            # Queue for respawn (don't spawn immediately — check concurrency first)
+            if self.auto_respawn and agent_name not in self._respawn_queue:
+                self._respawn_queue.append(agent_name)
 
-    def _respawn_agent(self, agent_name: str) -> None:
-        """Attempt to respawn a dead agent using stored spawn info."""
+        # Process respawn queue with concurrency limit
+        if self._respawn_queue:
+            self._process_respawn_queue()
+
+    def _process_respawn_queue(self) -> None:
+        """Process queued respawns, respecting max_concurrent_agents limit."""
+        if not self._respawn_queue:
+            return
+
+        # Check how many agents are currently alive
+        if self.max_concurrent_agents > 0:
+            try:
+                from clawteam.spawn.registry import count_alive_agents
+                alive = count_alive_agents(self.team_name)
+            except ImportError:
+                alive = 0
+
+            if alive >= self.max_concurrent_agents:
+                logger.info(
+                    "Respawn deferred: %d/%d agents alive (limit reached), "
+                    "%d in queue",
+                    alive,
+                    self.max_concurrent_agents,
+                    len(self._respawn_queue),
+                )
+                return
+
+            # Only spawn up to the available slots
+            available_slots = self.max_concurrent_agents - alive
+        else:
+            available_slots = len(self._respawn_queue)  # no limit
+
+        spawned = 0
+        remaining = []
+        for agent_name in self._respawn_queue:
+            if spawned >= available_slots:
+                remaining.append(agent_name)
+                continue
+            if self._respawn_agent(agent_name):
+                spawned += 1
+            # If respawn returned False (max attempts exceeded or no info),
+            # don't re-queue
+        self._respawn_queue = remaining
+
+    def _respawn_agent(self, agent_name: str) -> bool:
+        """Attempt to respawn a dead agent using stored spawn info.
+
+        Returns True if spawn was attempted (success or fail),
+        False if skipped (max attempts exceeded or no spawn info).
+        """
         try:
             from clawteam.spawn import get_backend
             from clawteam.spawn.registry import get_registry
         except ImportError:
-            return
+            return False
 
         attempt = self._respawn_attempts.get(agent_name, 0)
         if attempt >= self.max_respawn_attempts:
@@ -215,13 +266,13 @@ class TaskWaiter:
                 agent_name,
                 self.max_respawn_attempts,
             )
-            return
+            return False
 
         registry = get_registry(self.team_name)
         info = registry.get(agent_name)
         if not info or not info.get("command"):
             logger.warning("No spawn info for agent '%s', cannot respawn", agent_name)
-            return
+            return False
 
         backoff = respawn_backoff(attempt)
         self._respawn_attempts[agent_name] = attempt + 1
@@ -255,8 +306,10 @@ class TaskWaiter:
                 logger.info("Respawned agent '%s': %s", agent_name, result)
                 # Allow re-detection if it dies again
                 self._known_dead.discard(agent_name)
+            return True
         except Exception:
             logger.exception("Respawn failed for agent '%s'", agent_name)
+            return True
 
 
 def respawn_backoff(attempt: int, max_delay: float = 120.0) -> float:

@@ -68,7 +68,7 @@ clawteam board serve --port 8080   # Web dashboard
 | `clawteam task update <team> <id> --status <status>` | Update status |
 | `clawteam task get <team> <id>` | Get single task |
 | `clawteam task stats <team>` | Timing statistics |
-| `clawteam task wait <team>` | Block until all tasks complete |
+| `clawteam task wait <team> [--max-concurrent N]` | Block until all tasks complete (limit concurrent agents) |
 
 **Task statuses**: `pending`, `in_progress`, `completed`, `blocked`
 
@@ -104,6 +104,7 @@ Each spawned agent gets:
 - Claude Code and Codex workspace trust prompts are auto-confirmed in fresh worktrees
 - `--stagger <seconds>` adds random jitter (0 to N seconds) before each agent starts, preventing API thundering herd
 - Auto-respawn: dead agents are detected during `task wait` and automatically re-spawned (up to 3 attempts with exponential backoff)
+- `--max-concurrent N` on `task wait`: caps how many agents are alive at once — prevents API overload during respawn storms
 
 ### Messaging
 

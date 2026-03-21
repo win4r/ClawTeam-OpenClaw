@@ -340,6 +340,198 @@ def test_waiter_respawn_stops_after_max_attempts(monkeypatch, tmp_path):
     assert waiter._respawn_attempts["worker1"] == 2
 
 
+# ---------------------------------------------------------------------------
+# Concurrency-limited respawn
+# ---------------------------------------------------------------------------
+
+
+def test_respawn_deferred_when_at_max_concurrent(monkeypatch, tmp_path):
+    """When alive agents >= max_concurrent_agents, respawn queue is deferred."""
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.team.waiter.time.sleep", lambda _: None)
+
+    from clawteam.spawn.registry import register_agent
+
+    register_agent(
+        team_name="test-team",
+        agent_name="dead1",
+        backend="subprocess",
+        pid=1111,
+        command=["openclaw"],
+    )
+
+    spawn_calls: list[dict] = []
+
+    class FakeBackend:
+        def spawn(self, **kwargs):
+            spawn_calls.append(kwargs)
+            return "Agent spawned"
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: FakeBackend())
+    # Simulate 2 alive agents
+    monkeypatch.setattr("clawteam.spawn.registry.count_alive_agents", lambda _: 2)
+
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.tasks import TaskStore
+
+    task_store = TaskStore("test-team")
+    mailbox = MailboxManager("test-team")
+
+    waiter = TaskWaiter(
+        team_name="test-team",
+        agent_name="leader",
+        mailbox=mailbox,
+        task_store=task_store,
+        max_concurrent_agents=2,
+    )
+    waiter._respawn_queue = ["dead1"]
+    waiter._process_respawn_queue()
+
+    # Should NOT have spawned — at capacity
+    assert len(spawn_calls) == 0
+    # Agent should still be in the queue for next cycle
+    assert "dead1" in waiter._respawn_queue
+
+
+def test_respawn_proceeds_when_below_max_concurrent(monkeypatch, tmp_path):
+    """When alive agents < max_concurrent_agents, respawn proceeds."""
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.team.waiter.time.sleep", lambda _: None)
+
+    from clawteam.spawn.registry import register_agent
+
+    register_agent(
+        team_name="test-team",
+        agent_name="dead1",
+        backend="subprocess",
+        pid=1111,
+        command=["openclaw"],
+    )
+
+    spawn_calls: list[dict] = []
+
+    class FakeBackend:
+        def spawn(self, **kwargs):
+            spawn_calls.append(kwargs)
+            return "Agent 'dead1' spawned"
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: FakeBackend())
+    # Simulate 1 alive agent, limit is 3
+    monkeypatch.setattr("clawteam.spawn.registry.count_alive_agents", lambda _: 1)
+
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.tasks import TaskStore
+
+    task_store = TaskStore("test-team")
+    mailbox = MailboxManager("test-team")
+
+    waiter = TaskWaiter(
+        team_name="test-team",
+        agent_name="leader",
+        mailbox=mailbox,
+        task_store=task_store,
+        max_concurrent_agents=3,
+    )
+    waiter._respawn_queue = ["dead1"]
+    waiter._process_respawn_queue()
+
+    assert len(spawn_calls) == 1
+    assert waiter._respawn_queue == []
+
+
+def test_respawn_only_fills_available_slots(monkeypatch, tmp_path):
+    """With 3 dead, 1 alive, limit 2 → should only respawn 1."""
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.team.waiter.time.sleep", lambda _: None)
+
+    from clawteam.spawn.registry import register_agent
+
+    for name in ["dead1", "dead2", "dead3"]:
+        register_agent(
+            team_name="test-team",
+            agent_name=name,
+            backend="subprocess",
+            pid=1111,
+            command=["openclaw"],
+        )
+
+    spawn_calls: list[dict] = []
+
+    class FakeBackend:
+        def spawn(self, **kwargs):
+            spawn_calls.append(kwargs)
+            return f"Agent '{kwargs['agent_name']}' spawned"
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: FakeBackend())
+    monkeypatch.setattr("clawteam.spawn.registry.count_alive_agents", lambda _: 1)
+
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.tasks import TaskStore
+
+    task_store = TaskStore("test-team")
+    mailbox = MailboxManager("test-team")
+
+    waiter = TaskWaiter(
+        team_name="test-team",
+        agent_name="leader",
+        mailbox=mailbox,
+        task_store=task_store,
+        max_concurrent_agents=2,
+    )
+    waiter._respawn_queue = ["dead1", "dead2", "dead3"]
+    waiter._process_respawn_queue()
+
+    # Only 1 slot available (2 - 1 alive)
+    assert len(spawn_calls) == 1
+    # Remaining 2 stay in queue
+    assert len(waiter._respawn_queue) == 2
+
+
+def test_respawn_unlimited_when_max_concurrent_zero(monkeypatch, tmp_path):
+    """When max_concurrent_agents=0 (default), all queued agents respawn."""
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.team.waiter.time.sleep", lambda _: None)
+
+    from clawteam.spawn.registry import register_agent
+
+    for name in ["dead1", "dead2"]:
+        register_agent(
+            team_name="test-team",
+            agent_name=name,
+            backend="subprocess",
+            pid=1111,
+            command=["openclaw"],
+        )
+
+    spawn_calls: list[dict] = []
+
+    class FakeBackend:
+        def spawn(self, **kwargs):
+            spawn_calls.append(kwargs)
+            return f"Agent '{kwargs['agent_name']}' spawned"
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: FakeBackend())
+
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.tasks import TaskStore
+
+    task_store = TaskStore("test-team")
+    mailbox = MailboxManager("test-team")
+
+    waiter = TaskWaiter(
+        team_name="test-team",
+        agent_name="leader",
+        mailbox=mailbox,
+        task_store=task_store,
+        max_concurrent_agents=0,  # unlimited
+    )
+    waiter._respawn_queue = ["dead1", "dead2"]
+    waiter._process_respawn_queue()
+
+    assert len(spawn_calls) == 2
+    assert waiter._respawn_queue == []
+
+
 def test_waiter_respawn_clears_known_dead_on_success(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     monkeypatch.setattr("clawteam.team.waiter.time.sleep", lambda _: None)

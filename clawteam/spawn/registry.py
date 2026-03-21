@@ -88,6 +88,17 @@ def list_dead_agents(team_name: str) -> list[str]:
     return dead
 
 
+def count_alive_agents(team_name: str) -> int:
+    """Return the number of agents whose processes are still alive."""
+    registry = get_registry(team_name)
+    count = 0
+    for name in registry:
+        alive = is_agent_alive(team_name, name)
+        if alive is True:
+            count += 1
+    return count
+
+
 def _tmux_pane_alive(target: str) -> bool:
     """Check if a tmux target (session:window) still has a running process."""
     if not target:

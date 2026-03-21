@@ -125,7 +125,17 @@ When using `task wait`, dead agents are automatically detected and respawned:
 - Dead agent's in-progress tasks are reset to `pending`
 - The agent is re-spawned using the same command and configuration
 - Exponential backoff between retries: 10s, 30s, 60s, 120s
-- Max 3 respawn attempts per agent (configurable)
+- Max 3 respawn attempts per agent (`--max-respawn N`)
+- **Concurrency limit**: `--max-concurrent N` caps how many agents are alive at once — queued respawns wait until a slot opens. This prevents overloading the API when multiple agents die and need respawning.
+- Disable respawn entirely with `--no-respawn`
+
+```bash
+# Wait with max 2 agents hitting the API simultaneously
+clawteam task wait my-team --max-concurrent 2
+
+# Wait with custom respawn limit
+clawteam task wait my-team --max-concurrent 3 --max-respawn 5
+```
 
 This handles transient failures like Claude API 500 errors gracefully.
 

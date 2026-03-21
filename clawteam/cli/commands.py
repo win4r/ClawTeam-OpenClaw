@@ -1105,6 +1105,9 @@ def task_wait(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent inbox to monitor (default: leader from team config)"),
     poll_interval: float = typer.Option(5.0, "--poll-interval", "-p", help="Seconds between polls"),
     timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to wait (default: no limit)"),
+    max_concurrent: int = typer.Option(0, "--max-concurrent", "-c", help="Max agents alive at once during respawn (0=unlimited)"),
+    max_respawn: int = typer.Option(3, "--max-respawn", help="Max respawn attempts per dead agent"),
+    no_respawn: bool = typer.Option(False, "--no-respawn", help="Disable auto-respawn of dead agents"),
 ):
     """Block until all tasks in a team are completed."""
     from clawteam.team.mailbox import MailboxManager
@@ -1199,6 +1202,9 @@ def task_wait(
         on_message=_on_message,
         on_progress=_on_progress,
         on_agent_dead=_on_agent_dead,
+        max_respawn_attempts=max_respawn,
+        auto_respawn=not no_respawn,
+        max_concurrent_agents=max_concurrent,
     )
     result = waiter.wait()
 
