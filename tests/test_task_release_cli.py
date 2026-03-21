@@ -102,6 +102,64 @@ def test_task_release_respawns_dead_owner_in_existing_workspace(monkeypatch, tmp
     assert any("Start immediately" in (msg.content or "") for msg in messages)
 
 
+def test_task_release_respawns_dead_owner_before_wake(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    call_order: list[str] = []
+
+    def fake_state(team, agent, data_dir=None):
+        call_order.append("state")
+        return "dead"
+
+    original_send = MailboxManager.send
+    original_spawn = backend.spawn
+
+    def recording_send(self, *args, **kwargs):
+        call_order.append("send")
+        return original_send(self, *args, **kwargs)
+
+    def recording_spawn(**kwargs):
+        call_order.append("spawn")
+        return original_spawn(**kwargs)
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", fake_state)
+    monkeypatch.setattr(MailboxManager, "send", recording_send)
+    monkeypatch.setattr(backend, "spawn", recording_spawn)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "release", "demo", task.id, "--message", "Start immediately"],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["agent_name"] == "qa1"
+    assert call["cwd"] == str(workspace)
+    assert "Functional QA" in call["prompt"]
+    assert "Start immediately" in call["prompt"]
+    assert call_order.index("spawn") < call_order.index("send")
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("qa1")
+    assert any("Start immediately" in (msg.content or "") for msg in messages)
+
+
 def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
