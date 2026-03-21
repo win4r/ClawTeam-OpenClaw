@@ -1620,12 +1620,12 @@ def spawn_agent(
     Defaults: tmux backend, openclaw command, git worktree isolation, skip-permissions on.
     """
     from clawteam.config import get_effective
-    from clawteam.spawn import get_backend
+    from clawteam.spawn import get_backend, normalize_backend_name
 
     # Resolve defaults from config
     if backend is None:
         backend, _ = get_effective("default_backend")
-        backend = backend or "tmux"
+    backend = normalize_backend_name(backend)
     if not command:
         command = ["openclaw"]
 
@@ -2154,7 +2154,7 @@ def launch_team(
     """Launch a full agent team from a template with one command."""
     import os as _os
 
-    from clawteam.spawn import get_backend
+    from clawteam.spawn import get_backend, normalize_backend_name
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
@@ -2169,7 +2169,7 @@ def launch_team(
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
-    be_name = backend or tmpl.backend
+    be_name = normalize_backend_name(backend or tmpl.backend)
     cmd = command_override or tmpl.command
 
     # 3. Create team

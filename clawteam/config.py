@@ -9,13 +9,18 @@ from pathlib import Path
 from pydantic import BaseModel
 
 
+def _default_backend() -> str:
+    """Use subprocess by default on Windows where tmux is typically unavailable."""
+    return "subprocess" if os.name == "nt" else "tmux"
+
+
 class ClawTeamConfig(BaseModel):
     data_dir: str = ""
     user: str = ""
     default_team: str = ""
     transport: str = ""
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
-    default_backend: str = "tmux"  # "tmux" | "subprocess"
+    default_backend: str = _default_backend()  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
 
 
