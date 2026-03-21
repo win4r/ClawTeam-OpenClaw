@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import tempfile
+from pathlib import Path
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -46,7 +48,9 @@ class SubprocessBackend(SpawnBackend):
         transport = os.environ.get("CLAWTEAM_TRANSPORT", "")
         if transport:
             spawn_env["CLAWTEAM_TRANSPORT"] = transport
-        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "")
+        from clawteam.team.models import get_data_dir
+
+        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "") or str(get_data_dir())
         if data_dir:
             spawn_env["CLAWTEAM_DATA_DIR"] = data_dir
         if cwd:
@@ -75,17 +79,31 @@ class SubprocessBackend(SpawnBackend):
                 final_command.extend(["-w", cwd])
             if prompt:
                 final_command.extend(["-m", prompt])
+        elif _is_openclaw_command(normalized_command):
+            session_key = f"clawteam-{team_name}-{agent_name}"
+            prompt_file = ""
+            if prompt:
+                prompt_path = Path(tempfile.gettempdir()) / f"clawteam-worker-{team_name}-{agent_name}.prompt.txt"
+                prompt_path.write_text(prompt, encoding="utf-8")
+                prompt_file = str(prompt_path)
+            final_command = [
+                clawteam_bin,
+                "worker",
+                "run",
+                team_name,
+                "--agent",
+                agent_name,
+                "--command",
+                normalized_command[0],
+            ]
+            for arg in normalized_command[1:]:
+                final_command.extend(["--command-arg", arg])
+            if prompt_file:
+                final_command.extend(["--startup-prompt-file", prompt_file])
         elif prompt:
             if _is_codex_command(normalized_command):
                 # Codex accepts prompt as positional argument
                 final_command.append(prompt)
-            elif _is_openclaw_command(normalized_command):
-                # OpenClaw agent mode: use --message for the prompt
-                if "agent" not in final_command and "tui" not in final_command:
-                    final_command.insert(1, "agent")
-                # Isolate each agent in its own session
-                session_key = f"clawteam-{team_name}-{agent_name}"
-                final_command.extend(["--session-id", session_key, "--message", prompt])
             else:
                 final_command.extend(["-p", prompt])
 

@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import os
+
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -2218,6 +2220,73 @@ def spawn_agent(
 
 
 # ============================================================================
+# Worker Runtime Commands
+# ============================================================================
+
+worker_app = typer.Typer(help="Formal ClawTeam worker runtime")
+app.add_typer(worker_app, name="worker")
+
+
+@worker_app.command("run")
+def worker_run(
+    team: str = typer.Argument(..., help="Team name"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Worker agent name (default: resolved identity)"),
+    command: str = typer.Option("openclaw", "--command", help="Underlying agent CLI (currently openclaw)"),
+    command_arg: list[str] = typer.Option(None, "--command-arg", help="Extra args for the underlying agent CLI"),
+    startup_prompt_file: str = typer.Option("", "--startup-prompt-file", help="Path to startup prompt text to prepend on each dispatched task"),
+    poll_interval: float = typer.Option(2.0, "--poll-interval", help="Idle poll interval in seconds"),
+    timeout_seconds: int = typer.Option(900, "--timeout-seconds", help="Underlying agent turn timeout in seconds"),
+    once: bool = typer.Option(False, "--once", help="Run a single iteration and exit"),
+):
+    """Run the formal ClawTeam worker loop.
+
+    This is the real execution runtime for OpenClaw-backed workers:
+    receive/ack -> claim -> dispatch agent turn -> continue polling.
+    """
+    from clawteam.identity import AgentIdentity
+    from clawteam.worker_runtime import load_startup_prompt, worker_loop
+
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
+    if agent_name != identity.agent_name:
+        _output({"error": f"identity agent '{identity.agent_name}' does not match requested worker '{agent_name}'"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    os.environ.setdefault("CLAWTEAM_AGENT_NAME", identity.agent_name)
+    os.environ.setdefault("CLAWTEAM_AGENT_ID", identity.agent_id)
+    os.environ.setdefault("CLAWTEAM_AGENT_TYPE", identity.agent_type)
+    os.environ.setdefault("CLAWTEAM_TEAM_NAME", identity.team_name or team)
+    if identity.data_dir:
+        os.environ.setdefault("CLAWTEAM_DATA_DIR", identity.data_dir)
+
+    base_command = [command] + list(command_arg or [])
+    startup_prompt = load_startup_prompt(startup_prompt_file)
+    history = worker_loop(
+        team_name=team,
+        agent_name=agent_name,
+        startup_prompt=startup_prompt,
+        base_command=base_command,
+        timeout_seconds=timeout_seconds,
+        poll_interval=poll_interval,
+        cwd=os.environ.get("CLAWTEAM_WORKSPACE_DIR") or None,
+        once=once,
+    )
+    result = {"iterations": history, "count": len(history)}
+
+    def _human(d):
+        last = d["iterations"][-1] if d["iterations"] else {}
+        console.print(f"[green]Worker runtime[/green] {agent_name} iteration(s): {d['count']}")
+        if last:
+            console.print(f"  Last status: {last.get('status', '')}")
+            if last.get("taskId"):
+                console.print(f"  Task: {last['taskId']}")
+            if last.get("returncode") is not None:
+                console.print(f"  Agent return code: {last['returncode']}")
+
+    _output(result, _human)
+
+
+# ============================================================================
 # Identity Commands
 # ============================================================================
 
@@ -2261,6 +2330,7 @@ def identity_set(
     agent_name: Optional[str] = typer.Option(None, "--agent-name", help="Agent name"),
     agent_type: Optional[str] = typer.Option(None, "--agent-type", help="Agent type"),
     team: Optional[str] = typer.Option(None, "--team", help="Team name"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="ClawTeam data dir"),
 ):
     """Print shell export commands to set identity environment variables."""
     lines = []
@@ -2272,9 +2342,11 @@ def identity_set(
         lines.append(f'export CLAWTEAM_AGENT_TYPE="{agent_type}"')
     if team:
         lines.append(f'export CLAWTEAM_TEAM_NAME="{team}"')
+    if data_dir:
+        lines.append(f'export CLAWTEAM_DATA_DIR="{data_dir}"')
 
     if not lines:
-        console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team[/yellow]")
+        console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team, --data-dir[/yellow]")
         raise typer.Exit(1)
 
     output = "\n".join(lines)
