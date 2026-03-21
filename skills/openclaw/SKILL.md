@@ -69,6 +69,7 @@ clawteam board serve --port 8080   # Web dashboard
 | `clawteam task get <team> <id>` | Get single task |
 | `clawteam task stats <team>` | Timing statistics |
 | `clawteam task wait <team> [--max-concurrent N]` | Block until all tasks complete (limit concurrent agents) |
+| `clawteam search "query" [--brief\|--detailed\|--deep]` | Search Perplexity Pro (sequential, locked) |
 
 **Task statuses**: `pending`, `in_progress`, `completed`, `blocked`
 
@@ -97,6 +98,8 @@ Each spawned agent gets:
 - Its own git worktree branch (`clawteam/{team}/{agent}`)
 - An auto-injected coordination prompt (how to use clawteam CLI)
 - Environment variables: `CLAWTEAM_AGENT_NAME`, `CLAWTEAM_TEAM_NAME`, etc.
+
+**Perplexity Pro search:** All agents can use `clawteam search "query"` for web research. Queries are serialized via file locking — only one agent uses the browser at a time. No CDP conflicts, no API overload.
 
 **Spawn safety features:**
 - Commands are pre-validated before launch — you get a clear error if the agent CLI is not installed

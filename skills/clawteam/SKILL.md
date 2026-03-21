@@ -161,6 +161,42 @@ clawteam task wait my-team --max-concurrent 3 --max-respawn 5
 
 This handles transient failures like Claude API 500 errors gracefully.
 
+### Perplexity Pro Search (Sequential)
+
+All agents can search Perplexity Pro via `clawteam search`. Queries are **serialized with file locking** — only one agent uses the Chrome CDP browser at a time, others wait in queue. This prevents CDP session conflicts and is server-friendly.
+
+```bash
+# Standard search
+clawteam search "What are the latest advances in quantum computing?"
+
+# Brief answer
+clawteam search --brief "Explain Docker containers"
+
+# Detailed research
+clawteam search --detailed "Compare React vs Vue in 2026"
+
+# Deep Research (up to 10 min)
+clawteam search --deep "History of semiconductor manufacturing"
+
+# Analyze a URL
+clawteam search --url https://example.com/article "Summarize this article"
+
+# JSON output
+clawteam --json search "quantum computing"
+```
+
+| Flag | Description |
+|------|-------------|
+| `--brief` | Short 2-3 sentence answer |
+| `--detailed` | Comprehensive detailed answer |
+| `--deep` | Deep Research mode (extended timeout) |
+| `--url <URL>` | Include a URL for analysis |
+| `--lock-timeout N` | Max seconds to wait for lock (default: 300) |
+
+**How it works:** Uses `flock` on `/tmp/.perplexity-search.lock` to serialize access. Agents queue in FIFO order. A 3-second cooldown between queries prevents Perplexity rate limiting.
+
+**For team workflows:** Any agent (leader or worker) can call `clawteam search`. The lock ensures sequential, conflict-free access to the shared Chrome instance.
+
 ### Task Lifecycle
 
 ```bash

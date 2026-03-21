@@ -2315,5 +2315,72 @@ def launch_team(
     _output(out, _human)
 
 
+# ---------------------------------------------------------------------------
+# Search — sequential Perplexity Pro access
+# ---------------------------------------------------------------------------
+
+
+@app.command("search")
+def search(
+    query: str = typer.Argument(..., help="Search query for Perplexity Pro"),
+    brief: bool = typer.Option(False, "--brief", help="Request a brief answer"),
+    detailed: bool = typer.Option(False, "--detailed", help="Request a detailed answer"),
+    deep: bool = typer.Option(False, "--deep", help="Use Deep Research mode (up to 10 min)"),
+    url: Optional[str] = typer.Option(None, "--url", help="URL for Perplexity to analyze"),
+    lock_timeout: int = typer.Option(300, "--lock-timeout", help="Max seconds to wait for lock"),
+):
+    """Search Perplexity Pro with sequential locking.
+
+    Only one agent can query Perplexity at a time. Others wait in queue.
+    This prevents CDP conflicts when multiple agents share one Chrome instance.
+    """
+    import subprocess as sp
+
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "perplexity-search.sh"
+    if not script.exists():
+        console.print(f"[red]Error:[/red] perplexity-search.sh not found at {script}")
+        raise typer.Exit(1)
+
+    cmd = [str(script)]
+    if brief:
+        cmd.append("--brief")
+    if detailed:
+        cmd.append("--detailed")
+    if deep:
+        cmd.append("--deep")
+    if url:
+        cmd.extend(["--url", url])
+    cmd.append(query)
+
+    env = {**__import__("os").environ, "PERPLEXITY_LOCK_TIMEOUT": str(lock_timeout)}
+
+    result = sp.run(cmd, capture_output=True, text=True, env=env)
+
+    if result.stdout.strip():
+        if _json_output:
+            print(result.stdout.strip())
+        else:
+            try:
+                data = json.loads(result.stdout)
+                answer = data.get("answer", "")
+                sources = data.get("sources", [])
+                mode = data.get("mode", "standard")
+                console.print(f"\n[bold cyan]Perplexity Pro[/bold cyan] ({mode})\n")
+                console.print(answer)
+                if sources:
+                    console.print("\n[bold]Sources:[/bold]")
+                    for s in sources[:10]:
+                        console.print(f"  • {s.get('title', '?')} — {s.get('url', '')}")
+                console.print()
+            except json.JSONDecodeError:
+                print(result.stdout)
+
+    if result.stderr.strip():
+        console.print(f"[yellow]{result.stderr.strip()}[/yellow]", highlight=False)
+
+    if result.returncode != 0:
+        raise typer.Exit(result.returncode)
+
+
 if __name__ == "__main__":
     app()
