@@ -126,6 +126,15 @@ def run_worker_iteration(
         return {"status": "idle", "messages": len(drained)}
 
     task = pending[0]
+    message_count = len(visible_messages)
+    if message_count == 0:
+        return {
+            "status": "waiting_for_wake",
+            "messages": 0,
+            "acked": 0,
+            "taskId": task.id,
+        }
+
     matched_wakes = mailbox.receive_matching(
         agent_name,
         lambda msg: msg.key == f"task-wake:{task.id}" or msg.last_task == task.id,
@@ -133,7 +142,14 @@ def run_worker_iteration(
         acknowledge=True,
     )
     acked_count = len(matched_wakes)
-    message_count = len(visible_messages)
+
+    if acked_count == 0:
+        return {
+            "status": "waiting_for_wake",
+            "messages": message_count,
+            "acked": 0,
+            "taskId": task.id,
+        }
 
     try:
         claimed = store.update(task.id, status=TaskStatus.in_progress, caller=agent_name)
