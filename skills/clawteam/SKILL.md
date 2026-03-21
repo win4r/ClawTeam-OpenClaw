@@ -102,6 +102,28 @@ clawteam inbox send my-team worker1 "Start implementing the auth module"
 clawteam board live my-team --interval 3
 ```
 
+### Recommended Defaults (Server-Friendly)
+
+When using Claude API (or any rate-limited LLM API), **always** use these flags to avoid 500/429 errors:
+
+```bash
+# Spawn: stagger agents to avoid thundering herd
+clawteam spawn -t my-team -n worker1 --task "..." --stagger 8
+clawteam spawn -t my-team -n worker2 --task "..." --stagger 8
+
+# Wait: limit concurrent agents + auto-respawn
+clawteam task wait my-team --max-concurrent 3 --max-respawn 5
+```
+
+| Setting | Recommended | Why |
+|---------|-------------|-----|
+| `--stagger 8` | **Always** for multi-agent spawn | Random 0-8s jitter prevents all agents hitting API at once |
+| `--max-concurrent 3` | **Always** for `task wait` | Caps live agents — respawns queue until a slot opens |
+| `--max-respawn 5` | For unreliable APIs | More retries for transient 500 errors |
+| `--no-respawn` | For debugging | Disable auto-respawn to inspect failures |
+
+**Rule of thumb:** Set `--max-concurrent` to your API's concurrent request limit (e.g., 3 for Claude, 5 for GPT). Set `--stagger` to `agents × 2` seconds (e.g., 4 agents → `--stagger 8`).
+
 ### Spawn Defaults
 
 Spawning agents uses sensible defaults — no flags needed for the common case:
@@ -112,7 +134,7 @@ Spawning agents uses sensible defaults — no flags needed for the common case:
 | Command | `claude` | `clawteam spawn tmux my-cmd ...` |
 | Workspace | `auto` (git worktree) | `--no-workspace` or config `workspace=never` |
 | Permissions | skip (no approval needed) | `--no-skip-permissions` or config `skip_permissions=false` |
-| Stagger | `0` (no delay) | `--stagger 8` (random 0-8s jitter before agent starts) |
+| Stagger | `0` (no delay) | `--stagger 8` (recommended for multi-agent) |
 
 Agents spawned with defaults get:
 - Their own **git worktree** (isolated branch, no conflicts with other agents)

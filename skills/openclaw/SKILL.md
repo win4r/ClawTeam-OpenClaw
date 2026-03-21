@@ -211,11 +211,33 @@ clawteam task create <team> "Integration tests" -o tester --blocked-by <backend-
 ### Phase 3: Spawn Workers
 ```bash
 # Each spawn launches an openclaw tui in its own tmux window
-# Use --stagger 8 to avoid API thundering herd (random 0-8s jitter per agent)
+# --stagger 8: random 0-8s jitter per agent to avoid API thundering herd
 clawteam spawn -t <team> -n architect --task "Design REST API schema for <goal>" --stagger 8
 clawteam spawn -t <team> -n backend --task "Implement backend based on API schema" --stagger 8
 clawteam spawn -t <team> -n frontend --task "Build React frontend" --stagger 8
 clawteam spawn -t <team> -n tester --task "Write and run integration tests" --stagger 8
+```
+
+### Server-Friendly Defaults
+
+**Always use these when spawning multiple agents against rate-limited APIs (Claude, GPT, etc.):**
+
+| Flag | Where | Recommended | Purpose |
+|------|-------|-------------|---------|
+| `--stagger 8` | `spawn` | All multi-agent spawns | Random jitter prevents thundering herd |
+| `--max-concurrent 3` | `task wait` | Always | Caps live agents; respawns queue until slot opens |
+| `--max-respawn 5` | `task wait` | Unreliable APIs | More retries for transient 500/429 errors |
+
+**Rule of thumb:**
+- `--stagger` = `num_agents × 2` (e.g., 4 agents → `--stagger 8`)
+- `--max-concurrent` = your API's concurrent request limit (Claude ≈ 3, GPT ≈ 5)
+
+```bash
+# Full server-friendly spawn + wait pattern:
+clawteam spawn -t <team> -n worker1 --task "..." --stagger 8
+clawteam spawn -t <team> -n worker2 --task "..." --stagger 8
+clawteam spawn -t <team> -n worker3 --task "..." --stagger 8
+clawteam task wait <team> --max-concurrent 3 --max-respawn 5
 ```
 
 ### Phase 4: Monitor Loop
