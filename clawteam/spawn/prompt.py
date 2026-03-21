@@ -6,6 +6,9 @@ by the ClawTeam Skill, not duplicated here.
 
 from __future__ import annotations
 
+import os
+import shlex
+
 
 def build_agent_prompt(
     agent_name: str,
@@ -19,11 +22,23 @@ def build_agent_prompt(
     workspace_branch: str = "",
 ) -> str:
     """Build agent prompt: identity + task + optional workspace info."""
-    identity_prefix = (
-        f"CLAWTEAM_AGENT_NAME={agent_name} "
-        f"CLAWTEAM_AGENT_ID={agent_id} "
-        f"CLAWTEAM_AGENT_TYPE={agent_type} "
-        f"CLAWTEAM_TEAM_NAME={team_name}"
+    shell_env = [
+        ("CLAWTEAM_AGENT_NAME", agent_name),
+        ("CLAWTEAM_AGENT_ID", agent_id),
+        ("CLAWTEAM_AGENT_TYPE", agent_type),
+        ("CLAWTEAM_TEAM_NAME", team_name),
+    ]
+    data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "").strip()
+    if data_dir:
+        shell_env.append(("CLAWTEAM_DATA_DIR", data_dir))
+    identity_prefix = " ".join(
+        f"{key}={shlex.quote(value)}" for key, value in shell_env
+    )
+    bootstrap_cmd = (
+        f"eval $({identity_prefix} clawteam identity set --agent-name {shlex.quote(agent_name)} "
+        f"--agent-id {shlex.quote(agent_id)} --agent-type {shlex.quote(agent_type)} "
+        f"--team {shlex.quote(team_name)}"
+        f"{f' --data-dir {shlex.quote(data_dir)}' if data_dir else ''} --shell)"
     )
     lines = [
         "## Identity\n",
@@ -66,7 +81,7 @@ def build_agent_prompt(
         "## Coordination Protocol\n",
         "- IMPORTANT: OpenClaw shell/tool calls may not inherit your ClawTeam identity automatically.",
         "- Before using `clawteam`, bootstrap your identity in the current shell:",
-        f'  `eval $({identity_prefix} clawteam identity set --agent-name {agent_name} --agent-id {agent_id} --agent-type {agent_type} --team {team_name})`',
+        f"  `{bootstrap_cmd}`",
         "- If you run one-off commands instead of bootstrapping, prefix them explicitly with your identity:",
         f"  `{identity_prefix} clawteam task list {team_name} --owner {agent_name}`",
         f"- Use `{identity_prefix} clawteam task list {team_name} --owner {agent_name}` to see your tasks.",

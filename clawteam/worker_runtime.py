@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -54,10 +55,12 @@ def build_worker_task_prompt(
     if task.description:
         lines.extend(["", "## Description", task.description])
     bootstrap = (
-        f'eval $(clawteam identity set --agent-name {agent_name} --agent-id '
-        f'{os.environ.get("CLAWTEAM_AGENT_ID", agent_name)} --agent-type '
-        f'{os.environ.get("CLAWTEAM_AGENT_TYPE", "general-purpose")} --team {team_name} '
-        f'--data-dir "{os.environ.get("CLAWTEAM_DATA_DIR", "")}")'
+        "eval $(clawteam identity set "
+        f"--agent-name {shlex.quote(agent_name)} "
+        f"--agent-id {shlex.quote(os.environ.get('CLAWTEAM_AGENT_ID', agent_name))} "
+        f"--agent-type {shlex.quote(os.environ.get('CLAWTEAM_AGENT_TYPE', 'general-purpose'))} "
+        f"--team {shlex.quote(team_name)} "
+        f"--data-dir {shlex.quote(os.environ.get('CLAWTEAM_DATA_DIR', ''))} --shell)"
     )
     lines.extend([
         "",
@@ -114,21 +117,57 @@ def run_worker_iteration(
     from clawteam.team.mailbox import MailboxManager
 
     mailbox = MailboxManager(team_name)
-    messages = mailbox.receive(agent_name, limit=50, acknowledge=True)
+    visible_messages = mailbox.peek(agent_name)
 
     store = TaskStore(team_name)
     pending = store.list_tasks(status=TaskStatus.pending, owner=agent_name)
     if not pending:
-        return {"status": "idle", "messages": len(messages)}
+        drained = mailbox.receive(agent_name, limit=50, acknowledge=True)
+        return {"status": "idle", "messages": len(drained)}
 
     task = pending[0]
+    message_count = len(visible_messages)
+    if message_count == 0:
+        return {
+            "status": "waiting_for_wake",
+            "messages": 0,
+            "acked": 0,
+            "taskId": task.id,
+        }
+
+    matched_wakes = mailbox.receive_matching(
+        agent_name,
+        lambda msg: msg.key == f"task-wake:{task.id}" or msg.last_task == task.id,
+        limit=50,
+        acknowledge=True,
+    )
+    acked_count = len(matched_wakes)
+
+    if acked_count == 0:
+        return {
+            "status": "waiting_for_wake",
+            "messages": message_count,
+            "acked": 0,
+            "taskId": task.id,
+        }
+
     try:
         claimed = store.update(task.id, status=TaskStatus.in_progress, caller=agent_name)
     except TaskLockError:
-        return {"status": "contended", "messages": len(messages), "taskId": task.id}
+        return {
+            "status": "contended",
+            "messages": message_count,
+            "acked": acked_count,
+            "taskId": task.id,
+        }
 
     if claimed is None:
-        return {"status": "missing", "messages": len(messages), "taskId": task.id}
+        return {
+            "status": "missing",
+            "messages": message_count,
+            "acked": acked_count,
+            "taskId": task.id,
+        }
 
     leader_name = TeamManager.get_leader_name(team_name) or "leader"
     workspace_dir = os.environ.get("CLAWTEAM_WORKSPACE_DIR", cwd or "")
@@ -153,7 +192,8 @@ def run_worker_iteration(
     result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
     return {
         "status": "dispatched",
-        "messages": len(messages),
+        "messages": message_count,
+        "acked": acked_count,
         "taskId": claimed.id,
         "returncode": result.returncode,
         "stdout": result.stdout,

@@ -2331,19 +2331,22 @@ def identity_set(
     agent_type: Optional[str] = typer.Option(None, "--agent-type", help="Agent type"),
     team: Optional[str] = typer.Option(None, "--team", help="Team name"),
     data_dir: Optional[str] = typer.Option(None, "--data-dir", help="ClawTeam data dir"),
+    shell: bool = typer.Option(False, "--shell", help="Print pure shell export lines only"),
 ):
     """Print shell export commands to set identity environment variables."""
+    import shlex
+
     lines = []
     if agent_id:
-        lines.append(f'export CLAWTEAM_AGENT_ID="{agent_id}"')
+        lines.append(f"export CLAWTEAM_AGENT_ID={shlex.quote(agent_id)}")
     if agent_name:
-        lines.append(f'export CLAWTEAM_AGENT_NAME="{agent_name}"')
+        lines.append(f"export CLAWTEAM_AGENT_NAME={shlex.quote(agent_name)}")
     if agent_type:
-        lines.append(f'export CLAWTEAM_AGENT_TYPE="{agent_type}"')
+        lines.append(f"export CLAWTEAM_AGENT_TYPE={shlex.quote(agent_type)}")
     if team:
-        lines.append(f'export CLAWTEAM_TEAM_NAME="{team}"')
+        lines.append(f"export CLAWTEAM_TEAM_NAME={shlex.quote(team)}")
     if data_dir:
-        lines.append(f'export CLAWTEAM_DATA_DIR="{data_dir}"')
+        lines.append(f"export CLAWTEAM_DATA_DIR={shlex.quote(data_dir)}")
 
     if not lines:
         console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team, --data-dir[/yellow]")
@@ -2352,10 +2355,12 @@ def identity_set(
     output = "\n".join(lines)
     if _json_output:
         print(json.dumps({"exports": lines}))
+    elif shell:
+        print(output)
     else:
         console.print("Run the following to set your identity:\n")
         console.print(output)
-        console.print(f"\nOr use: eval $(clawteam identity set {' '.join(sys.argv[3:])})")
+        console.print(f"\nOr use: eval $(clawteam identity set --shell {' '.join(sys.argv[3:])})")
 
 
 # ============================================================================

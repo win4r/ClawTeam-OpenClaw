@@ -174,6 +174,37 @@ class TestAcknowledgement:
         assert ack.key == "task-wake:t1"
         assert ack.status == "acknowledged"
 
+    def test_receive_matching_acks_only_selected_task_wake(self, team_name):
+        mb = _make_mailbox(team_name)
+        wake_1 = mb.send(
+            from_agent="leader",
+            to="worker",
+            content="wake task 1",
+            key="task-wake:t1",
+            last_task="t1",
+        )
+        wake_2 = mb.send(
+            from_agent="leader",
+            to="worker",
+            content="wake task 2",
+            key="task-wake:t2",
+            last_task="t2",
+        )
+
+        matched = mb.receive_matching(
+            "worker",
+            lambda msg: msg.last_task == "t1",
+            acknowledge=True,
+        )
+
+        assert [msg.request_id for msg in matched] == [wake_1.request_id]
+        remaining = mb.peek("worker")
+        assert [msg.request_id for msg in remaining] == [wake_2.request_id]
+
+        ack_messages = mb.receive("leader")
+        assert [msg.type for msg in ack_messages] == [MessageType.ack]
+        assert ack_messages[0].request_id == wake_1.request_id
+
     def test_ack_event_is_logged_and_carries_task_context(self, team_name):
         mb = _make_mailbox(team_name)
         sent = mb.send(
