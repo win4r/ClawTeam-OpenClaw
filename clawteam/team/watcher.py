@@ -25,6 +25,7 @@ class InboxWatcher:
         poll_interval: float = 1.0,
         json_output: bool = False,
         exec_cmd: str | None = None,
+        acknowledge: bool = False,
     ):
         self.team_name = team_name
         self.agent_name = agent_name
@@ -32,6 +33,7 @@ class InboxWatcher:
         self.poll_interval = poll_interval
         self.json_output = json_output
         self.exec_cmd = exec_cmd
+        self.acknowledge = acknowledge
         self._running = False
 
     def watch(self) -> None:
@@ -48,7 +50,11 @@ class InboxWatcher:
 
         try:
             while self._running:
-                messages = self.mailbox.receive(self.agent_name, limit=10)
+                messages = self.mailbox.receive(
+                    self.agent_name,
+                    limit=10,
+                    acknowledge=self.acknowledge,
+                )
                 for msg in messages:
                     self._output(msg)
                     if self.exec_cmd:

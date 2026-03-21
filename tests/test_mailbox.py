@@ -154,3 +154,42 @@ class TestEventLog:
 
         events = mb.get_event_log(limit=5)
         assert len(events) == 5
+
+
+class TestAcknowledgement:
+    def test_receive_can_emit_ack_to_sender(self, team_name):
+        mb = _make_mailbox(team_name)
+        sent = mb.send(from_agent="alice", to="bob", content="wake up", key="task-wake:t1")
+
+        received = mb.receive("bob", acknowledge=True)
+        assert [msg.request_id for msg in received] == [sent.request_id]
+
+        ack_messages = mb.receive("alice")
+        assert len(ack_messages) == 1
+        ack = ack_messages[0]
+        assert ack.type == MessageType.ack
+        assert ack.request_id == sent.request_id
+        assert ack.from_agent == "bob"
+        assert ack.to == "alice"
+        assert ack.key == "task-wake:t1"
+        assert ack.status == "acknowledged"
+
+    def test_ack_event_is_logged_and_carries_task_context(self, team_name):
+        mb = _make_mailbox(team_name)
+        sent = mb.send(
+            from_agent="leader",
+            to="worker",
+            content="Start task now",
+            key="task-wake:task-123",
+            last_task="task-123",
+            status="pending",
+        )
+
+        mb.receive("worker", acknowledge=True)
+
+        events = mb.get_event_log(limit=10)
+        sent_event = next(evt for evt in events if evt.request_id == sent.request_id and evt.type == MessageType.message)
+        ack_event = next(evt for evt in events if evt.request_id == sent.request_id and evt.type == MessageType.ack)
+        assert sent_event.status == "pending"
+        assert ack_event.last_task == "task-123"
+        assert ack_event.status == "acknowledged"

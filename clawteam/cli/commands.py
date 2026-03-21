@@ -662,6 +662,7 @@ def inbox_receive(
     team: str = typer.Argument(..., help="Team name"),
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
     limit: int = typer.Option(10, "--limit", "-l", help="Max messages to receive"),
+    ack: bool = typer.Option(False, "--ack", help="Send ack messages back to original senders for received messages"),
 ):
     """Receive and consume messages from inbox."""
     from clawteam.identity import AgentIdentity
@@ -671,7 +672,7 @@ def inbox_receive(
     identity = AgentIdentity.from_env()
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
-    messages = mailbox.receive(agent_name, limit=limit)
+    messages = mailbox.receive(agent_name, limit=limit, acknowledge=ack)
 
     data = [_dump(m) for m in messages]
 
@@ -757,6 +758,7 @@ def inbox_watch(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
     poll_interval: float = typer.Option(1.0, "--poll-interval", "-p", help="Poll interval in seconds"),
     exec_cmd: Optional[str] = typer.Option(None, "--exec", "-e", help="Shell command to run for each new message (msg data in env vars)"),
+    ack: bool = typer.Option(False, "--ack", help="Send ack messages back to original senders for received messages"),
 ):
     """Watch inbox for new messages (blocking, Ctrl+C to stop).
 
@@ -785,6 +787,7 @@ def inbox_watch(
         poll_interval=poll_interval,
         json_output=_json_output,
         exec_cmd=exec_cmd,
+        acknowledge=ack,
     )
     watcher.watch()
 
@@ -925,7 +928,14 @@ def _release_task_to_owner(
 
     release_message = message.strip() or f"Task {task.id} is released. Start now and report only real blockers."
     mailbox = MailboxManager(team)
-    mailbox.send(caller, task.owner, release_message)
+    mailbox.send(
+        caller,
+        task.owner,
+        release_message,
+        key=f"task-wake:{task.id}",
+        last_task=task.id,
+        status=task.status.value,
+    )
 
     alive_before = is_agent_alive(team, task.owner)
     respawned = False
