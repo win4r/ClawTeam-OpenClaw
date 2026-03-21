@@ -56,6 +56,9 @@ class TmuxBackend(SpawnBackend):
         transport = os.environ.get("CLAWTEAM_TRANSPORT", "")
         if transport:
             env_vars["CLAWTEAM_TRANSPORT"] = transport
+        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "")
+        if data_dir:
+            env_vars["CLAWTEAM_DATA_DIR"] = data_dir
         if cwd:
             env_vars["CLAWTEAM_WORKSPACE_DIR"] = cwd
         if env:
@@ -238,6 +241,7 @@ class TmuxBackend(SpawnBackend):
             session_key=session_key,
             agent_id=agent_id,
             agent_type=agent_type,
+            data_dir=env_vars.get("CLAWTEAM_DATA_DIR", ""),
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"

@@ -46,6 +46,9 @@ class SubprocessBackend(SpawnBackend):
         transport = os.environ.get("CLAWTEAM_TRANSPORT", "")
         if transport:
             spawn_env["CLAWTEAM_TRANSPORT"] = transport
+        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "")
+        if data_dir:
+            spawn_env["CLAWTEAM_DATA_DIR"] = data_dir
         if cwd:
             spawn_env["CLAWTEAM_WORKSPACE_DIR"] = cwd
         if env:
@@ -116,6 +119,7 @@ class SubprocessBackend(SpawnBackend):
             session_key=session_key,
             agent_id=agent_id,
             agent_type=agent_type,
+            data_dir=spawn_env.get("CLAWTEAM_DATA_DIR", ""),
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"

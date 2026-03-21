@@ -60,6 +60,18 @@ def main(
         import os
         os.environ["CLAWTEAM_DATA_DIR"] = data_dir
         _data_dir = data_dir
+    else:
+        try:
+            from clawteam.identity import resolve_runtime_data_dir
+
+            runtime_data_dir = resolve_runtime_data_dir()
+            if runtime_data_dir:
+                import os
+
+                os.environ.setdefault("CLAWTEAM_DATA_DIR", runtime_data_dir)
+                _data_dir = runtime_data_dir
+        except Exception:
+            pass
     if transport:
         import os
         os.environ["CLAWTEAM_TRANSPORT"] = transport
@@ -115,6 +127,8 @@ def _output(data: dict | list, human_fn=None):
 
 
 def _require_team_identity(team: str):
+    import os
+
     from clawteam.identity import AgentIdentity
 
     identity = AgentIdentity.from_env()
@@ -140,6 +154,18 @@ def _require_team_identity(team: str):
             lambda d: console.print(f"[red]{d['error']}[/red]"),
         )
         raise typer.Exit(1)
+    if not identity.data_dir:
+        _output(
+            {
+                "error": (
+                    "Missing ClawTeam data_dir for this OpenClaw session. "
+                    "Respawn the worker through clawteam so the session key maps to the correct team storage."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    os.environ["CLAWTEAM_DATA_DIR"] = identity.data_dir
     return identity
 
 
@@ -2211,6 +2237,7 @@ def identity_show():
         "user": identity.user,
         "agentType": identity.agent_type,
         "teamName": identity.team_name,
+        "dataDir": identity.data_dir,
         "isLeader": identity.is_leader,
         "planModeRequired": identity.plan_mode_required,
     }
@@ -2221,6 +2248,7 @@ def identity_show():
         console.print(f"User:       {d['user'] or '(none)'}")
         console.print(f"Agent Type: {d['agentType']}")
         console.print(f"Team:       {d['teamName'] or '(none)'}")
+        console.print(f"Data Dir:   {d['dataDir'] or '(none)'}")
         console.print(f"Is Leader:  {d['isLeader']}")
         console.print(f"Plan Mode:  {d['planModeRequired']}")
 
