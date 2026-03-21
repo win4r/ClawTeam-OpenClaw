@@ -1,13 +1,13 @@
 [template]
 name = "five-step-delivery"
-description = "Reusable 5-step delivery workflow: Scope -> Setup -> Implement -> QA -> Deliver"
+description = "Reusable delivery workflow: Scope -> Setup -> Implement -> QA -> Review -> Deliver"
 command = ["openclaw"]
 backend = "tmux"
 
 [template.leader]
 name = "leader"
 type = "leader"
-task = """You are the team leader for a reusable 5-step delivery workflow.
+task = """You are the team leader for a reusable delivery workflow.
 Your goal: {goal}
 
 Workflow to enforce:
@@ -15,21 +15,24 @@ Workflow to enforce:
 2. Setup
 3. Implement
 4. QA
-5. Deliver
+5. Review
+6. Deliver
 
 Operating rules:
 - Prefer the smallest closed-loop delivery path.
 - Do not skip QA.
+- Do not skip Review.
 - Do not present unverified work as complete.
 - Do not treat PR creation as merge-ready.
 - If a worker is blocked, require a concrete blocker report.
 - If QA fails, route work back to implementation instead of pretending delivery is done.
+- If Review finds code-quality or design problems, route work back instead of pretending delivery is ready.
 
 Your job:
 - Coordinate the team using clawteam tasks and inbox messages.
 - Keep task descriptions concrete and verification-oriented.
-- Produce the final summary only after QA evidence is available.
-- In the final report, clearly separate: delivered, validated, not validated, and remaining risks.
+- Produce the final summary only after QA and Review evidence are available.
+- In the final report, clearly separate: delivered, validated, reviewed, not validated, and remaining risks.
 """
 
 [[template.agents]]
@@ -101,11 +104,36 @@ When reporting, include:
 - actual results for each scenario
 - pass/fail summary
 - repro steps for failures
-- recommendation: return to Implement or move to Deliver
+- recommendation: return to Implement or move to Review
 
 Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
 If blocked, notify leader:
 `clawteam inbox send {team_name} leader "QA BLOCKED: [exact blocker]"`
+When done, send a summary to leader and update the task status.
+"""
+
+[[template.agents]]
+name = "review1"
+type = "general-purpose"
+task = """You own the Review stage.
+The team goal is: {goal}
+
+Execution contract:
+- Review the implemented change after QA for code quality, maintainability, design, and obvious risk.
+- Treat this as code review, not QA replay.
+- Check whether the change is understandable, scoped correctly, and consistent with the stated goal.
+- Do not approve based only on task status; inspect the actual code and evidence.
+- If review fails, clearly state what must be fixed before delivery.
+
+When reporting, include:
+- files/diff areas reviewed
+- review findings
+- required fixes vs optional suggestions
+- delivery recommendation: return to Implement or move to Deliver
+
+Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
+If blocked, notify leader:
+`clawteam inbox send {team_name} leader "REVIEW BLOCKED: [exact blocker]"`
 When done, send a summary to leader and update the task status.
 """
 
@@ -215,7 +243,7 @@ Done when:
 2. 相关回归点检查完成
 3. 结果明确为 pass / fail / blocked
 4. 若失败，给出可复现 blocker
-5. 若通过，给出可交付结论
+5. 若通过，给出进入 Review 的依据
 
 Do not:
 - 不要脑补通过
@@ -229,7 +257,36 @@ Report:
 - Pass/fail summary
 - Repro steps for failures
 - Risk assessment
-- Recommendation: back to Implement or move to Deliver
+- Recommendation: back to Implement or move to Review
+"""
+
+[[template.tasks]]
+subject = "Review code quality, maintainability, and delivery readiness"
+owner = "review1"
+description = """Goal:
+在 QA 之后，对真实代码改动做独立 code review，检查质量、可维护性、设计一致性和交付风险。
+
+Context:
+- Goal: {goal}
+
+Done when:
+1. 已检查关键改动文件和核心 diff
+2. 已判断改动是否与目标一致
+3. 已给出必须修复项和可选建议
+4. 已明确结论：可交付 / 需回退 Implement
+5. 已给出进入 Deliver 的依据或阻塞原因
+
+Do not:
+- 不要把 code review 退化成重复 QA
+- 不要只因为任务状态是 completed 就默认通过
+- 不要忽略明显的结构、命名、边界和风险问题
+
+Report:
+- Files/diff reviewed
+- Findings
+- Required fixes
+- Optional suggestions
+- Delivery recommendation
 """
 
 [[template.tasks]]
@@ -242,20 +299,21 @@ Context:
 - Goal: {goal}
 
 Done when:
-1. 汇总 scope/setup/implement/qa 结果
+1. 汇总 scope/setup/implement/qa/review 结果
 2. 给出最终交付物位置
 3. 给出真实完成度判断
 4. 给出残余风险
 5. 给出下一步人工动作建议
 
 Do not:
-- 不要把 QA 未通过包装成交付完成
+- 不要把 QA 或 Review 未通过包装成交付完成
 - 不要把已提交 PR 说成已可合并
 - 不要隐藏剩余风险
 
 Report:
 - What was delivered
 - Evidence of validation
+- Evidence of review
 - Current status: ready / not ready
 - Remaining risks
 - Required human action
