@@ -92,6 +92,31 @@ class TestLoadBuiltinTemplate:
             if task.owner:
                 assert task.owner in agent_names, f"Task owner '{task.owner}' not in agents"
 
+    def test_five_step_delivery_parallel_structure(self):
+        tmpl = load_template("five-step-delivery")
+        agent_names = {tmpl.leader.name} | {a.name for a in tmpl.agents}
+        assert {"config1", "dev1", "dev2", "qa1", "qa2", "review1"}.issubset(agent_names)
+
+        by_subject = {task.subject: task for task in tmpl.tasks}
+        assert by_subject["Implement backend/data changes with real validation"].blocked_by == [
+            "Prepare repo, branch, env, and runnable baseline"
+        ]
+        assert by_subject["Implement frontend/UI changes with real validation"].blocked_by == [
+            "Prepare repo, branch, env, and runnable baseline"
+        ]
+        assert by_subject["Run main-flow QA on the real change"].blocked_by == [
+            "Implement backend/data changes with real validation",
+            "Implement frontend/UI changes with real validation",
+        ]
+        assert by_subject["Run edge-case and regression QA on the real change"].blocked_by == [
+            "Implement backend/data changes with real validation",
+            "Implement frontend/UI changes with real validation",
+        ]
+        assert by_subject["Review code quality, maintainability, and delivery readiness"].blocked_by == [
+            "Run main-flow QA on the real change",
+            "Run edge-case and regression QA on the real change",
+        ]
+
 
 class TestLoadTemplateNotFound:
     def test_missing_template_raises(self):

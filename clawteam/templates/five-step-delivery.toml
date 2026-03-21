@@ -1,6 +1,6 @@
 [template]
 name = "five-step-delivery"
-description = "Reusable delivery workflow: Scope -> Setup -> Implement -> QA -> Review -> Deliver"
+description = "Reusable delivery workflow: Scope -> Setup -> parallel Backend/UI Implement -> parallel Main-flow/Regression QA -> Review -> Deliver"
 command = ["openclaw"]
 backend = "tmux"
 
@@ -13,8 +13,8 @@ Your goal: {goal}
 Workflow to enforce:
 1. Scope
 2. Setup
-3. Implement
-4. QA
+3. Parallel Implement (backend + frontend/UI)
+4. Parallel QA (main-flow + edge/regression)
 5. Review
 6. Deliver
 
@@ -63,10 +63,11 @@ When done, send a summary to leader and update the task status.
 [[template.agents]]
 name = "dev1"
 type = "general-purpose"
-task = """You own the Implement stage.
+task = """You own the backend/data implementation lane.
 The team goal is: {goal}
 
 Execution contract:
+- Implement backend, API, data, service, and state-handling changes.
 - Make the minimum necessary code change.
 - Validate with real commands whenever possible.
 - Do not claim success based on theory alone.
@@ -82,25 +83,53 @@ When reporting, include:
 
 Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
 If blocked, notify leader:
-`clawteam inbox send {team_name} leader "IMPLEMENT BLOCKED: [exact blocker]"`
+`clawteam inbox send {team_name} leader "DEV BACKEND BLOCKED: [exact blocker]"`
+When done, send a summary to leader and update the task status.
+"""
+
+[[template.agents]]
+name = "dev2"
+type = "general-purpose"
+task = """You own the frontend/UI implementation lane.
+The team goal is: {goal}
+
+Execution contract:
+- Implement frontend, UI, page, state-display, and interaction changes.
+- Make the minimum necessary code change.
+- Validate with real commands whenever possible.
+- Do not claim success based on theory alone.
+- Do not use mock/stub results to pretend the task is complete.
+- Keep the change scope tight and explain why each changed file matters.
+- Coordinate with backend contracts rather than inventing incompatible assumptions.
+
+When reporting, include:
+- files changed
+- why they changed
+- commands executed
+- actual results
+- remaining risks or uncertainty
+
+Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
+If blocked, notify leader:
+`clawteam inbox send {team_name} leader "DEV FRONTEND BLOCKED: [exact blocker]"`
 When done, send a summary to leader and update the task status.
 """
 
 [[template.agents]]
 name = "qa1"
 type = "general-purpose"
-task = """You own the QA stage.
+task = """You own the main-flow QA lane.
 The team goal is: {goal}
 
 Execution contract:
-- Run functional and regression QA on the real change.
+- Validate the primary happy-path and core user workflow on the real change.
 - Report pass, fail, or blocked based only on real evidence.
 - Do not say 'looks good' without test evidence.
 - Do not mark work as validated if it was not actually verified.
 - If QA fails, describe reproducible failure conditions.
 
 When reporting, include:
-- test scenarios executed
+- main-flow scenarios executed
 - actual results for each scenario
 - pass/fail summary
 - repro steps for failures
@@ -108,7 +137,33 @@ When reporting, include:
 
 Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
 If blocked, notify leader:
-`clawteam inbox send {team_name} leader "QA BLOCKED: [exact blocker]"`
+`clawteam inbox send {team_name} leader "QA MAIN-FLOW BLOCKED: [exact blocker]"`
+When done, send a summary to leader and update the task status.
+"""
+
+[[template.agents]]
+name = "qa2"
+type = "general-purpose"
+task = """You own the edge/regression QA lane.
+The team goal is: {goal}
+
+Execution contract:
+- Validate edge cases, degraded paths, regressions, and failure handling on the real change.
+- Report pass, fail, or blocked based only on real evidence.
+- Do not say 'looks good' without test evidence.
+- Do not mark work as validated if it was not actually verified.
+- If QA fails, describe reproducible failure conditions.
+
+When reporting, include:
+- regression and edge-case scenarios executed
+- actual results for each scenario
+- pass/fail summary
+- repro steps for failures
+- recommendation: return to Implement or move to Review
+
+Check your tasks: `clawteam task list {team_name} --owner {agent_name}`
+If blocked, notify leader:
+`clawteam inbox send {team_name} leader "QA REGRESSION BLOCKED: [exact blocker]"`
 When done, send a summary to leader and update the task status.
 """
 
@@ -200,17 +255,17 @@ Report:
 """
 
 [[template.tasks]]
-subject = "Implement the minimal code change with real validation"
+subject = "Implement backend/data changes with real validation"
 owner = "dev1"
 blocked_by = ["Prepare repo, branch, env, and runnable baseline"]
 description = """Goal:
-只完成本次最小必要代码修改，并做真实本地验证。
+只完成本次最小必要的后端/数据/API 修改，并做真实本地验证。
 
 Context:
 - Goal: {goal}
 
 Done when:
-1. 代码改动已完成
+1. 后端或数据改动已完成
 2. 改动范围清晰可解释
 3. 至少相关构建/测试/运行验证真实通过
 4. 未通过项已明确说明原因
@@ -232,17 +287,81 @@ Report:
 """
 
 [[template.tasks]]
-subject = "Run functional and regression QA on the real change"
-owner = "qa1"
-blocked_by = ["Implement the minimal code change with real validation"]
+subject = "Implement frontend/UI changes with real validation"
+owner = "dev2"
+blocked_by = ["Prepare repo, branch, env, and runnable baseline"]
 description = """Goal:
-基于实现结果做真实功能验证和回归验证，只接受真实通过或真实失败。
+只完成本次最小必要的前端/UI/交互修改，并做真实本地验证。
 
 Context:
 - Goal: {goal}
 
 Done when:
-1. 核心功能验证完成
+1. 前端或交互改动已完成
+2. 与后端契约保持一致
+3. 至少相关构建/测试/运行验证真实通过
+4. 未通过项已明确说明原因
+5. 输出给 QA 的验证上下文
+
+Do not:
+- 不要 mock/stub 冒充完成
+- 不要偷偷扩大改动范围
+- 不要把“理论上能行”当成完成
+- 不要跳过验证直接交付
+
+Report:
+- Files changed
+- Why changed
+- Commands executed
+- Real results
+- Known risks / remaining uncertainty
+- Handoff notes for QA
+"""
+
+[[template.tasks]]
+subject = "Run main-flow QA on the real change"
+owner = "qa1"
+blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
+description = """Goal:
+基于实现结果做真实主流程验证，只接受真实通过或真实失败。
+
+Context:
+- Goal: {goal}
+
+Done when:
+1. 核心主流程验证完成
+2. 结果明确为 pass / fail / blocked
+3. 若失败，给出可复现 blocker
+4. 若通过，给出进入 Review 的依据
+5. 输出真实验证证据
+
+Do not:
+- 不要脑补通过
+- 不要用 mock 结果替代真实验证
+- 不要把未验证说成已验证
+- 不要只说 looks good 而没有证据
+
+Report:
+- Test scenarios executed
+- Actual result for each scenario
+- Pass/fail summary
+- Repro steps for failures
+- Risk assessment
+- Recommendation: back to Implement or move to Review
+"""
+
+[[template.tasks]]
+subject = "Run edge-case and regression QA on the real change"
+owner = "qa2"
+blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
+description = """Goal:
+基于实现结果做真实边界、回归、降级路径验证，只接受真实通过或真实失败。
+
+Context:
+- Goal: {goal}
+
+Done when:
+1. 边界和异常场景验证完成
 2. 相关回归点检查完成
 3. 结果明确为 pass / fail / blocked
 4. 若失败，给出可复现 blocker
@@ -266,7 +385,7 @@ Report:
 [[template.tasks]]
 subject = "Review code quality, maintainability, and delivery readiness"
 owner = "review1"
-blocked_by = ["Run functional and regression QA on the real change"]
+blocked_by = ["Run main-flow QA on the real change", "Run edge-case and regression QA on the real change"]
 description = """Goal:
 在 QA 之后，对真实代码改动做独立 code review，检查质量、可维护性、设计一致性和交付风险。
 
