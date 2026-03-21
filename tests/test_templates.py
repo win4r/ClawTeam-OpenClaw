@@ -54,6 +54,10 @@ class TestModels:
         t = TaskDef(subject="Build feature", description="details", owner="alice")
         assert t.subject == "Build feature"
 
+    def test_task_def_blocked_by(self):
+        t = TaskDef(subject="Build feature", blocked_by=["Setup"])
+        assert t.blocked_by == ["Setup"]
+
     def test_template_def_defaults(self):
         leader = AgentDef(name="lead")
         t = TemplateDef(name="my-tmpl", leader=leader)

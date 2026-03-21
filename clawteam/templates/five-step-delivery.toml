@@ -170,6 +170,7 @@ Report:
 [[template.tasks]]
 subject = "Prepare repo, branch, env, and runnable baseline"
 owner = "config1"
+blocked_by = ["Scope the task into a minimal deliverable"]
 description = """Goal:
 确认代码仓、分支、依赖、环境、启动命令、测试命令都真实可运行，为实现阶段建立干净基线。
 
@@ -201,6 +202,7 @@ Report:
 [[template.tasks]]
 subject = "Implement the minimal code change with real validation"
 owner = "dev1"
+blocked_by = ["Prepare repo, branch, env, and runnable baseline"]
 description = """Goal:
 只完成本次最小必要代码修改，并做真实本地验证。
 
@@ -232,6 +234,7 @@ Report:
 [[template.tasks]]
 subject = "Run functional and regression QA on the real change"
 owner = "qa1"
+blocked_by = ["Implement the minimal code change with real validation"]
 description = """Goal:
 基于实现结果做真实功能验证和回归验证，只接受真实通过或真实失败。
 
@@ -263,6 +266,7 @@ Report:
 [[template.tasks]]
 subject = "Review code quality, maintainability, and delivery readiness"
 owner = "review1"
+blocked_by = ["Run functional and regression QA on the real change"]
 description = """Goal:
 在 QA 之后，对真实代码改动做独立 code review，检查质量、可维护性、设计一致性和交付风险。
 
@@ -292,6 +296,7 @@ Report:
 [[template.tasks]]
 subject = "Prepare final delivery package and human decision summary"
 owner = "leader"
+blocked_by = ["Review code quality, maintainability, and delivery readiness"]
 description = """Goal:
 整理最终交付结果，让人可以直接决定是否接受、继续修改或发起 PR/合并流程。
 

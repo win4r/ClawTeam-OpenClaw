@@ -2452,12 +2452,22 @@ def launch_team(
 
     # 5. Create tasks
     ts = TaskStore(t_name)
+    created_task_ids: dict[str, str] = {}
     for task_def in tmpl.tasks:
-        ts.create(
+        missing_dependencies = [name for name in task_def.blocked_by if name not in created_task_ids]
+        if missing_dependencies:
+            console.print(
+                f"[red]Template task '{task_def.subject}' references unknown or not-yet-created blocked_by tasks: {', '.join(missing_dependencies)}[/red]"
+            )
+            raise typer.Exit(1)
+
+        task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
+            blocked_by=[created_task_ids[name] for name in task_def.blocked_by],
         )
+        created_task_ids[task_def.subject] = task.id
 
     # 6. Get backend
     try:
