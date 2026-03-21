@@ -763,6 +763,163 @@ task_app = typer.Typer(help="Task management commands")
 app.add_typer(task_app, name="task")
 
 
+def _workspace_registry_path(team_name: str) -> Path:
+    from clawteam.team.models import get_data_dir
+
+    return get_data_dir() / "workspaces" / team_name / "workspace-registry.json"
+
+
+def _load_workspace_info(team_name: str, agent_name: str):
+    from clawteam.workspace.models import WorkspaceRegistry
+
+    path = _workspace_registry_path(team_name)
+    if not path.exists():
+        return None
+    try:
+        registry = WorkspaceRegistry.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    for ws in registry.workspaces:
+        if ws.agent_name == agent_name:
+            return ws
+    return None
+
+
+def _build_release_task_prompt(task, message: str) -> str:
+    lines = []
+    if message.strip():
+        lines.append(message.strip())
+        lines.append("")
+    lines.extend([
+        f"Resume task {task.id} now.",
+        f"Subject: {task.subject}",
+    ])
+    if task.description:
+        lines.extend([
+            "Description:",
+            task.description,
+        ])
+    lines.extend([
+        "",
+        "This task has been released back to you.",
+        "Start immediately, update the task to in_progress when you begin, and only mark it completed when truly done.",
+    ])
+    return "\n".join(lines)
+
+
+def _spawn_existing_agent(
+    team_name: str,
+    agent_name: str,
+    agent_id: str,
+    agent_type: str,
+    task_prompt: str,
+    repo: str | None = None,
+    backend: str | None = None,
+    skip_permissions: bool | None = None,
+    resume: bool = True,
+) -> dict[str, str]:
+    import os as _os
+
+    from clawteam.config import get_effective
+    from clawteam.spawn import get_backend
+    from clawteam.spawn.prompt import build_agent_prompt
+    from clawteam.spawn.sessions import SessionStore
+    from clawteam.team.manager import TeamManager
+
+    if backend is None:
+        backend, _ = get_effective("default_backend")
+        backend = backend or "tmux"
+    if skip_permissions is None:
+        sp_val, _ = get_effective("skip_permissions")
+        skip_permissions = str(sp_val).lower() not in ("false", "0", "no", "")
+
+    ws_info = _load_workspace_info(team_name, agent_name)
+    cwd = ws_info.worktree_path if ws_info else (str(Path(repo).resolve()) if repo else None)
+    ws_branch = ws_info.branch_name if ws_info else ""
+
+    prompt = build_agent_prompt(
+        agent_name=agent_name,
+        agent_id=agent_id,
+        agent_type=agent_type,
+        team_name=team_name,
+        leader_name=TeamManager.get_leader_name(team_name) or "leader",
+        task=task_prompt,
+        user=_os.environ.get("CLAWTEAM_USER", ""),
+        workspace_dir=cwd or "",
+        workspace_branch=ws_branch,
+    )
+
+    command = ["openclaw"]
+    if resume:
+        session = SessionStore(team_name).load(agent_name)
+        if session and session.session_id and command[0] in ("claude",):
+            command = list(command) + ["--resume", session.session_id]
+        prompt += "\nYou are resuming a previous session."
+
+    be = get_backend(backend)
+    result = be.spawn(
+        command=command,
+        agent_name=agent_name,
+        agent_id=agent_id,
+        agent_type=agent_type,
+        team_name=team_name,
+        prompt=prompt,
+        cwd=cwd,
+        skip_permissions=skip_permissions,
+    )
+    if result.startswith("Error"):
+        raise RuntimeError(result)
+    return {
+        "backend": backend,
+        "cwd": cwd or "",
+        "workspaceBranch": ws_branch,
+        "message": result,
+    }
+
+
+def _release_task_to_owner(
+    team: str,
+    task,
+    caller: str,
+    message: str = "",
+    respawn: bool = True,
+    repo: str | None = None,
+) -> dict:
+    from clawteam.spawn.registry import is_agent_alive
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
+
+    release_message = message.strip() or f"Task {task.id} is released. Start now and report only real blockers."
+    mailbox = MailboxManager(team)
+    mailbox.send(caller, task.owner, release_message)
+
+    alive_before = is_agent_alive(team, task.owner)
+    respawned = False
+    spawn_info = None
+    if respawn and alive_before is not True:
+        member = TeamManager.get_member(team, task.owner)
+        if member is None:
+            raise RuntimeError(f"Owner '{task.owner}' is not a registered team member")
+        spawn_info = _spawn_existing_agent(
+            team_name=team,
+            agent_name=task.owner,
+            agent_id=member.agent_id,
+            agent_type=member.agent_type,
+            task_prompt=_build_release_task_prompt(task, release_message),
+            repo=repo,
+            resume=True,
+        )
+        respawned = True
+
+    return {
+        "messageSent": True,
+        "message": release_message,
+        "ownerAliveBefore": alive_before,
+        "respawned": respawned,
+        "spawn": spawn_info or {},
+    }
+
+
 @task_app.command("create")
 def task_create(
     team: str = typer.Argument(..., help="Team name"),
@@ -840,6 +997,8 @@ def task_update(
     description: Optional[str] = typer.Option(None, "--description", "-d", help="New description"),
     add_blocks: Optional[str] = typer.Option(None, "--add-blocks", help="Comma-separated task IDs this blocks"),
     add_blocked_by: Optional[str] = typer.Option(None, "--add-blocked-by", help="Comma-separated task IDs blocking this"),
+    wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
 ):
     """Update a task (TaskUpdate)."""
@@ -874,8 +1033,100 @@ def task_update(
         _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
+    wake = None
+    if wake_owner and task.status == TaskStatus.pending and task.owner:
+        try:
+            wake = _release_task_to_owner(team, task, caller=caller, message=message or "", respawn=True)
+        except RuntimeError as e:
+            _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+            raise typer.Exit(1)
+
     data = _dump(task)
-    _output(data, lambda d: console.print(f"[green]OK[/green] Task {d['id']} updated"))
+    if wake is None:
+        _output(data, lambda d: console.print(f"[green]OK[/green] Task {d['id']} updated"))
+    else:
+        data.update(wake)
+
+        def _human(d):
+            console.print(f"[green]OK[/green] Task {d['id']} updated")
+            console.print(f"  Owner alive before: {d['ownerAliveBefore']}")
+            if d.get("respawned"):
+                console.print(f"  Respawned: yes ({d['spawn'].get('backend', '')})")
+                if d["spawn"].get("cwd"):
+                    console.print(f"  Workspace: {d['spawn']['cwd']}")
+            else:
+                console.print("  Respawned: no")
+
+        _output(data, _human)
+
+
+@task_app.command("release")
+def task_release(
+    team: str = typer.Argument(..., help="Team name"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+    message: str = typer.Option("", "--message", "-m", help="Optional release instruction to send to the owner"),
+    respawn: bool = typer.Option(True, "--respawn/--no-respawn", help="Respawn the owner automatically if their worker is dead"),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Fallback repo/workspace path when no registered workspace exists"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force override task lock while releasing"),
+):
+    """Release a task back to its owner, notify them, and auto-respawn if needed."""
+    from clawteam.identity import AgentIdentity
+    from clawteam.team.models import TaskStatus
+    from clawteam.team.tasks import TaskLockError, TaskStore
+
+    caller = AgentIdentity.from_env().agent_name
+    store = TaskStore(team)
+    existing = store.get(task_id)
+    if not existing:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    if not existing.owner:
+        _output({"error": f"Task '{task_id}' has no owner"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    try:
+        task = store.update(
+            task_id,
+            status=TaskStatus.pending,
+            caller=caller,
+            force=force,
+        )
+    except TaskLockError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    if not task:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    try:
+        release = _release_task_to_owner(
+            team,
+            task,
+            caller=caller,
+            message=message,
+            respawn=respawn,
+            repo=repo,
+        )
+    except RuntimeError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    data = _dump(task)
+    data.update(release)
+
+    def _human(d):
+        console.print(f"[green]OK[/green] Task {d['id']} released to {d['owner']}")
+        console.print(f"  Status: {d['status']}")
+        console.print(f"  Owner alive before: {d['ownerAliveBefore']}")
+        if d.get("respawned"):
+            console.print(f"  Respawned: yes ({d['spawn'].get('backend', '')})")
+            if d["spawn"].get("cwd"):
+                console.print(f"  Workspace: {d['spawn']['cwd']}")
+        else:
+            console.print("  Respawned: no")
+
+    _output(data, _human)
 
 
 @task_app.command("list")
