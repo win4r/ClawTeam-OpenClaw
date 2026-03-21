@@ -170,6 +170,34 @@ class TestDependencyResolution:
         assert t3_after.status == TaskStatus.pending
         assert t3_after.blocked_by == []
 
+    def test_failed_task_reopens_on_fail_targets(self, store):
+        impl = store.create("implement")
+        qa = store.create(
+            "qa",
+            blocked_by=[impl.id],
+            metadata={"on_fail": [impl.id]},
+        )
+
+        store.update(impl.id, status=TaskStatus.completed)
+        qa_ready = store.get(qa.id)
+        assert qa_ready.status == TaskStatus.pending
+
+        store.update(qa.id, status=TaskStatus.failed)
+
+        impl_after = store.get(impl.id)
+        assert impl_after.status == TaskStatus.pending
+        assert qa.id in impl_after.blocked_by
+
+    def test_failed_task_without_on_fail_does_not_reopen_anything(self, store):
+        impl = store.create("implement")
+        qa = store.create("qa", blocked_by=[impl.id])
+
+        store.update(impl.id, status=TaskStatus.completed)
+        store.update(qa.id, status=TaskStatus.failed)
+
+        impl_after = store.get(impl.id)
+        assert impl_after.status == TaskStatus.completed
+
 
 class TestTaskLocking:
     def test_lock_acquired_on_in_progress(self, store):

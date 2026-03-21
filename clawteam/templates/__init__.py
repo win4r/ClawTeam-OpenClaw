@@ -33,6 +33,7 @@ class TaskDef(BaseModel):
     description: str = ""
     owner: str = ""
     blocked_by: list[str] = []
+    on_fail: list[str] = []
 
 
 class TemplateDef(BaseModel):

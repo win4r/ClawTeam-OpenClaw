@@ -2461,11 +2461,23 @@ def launch_team(
             )
             raise typer.Exit(1)
 
+        missing_fail_targets = [name for name in task_def.on_fail if name not in created_task_ids]
+        if missing_fail_targets:
+            console.print(
+                f"[red]Template task '{task_def.subject}' references unknown or not-yet-created on_fail tasks: {', '.join(missing_fail_targets)}[/red]"
+            )
+            raise typer.Exit(1)
+
+        metadata = {}
+        if task_def.on_fail:
+            metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
+
         task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
             blocked_by=[created_task_ids[name] for name in task_def.blocked_by],
+            metadata=metadata,
         )
         created_task_ids[task_def.subject] = task.id
 

@@ -118,8 +118,8 @@ class TaskStore:
                 if not task.started_at:
                     task.started_at = _now_iso()
 
-            # Clear lock when transitioning to completed or pending
-            if status in (TaskStatus.completed, TaskStatus.pending):
+            # Clear lock when transitioning to completed, pending, or failed
+            if status in (TaskStatus.completed, TaskStatus.pending, TaskStatus.failed):
                 task.locked_by = ""
                 task.locked_at = ""
 
@@ -154,6 +154,8 @@ class TaskStore:
 
             if task.status == TaskStatus.completed:
                 self._resolve_dependents_unlocked(task_id)
+            elif task.status == TaskStatus.failed:
+                self._apply_failure_flow_unlocked(task)
 
             self._save_unlocked(task)
             return task
@@ -273,3 +275,21 @@ class TaskStore:
                     self._save_unlocked(task)
             except Exception:
                 continue
+
+    def _apply_failure_flow_unlocked(self, failed_task: TaskItem) -> None:
+        on_fail_targets = failed_task.metadata.get("on_fail", [])
+        if not on_fail_targets:
+            return
+
+        for target_id in on_fail_targets:
+            target = self._get_unlocked(target_id)
+            if target is None:
+                continue
+
+            target.status = TaskStatus.pending
+            target.locked_by = ""
+            target.locked_at = ""
+            if failed_task.id not in target.blocked_by:
+                target.blocked_by.append(failed_task.id)
+            target.updated_at = _now_iso()
+            self._save_unlocked(target)

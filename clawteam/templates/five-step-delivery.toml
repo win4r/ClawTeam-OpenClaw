@@ -322,6 +322,7 @@ Report:
 subject = "Run main-flow QA on the real change"
 owner = "qa1"
 blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
+on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
 基于实现结果做真实主流程验证，只接受真实通过或真实失败。
 
@@ -354,6 +355,7 @@ Report:
 subject = "Run edge-case and regression QA on the real change"
 owner = "qa2"
 blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
+on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
 基于实现结果做真实边界、回归、降级路径验证，只接受真实通过或真实失败。
 
@@ -386,6 +388,7 @@ Report:
 subject = "Review code quality, maintainability, and delivery readiness"
 owner = "review1"
 blocked_by = ["Run main-flow QA on the real change", "Run edge-case and regression QA on the real change"]
+on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
 在 QA 之后，对真实代码改动做独立 code review，检查质量、可维护性、设计一致性和交付风险。
 

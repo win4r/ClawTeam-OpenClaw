@@ -58,6 +58,10 @@ class TestModels:
         t = TaskDef(subject="Build feature", blocked_by=["Setup"])
         assert t.blocked_by == ["Setup"]
 
+    def test_task_def_on_fail(self):
+        t = TaskDef(subject="Run QA", on_fail=["Implement"])
+        assert t.on_fail == ["Implement"]
+
     def test_template_def_defaults(self):
         leader = AgentDef(name="lead")
         t = TemplateDef(name="my-tmpl", leader=leader)
@@ -115,6 +119,18 @@ class TestLoadBuiltinTemplate:
         assert by_subject["Review code quality, maintainability, and delivery readiness"].blocked_by == [
             "Run main-flow QA on the real change",
             "Run edge-case and regression QA on the real change",
+        ]
+        assert by_subject["Run main-flow QA on the real change"].on_fail == [
+            "Implement backend/data changes with real validation",
+            "Implement frontend/UI changes with real validation",
+        ]
+        assert by_subject["Run edge-case and regression QA on the real change"].on_fail == [
+            "Implement backend/data changes with real validation",
+            "Implement frontend/UI changes with real validation",
+        ]
+        assert by_subject["Review code quality, maintainability, and delivery readiness"].on_fail == [
+            "Implement backend/data changes with real validation",
+            "Implement frontend/UI changes with real validation",
         ]
 
 

@@ -38,6 +38,7 @@ class TaskStatus(str, Enum):
     in_progress = "in_progress"
     completed = "completed"
     blocked = "blocked"
+    failed = "failed"
 
 
 class MessageType(str, Enum):
