@@ -35,6 +35,7 @@ class TmuxBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        openclaw_agent: str | None = None,
     ) -> str:
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
@@ -85,13 +86,19 @@ class TmuxBackend(SpawnBackend):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "tui" in final_command:
                 final_command.extend(["--session", session_key])
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "agent" in final_command:
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
 

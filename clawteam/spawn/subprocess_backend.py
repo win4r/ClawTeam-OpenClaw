@@ -28,6 +28,7 @@ class SubprocessBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        openclaw_agent: str | None = None,
     ) -> str:
         spawn_env = os.environ.copy()
         clawteam_bin = resolve_clawteam_executable()

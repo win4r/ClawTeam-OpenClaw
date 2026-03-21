@@ -1614,6 +1614,7 @@ def spawn_agent(
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path (default: cwd)"),
     skip_permissions: Optional[bool] = typer.Option(None, "--skip-permissions/--no-skip-permissions", help="Skip tool approval for claude (default: from config, true)"),
     resume: bool = typer.Option(False, "--resume", "-r", help="Resume previous session if available"),
+    openclaw_agent: Optional[str] = typer.Option(None, "--openclaw-agent", help="OpenClaw agent id to use (routes to a specific agent config/model)"),
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
@@ -1729,6 +1730,7 @@ def spawn_agent(
         prompt=prompt,
         cwd=cwd,
         skip_permissions=skip_permissions,
+        openclaw_agent=openclaw_agent,
     )
 
     if result.startswith("Error"):
