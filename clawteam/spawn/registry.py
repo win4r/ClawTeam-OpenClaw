@@ -20,6 +20,9 @@ def register_agent(
     tmux_target: str = "",
     pid: int = 0,
     command: list[str] | None = None,
+    session_key: str = "",
+    agent_id: str = "",
+    agent_type: str = "",
 ) -> None:
     """Record spawn info for an agent (atomic write)."""
     path = _registry_path(team_name)
@@ -29,6 +32,11 @@ def register_agent(
         "tmux_target": tmux_target,
         "pid": pid,
         "command": command or [],
+        "session_key": session_key,
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "team_name": team_name,
+        "agent_name": agent_name,
     }
     _save(path, registry)
 
@@ -36,6 +44,26 @@ def register_agent(
 def get_registry(team_name: str) -> dict[str, dict]:
     """Return the full spawn registry for a team."""
     return _load(_registry_path(team_name))
+
+
+def find_agent_by_session_key(session_key: str) -> dict | None:
+    """Resolve agent identity from a stored OpenClaw session key across all teams."""
+    if not session_key:
+        return None
+    teams_root = get_data_dir() / "teams"
+    if not teams_root.exists():
+        return None
+    matches: list[dict] = []
+    for team_dir in teams_root.iterdir():
+        if not team_dir.is_dir():
+            continue
+        registry = _load(team_dir / "spawn_registry.json")
+        for _agent_name, info in registry.items():
+            if info.get("session_key") == session_key:
+                matches.append(info)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def is_agent_alive(team_name: str, agent_name: str) -> bool | None:

@@ -80,6 +80,7 @@ class TmuxBackend(SpawnBackend):
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
+        session_key = ""
         # OpenClaw TUI: pass --message for initial prompt and --session for isolation
         if _is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
@@ -234,6 +235,9 @@ class TmuxBackend(SpawnBackend):
             tmux_target=target,
             pid=pane_pid,
             command=list(normalized_command),
+            session_key=session_key,
+            agent_id=agent_id,
+            agent_type=agent_type,
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"

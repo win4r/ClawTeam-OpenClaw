@@ -61,6 +61,7 @@ class SubprocessBackend(SpawnBackend):
             return command_error
 
         final_command = list(normalized_command)
+        session_key = ""
         if skip_permissions:
             if _is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
@@ -112,6 +113,9 @@ class SubprocessBackend(SpawnBackend):
             backend="subprocess",
             pid=process.pid,
             command=list(normalized_command),
+            session_key=session_key,
+            agent_id=agent_id,
+            agent_type=agent_type,
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"
