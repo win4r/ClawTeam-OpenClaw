@@ -447,12 +447,11 @@ def team_approve_join(
     assigned_name: Optional[str] = typer.Option(None, "--assigned-name", help="Override proposed name"),
 ):
     """Approve a join request (approveJoin)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import MessageType
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
 
     leader_inbox = TeamManager.get_leader_inbox(team) or identity.agent_name
@@ -515,12 +514,11 @@ def team_reject_join(
     reason: str = typer.Option("", "--reason", "-r", help="Rejection reason"),
 ):
     """Reject a join request (rejectJoin)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import MessageType
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
 
     leader_inbox = TeamManager.get_leader_inbox(team) or identity.agent_name
@@ -1428,11 +1426,11 @@ def cost_report(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Report token usage and cost for an agent."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.costs import CostStore
     from clawteam.team.manager import TeamManager
 
-    agent_name = agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
     store = CostStore(team)
     event = store.report(
         agent_name=agent_name,
@@ -1569,12 +1567,10 @@ def task_wait(
     if not agent_name:
         agent_name = TeamManager.get_leader_inbox(team)
     if not agent_name:
-        from clawteam.identity import AgentIdentity
-        identity = AgentIdentity.from_env()
+        identity = _require_team_identity(team)
         agent_name = TeamManager.resolve_inbox(team, identity.agent_name, identity.user)
     elif agent:
-        from clawteam.identity import AgentIdentity
-        identity = AgentIdentity.from_env()
+        identity = _require_team_identity(team)
         agent_name = TeamManager.resolve_inbox(team, agent_name, identity.user)
 
     mailbox = MailboxManager(team)
@@ -1716,10 +1712,10 @@ def session_save(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Save agent session for later resume."""
-    from clawteam.identity import AgentIdentity
     from clawteam.spawn.sessions import SessionStore
 
-    agent_name = agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
     store = SessionStore(team)
     session = store.save(
         agent_name=agent_name,
@@ -1847,11 +1843,10 @@ def plan_approve(
     feedback: str = typer.Option("", "--feedback", "-f", help="Optional feedback"),
 ):
     """Approve a submitted plan (approvePlan)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.plan import PlanManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     pm = PlanManager(team, mailbox)
     pm.approve_plan(leader_name=identity.agent_name, plan_id=plan_id, agent_name=agent, feedback=feedback)
@@ -1870,11 +1865,10 @@ def plan_reject(
     feedback: str = typer.Option("", "--feedback", "-f", help="Rejection feedback"),
 ):
     """Reject a submitted plan (rejectPlan)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.plan import PlanManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     pm = PlanManager(team, mailbox)
     pm.reject_plan(leader_name=identity.agent_name, plan_id=plan_id, agent_name=agent, feedback=feedback)
@@ -1921,11 +1915,10 @@ def lifecycle_approve_shutdown(
     agent: str = typer.Argument(..., help="Agent approving shutdown (self)"),
 ):
     """Approve a shutdown request (approveShutdown). Agent agrees to shut down."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     lm = LifecycleManager(team, mailbox)
     leader_name = identity.agent_name
@@ -1945,11 +1938,10 @@ def lifecycle_reject_shutdown(
     reason: str = typer.Option("", "--reason", "-r", help="Rejection reason"),
 ):
     """Reject a shutdown request (rejectShutdown)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     lm = LifecycleManager(team, mailbox)
     lm.reject_shutdown(agent_name=agent, request_id=request_id, requester_name=identity.agent_name, reason=reason)
@@ -1967,12 +1959,11 @@ def lifecycle_idle(
     task_status: Optional[str] = typer.Option(None, "--task-status", help="Status of last task"),
 ):
     """Send idle notification to leader."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     team_name = team
     leader_name = TeamManager.get_leader_name(team_name)
     if not leader_name:
