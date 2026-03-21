@@ -6,6 +6,7 @@ import sys
 
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.subprocess_backend import SubprocessBackend
+from clawteam.spawn.registry import current_runtime_generation, get_agent_runtime_state
 from clawteam.spawn.tmux_backend import TmuxBackend, _confirm_workspace_trust_if_prompted
 
 
@@ -78,14 +79,15 @@ def test_tmux_backend_exports_spawn_path_for_agent_commands(monkeypatch, tmp_pat
             return Result(returncode=0, stdout="9876\n")
         return Result(returncode=0)
 
-    original_which = __import__("shutil").which
-    monkeypatch.setattr(
-        "clawteam.spawn.tmux_backend.shutil.which",
-        lambda name, path=None: "/opt/homebrew/bin/tmux" if name == "tmux" else original_which(name),
-    )
+    def fake_tmux_which(name, path=None):
+        if name == "tmux":
+            return "/opt/homebrew/bin/tmux"
+        return None
+
+    monkeypatch.setattr("clawteam.spawn.tmux_backend._tmux_binary", lambda: "/opt/homebrew/bin/tmux")
     monkeypatch.setattr(
         "clawteam.spawn.command_validation.shutil.which",
-        lambda name, path=None: "/usr/bin/codex" if name == "codex" else original_which(name),
+        lambda name, path=None: "/usr/bin/codex" if name == "codex" else None,
     )
     monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
     monkeypatch.setattr("clawteam.spawn.tmux_backend.time.sleep", lambda *_: None)
@@ -385,3 +387,40 @@ def test_resolve_clawteam_executable_accepts_relative_path_with_explicit_directo
 
     assert resolve_clawteam_executable() == str(relative_bin.resolve())
     assert build_spawn_path("/usr/bin:/bin").startswith(f"{relative_bin.parent.resolve()}:")
+
+
+def test_registry_without_generation_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    from clawteam.spawn.registry import register_agent
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="subprocess",
+        pid=99999,
+        command=["openclaw"],
+        runtime_generation="",
+    )
+
+    assert get_agent_runtime_state("demo", "worker1") == "stale"
+
+
+def test_registry_generation_mismatch_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    from clawteam.spawn.registry import register_agent
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="subprocess",
+        pid=99999,
+        command=["openclaw"],
+        runtime_generation="old-generation",
+    )
+
+    assert current_runtime_generation() != "old-generation"
+    assert get_agent_runtime_state("demo", "worker1") == "stale"

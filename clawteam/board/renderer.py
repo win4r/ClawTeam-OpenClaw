@@ -129,18 +129,19 @@ class BoardRenderer:
             mem_table.add_row(*row)
         parts.append(mem_table)
 
-        # 3. Task board (4-column kanban)
+        # 3. Task board (5-column kanban)
         parts.append(self._build_task_kanban(tasks, summary))
 
         return Group(*parts)
 
     def _build_task_kanban(self, tasks: dict, summary: dict) -> Panel:
-        """Build the 4-column kanban task board."""
+        """Build the kanban task board."""
         columns_cfg = [
             ("PENDING", "pending", "yellow"),
             ("IN PROGRESS", "in_progress", "cyan"),
             ("COMPLETED", "completed", "green"),
             ("BLOCKED", "blocked", "red"),
+            ("FAILED", "failed", "magenta"),
         ]
 
         panels = []
@@ -158,6 +159,11 @@ class BoardRenderer:
                     lines.append(f"  locked by: [yellow]{t['lockedBy']}[/yellow]")
                 if key == "blocked" and t.get("blockedBy"):
                     lines.append(f"  blocked by: {', '.join(t['blockedBy'])}")
+                if key == "failed":
+                    failure = t.get("metadata", {})
+                    note = failure.get("failure_note") or failure.get("failure_root_cause")
+                    if note:
+                        lines.append(f"  reason: {note}")
                 lines.append("")
 
             body = "\n".join(lines).rstrip() if lines else "[dim]  (none)[/dim]"

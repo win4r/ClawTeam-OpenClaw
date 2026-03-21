@@ -182,11 +182,32 @@ class TestDependencyResolution:
         qa_ready = store.get(qa.id)
         assert qa_ready.status == TaskStatus.pending
 
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            store.update(qa.id, status=TaskStatus.in_progress, caller="qa1")
         store.update(qa.id, status=TaskStatus.failed)
 
         impl_after = store.get(impl.id)
         assert impl_after.status == TaskStatus.pending
         assert qa.id in impl_after.blocked_by
+
+    def test_failed_task_does_not_reopen_on_fail_targets_before_it_actually_starts(self, store):
+        impl = store.create("implement")
+        qa = store.create(
+            "qa",
+            blocked_by=[impl.id],
+            metadata={"on_fail": [impl.id]},
+        )
+
+        store.update(impl.id, status=TaskStatus.completed)
+        qa_ready = store.get(qa.id)
+        assert qa_ready.status == TaskStatus.pending
+        assert not qa_ready.started_at
+
+        store.update(qa.id, status=TaskStatus.failed)
+
+        impl_after = store.get(impl.id)
+        assert impl_after.status == TaskStatus.completed
+        assert qa.id not in impl_after.blocked_by
 
     def test_failed_task_without_on_fail_does_not_reopen_anything(self, store):
         impl = store.create("implement")

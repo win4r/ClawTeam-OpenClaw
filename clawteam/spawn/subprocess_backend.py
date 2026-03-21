@@ -63,6 +63,12 @@ class SubprocessBackend(SpawnBackend):
 
         normalized_command = normalize_spawn_command(command)
 
+        from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
+
+        existing_state = get_agent_runtime_state(team_name, agent_name, spawn_env.get("CLAWTEAM_DATA_DIR", ""))
+        if existing_state == "stale":
+            terminate_agent(team_name, agent_name, spawn_env.get("CLAWTEAM_DATA_DIR", ""))
+
         command_error = validate_spawn_command(normalized_command, path=spawn_env["PATH"], cwd=cwd)
         if command_error:
             return command_error

@@ -974,28 +974,23 @@ def _release_task_to_owner(
     respawn: bool = True,
     repo: str | None = None,
 ) -> dict:
-    from clawteam.spawn.registry import is_agent_alive
+    from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
     release_message = message.strip() or f"Task {task.id} is released. Start now and report only real blockers."
-    mailbox = MailboxManager(team)
-    mailbox.send(
-        caller,
-        task.owner,
-        release_message,
-        key=f"task-wake:{task.id}",
-        last_task=task.id,
-        status=task.status.value,
-    )
 
-    alive_before = is_agent_alive(team, task.owner)
+    state_before = get_agent_runtime_state(team, task.owner)
+    alive_before = True if state_before == "alive" else (None if state_before == "missing" else False)
     respawned = False
+    terminated_stale = False
     spawn_info = None
-    if respawn and alive_before is not True:
+    if respawn and state_before != "alive":
         member = TeamManager.get_member(team, task.owner)
         if member is None:
             raise RuntimeError(f"Owner '{task.owner}' is not a registered team member")
+        if state_before == "stale":
+            terminated_stale = terminate_agent(team, task.owner)
         spawn_info = _spawn_existing_agent(
             team_name=team,
             agent_name=task.owner,
@@ -1007,10 +1002,22 @@ def _release_task_to_owner(
         )
         respawned = True
 
+    mailbox = MailboxManager(team)
+    mailbox.send(
+        caller,
+        task.owner,
+        release_message,
+        key=f"task-wake:{task.id}",
+        last_task=task.id,
+        status=task.status.value,
+    )
+
     return {
         "messageSent": True,
         "message": release_message,
         "ownerAliveBefore": alive_before,
+        "ownerRuntimeStateBefore": state_before,
+        "terminatedStale": terminated_stale,
         "respawned": respawned,
         "spawn": spawn_info or {},
     }

@@ -37,7 +37,7 @@ class TmuxBackend(SpawnBackend):
         cwd: str | None = None,
         skip_permissions: bool = False,
     ) -> str:
-        if not shutil.which("tmux"):
+        if not _tmux_binary():
             return "Error: tmux not installed"
 
         session_name = f"clawteam-{team_name}"
@@ -71,6 +71,12 @@ class TmuxBackend(SpawnBackend):
             env_vars.setdefault("CLAWTEAM_BIN", clawteam_bin)
 
         normalized_command = normalize_spawn_command(command)
+
+        from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
+
+        existing_state = get_agent_runtime_state(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        if existing_state == "stale":
+            terminate_agent(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
 
         command_error = validate_spawn_command(normalized_command, path=env_vars["PATH"], cwd=cwd)
         if command_error:
@@ -334,6 +340,10 @@ class TmuxBackend(SpawnBackend):
         session = TmuxBackend.session_name(team_name)
         subprocess.run(["tmux", "attach-session", "-t", session])
         return result
+
+
+def _tmux_binary() -> str:
+    return shutil.which("tmux") or ""
 
 
 def _is_claude_command(command: list[str]) -> bool:
