@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import signal
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from clawteam.platform_compat import install_signal_handlers, restore_signal_handlers
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import TaskItem, TaskStatus, TeamMessage
 from clawteam.team.tasks import TaskStore
@@ -69,14 +69,10 @@ class TaskWaiter:
         start = time.monotonic()
 
         # Save and install signal handlers
-        prev_sigint = signal.getsignal(signal.SIGINT)
-        prev_sigterm = signal.getsignal(signal.SIGTERM)
-
         def _handle_signal(signum, frame):
             self._running = False
 
-        signal.signal(signal.SIGINT, _handle_signal)
-        signal.signal(signal.SIGTERM, _handle_signal)
+        previous_handlers = install_signal_handlers(_handle_signal)
 
         last_summary = ""
         try:
@@ -160,10 +156,7 @@ class TaskWaiter:
                 task_details=[_task_summary(t) for t in tasks],
             )
         finally:
-            # Restore original signal handlers
-            signal.signal(signal.SIGINT, prev_sigint)
-            signal.signal(signal.SIGTERM, prev_sigterm)
-
+            restore_signal_handlers(previous_handlers)
 
     def _check_dead_agents(self) -> None:
         """Detect dead agents and mark their in_progress tasks as pending."""

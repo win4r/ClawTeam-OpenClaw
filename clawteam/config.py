@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from clawteam.fileutil import atomic_write_text
+from clawteam.platform_compat import default_spawn_backend
 
 
 class AgentProfile(BaseModel):
@@ -44,7 +45,7 @@ class ClawTeamConfig(BaseModel):
     transport: str = ""
     task_store: str = ""  # "file" (default) — extensible for redis/sql later
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
-    default_backend: str = "tmux"  # "tmux" | "subprocess"
+    default_backend: str = Field(default_factory=default_spawn_backend)  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
     spawn_prompt_delay: float = 2.0  # fallback wait (seconds) if TUI ready-detection times out
     spawn_ready_timeout: float = 30.0  # max seconds to poll for TUI readiness before fallback
@@ -52,6 +53,9 @@ class ClawTeamConfig(BaseModel):
 
 def config_path() -> Path:
     """Fixed config location: ~/.clawteam/config.json (never affected by data_dir)."""
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    if home:
+        return Path(home) / ".clawteam" / "config.json"
     return Path.home() / ".clawteam" / "config.json"
 
 

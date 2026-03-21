@@ -117,15 +117,18 @@ class FileTransport(Transport):
         file_handle,
         data: bytes,
     ) -> ClaimedMessage:
-        def _ack() -> None:
-            unlock(file_handle)
+        def _release_claim() -> None:
             try:
-                consumed_path.unlink(missing_ok=True)
+                unlock(file_handle)
             finally:
                 file_handle.close()
 
+        def _ack() -> None:
+            _release_claim()
+            consumed_path.unlink(missing_ok=True)
+
         def _quarantine(error: str) -> None:
-            unlock(file_handle)
+            _release_claim()
             self._quarantine_bytes(
                 agent_name,
                 data,
@@ -133,7 +136,6 @@ class FileTransport(Transport):
                 source_name=original_path.name,
                 consumed_path=consumed_path,
             )
-            file_handle.close()
 
         return ClaimedMessage(data=data, ack=_ack, quarantine=_quarantine)
 

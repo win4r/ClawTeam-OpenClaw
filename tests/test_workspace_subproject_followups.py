@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from clawteam.cli import commands
 from clawteam.workspace.manager import WorkspaceManager
 
@@ -51,7 +53,10 @@ def test_workspace_overlay_skips_symlink_files(monkeypatch, tmp_path):
     scripts.mkdir(parents=True)
     secret = tmp_path / "host-secret.txt"
     secret.write_text("top-secret\n", encoding="utf-8")
-    (scripts / "cert").symlink_to(secret)
+    try:
+        (scripts / "cert").symlink_to(secret)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlink creation is unavailable in this environment")
     (scripts / "collect_team_context.ts").write_text("ok\n", encoding="utf-8")
 
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))

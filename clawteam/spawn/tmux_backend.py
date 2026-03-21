@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 
+from clawteam.platform_compat import is_windows
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.command_validation import (
@@ -54,7 +55,7 @@ class TmuxBackend(SpawnBackend):
         openclaw_agent: str | None = None,
     ) -> str:
         if not shutil.which("tmux"):
-            return "Error: tmux not installed"
+            return _tmux_unavailable_message("spawn")
 
         if openclaw_agent:
             print(
@@ -286,6 +287,9 @@ class TmuxBackend(SpawnBackend):
 
         Returns status message or error.
         """
+        if not shutil.which("tmux"):
+            return _tmux_unavailable_message("attach")
+
         session = TmuxBackend.session_name(team_name)
 
         check = subprocess.run(
@@ -652,3 +656,18 @@ def _inject_prompt_via_buffer(
         )
     finally:
         os.unlink(tmp_path)
+
+
+def _tmux_unavailable_message(context: str) -> str:
+    """Return a helpful error when tmux is unavailable."""
+    if is_windows():
+        if context == "attach":
+            return (
+                "Error: tmux is not available on this system. "
+                "On Windows, use 'clawteam board serve' for live monitoring or run ClawTeam inside WSL for tmux support."
+            )
+        return (
+            "Error: tmux is not available on this system. "
+            "On Windows, use the subprocess backend ('clawteam spawn subprocess ...') or run ClawTeam inside WSL for tmux support."
+        )
+    return "Error: tmux not installed"

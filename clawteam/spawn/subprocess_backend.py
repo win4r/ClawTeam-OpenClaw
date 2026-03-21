@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
+import sys
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -111,18 +111,20 @@ class SubprocessBackend(SpawnBackend):
             else:
                 final_command.extend(["-p", prompt])
 
-        # Wrap with on-exit hook so task status updates immediately on exit
-        cmd_str = " ".join(shlex.quote(c) for c in final_command)
-        exit_cmd = shlex.quote(clawteam_bin) if os.path.isabs(clawteam_bin) else "clawteam"
-        exit_hook = (
-            f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
-            f"--agent {shlex.quote(agent_name)}"
-        )
-        shell_cmd = f"trap \"{exit_hook}\" EXIT; {cmd_str}"
+        wrapper_command = [
+            sys.executable,
+            "-m",
+            "clawteam.spawn.subprocess_wrapper",
+            "--team",
+            team_name,
+            "--agent",
+            agent_name,
+            "--",
+            *final_command,
+        ]
 
         process = subprocess.Popen(
-            shell_cmd,
-            shell=True,
+            wrapper_command,
             env=spawn_env,
             # Subprocess agents are fire-and-forget; unread pipes can block long-lived runs.
             stdout=subprocess.DEVNULL,

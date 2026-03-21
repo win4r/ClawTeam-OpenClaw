@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -36,6 +37,8 @@ def test_subprocess_backend_prepends_current_clawteam_bin_to_path(monkeypatch, t
     def fake_popen(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["env"] = kwargs["env"]
+        captured["stdout"] = kwargs["stdout"]
+        captured["stderr"] = kwargs["stderr"]
         return DummyProcess()
 
     monkeypatch.setattr(
@@ -58,11 +61,25 @@ def test_subprocess_backend_prepends_current_clawteam_bin_to_path(monkeypatch, t
     )
 
     env = captured["env"]
-    assert env["PATH"].startswith(f"{clawteam_bin.parent}:")
+    cmd = captured["cmd"]
+    assert env["PATH"].startswith(f"{clawteam_bin.parent}{os.pathsep}")
     assert env["CLAWTEAM_BIN"] == str(clawteam_bin)
+    assert env["CLAWTEAM_MEMORY_SCOPE"] == "custom:team-demo-team"
+    assert captured["stdout"] is subprocess.DEVNULL
+    assert captured["stderr"] is subprocess.DEVNULL
+    assert cmd[:7] == [
+        sys.executable,
+        "-m",
+        "clawteam.spawn.subprocess_wrapper",
+        "--team",
+        "demo-team",
+        "--agent",
+        "worker1",
+    ]
+    assert cmd[7:] == ["--", "codex", "--dangerously-bypass-approvals-and-sandbox", "do work"]
 
 
-def test_subprocess_backend_discards_output_and_preserves_exit_hook_and_registry(
+def test_subprocess_backend_discards_output_and_preserves_wrapper_command_and_registry(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
@@ -107,9 +124,16 @@ def test_subprocess_backend_discards_output_and_preserves_exit_hook_and_registry
     assert captured["stdout"] is subprocess.DEVNULL
     assert captured["stderr"] is subprocess.DEVNULL
     assert captured["cwd"] == "/tmp/demo"
-    assert (
-        f"{clawteam_bin} lifecycle on-exit --team demo-team --agent worker1" in captured["cmd"]
-    )
+    assert captured["cmd"][:7] == [
+        sys.executable,
+        "-m",
+        "clawteam.spawn.subprocess_wrapper",
+        "--team",
+        "demo-team",
+        "--agent",
+        "worker1",
+    ]
+    assert captured["cmd"][7:] == ["--", "codex", "--dangerously-bypass-approvals-and-sandbox", "do work"]
     assert registered == {
         "team_name": "demo-team",
         "agent_name": "worker1",
@@ -187,13 +211,17 @@ def test_tmux_backend_exports_spawn_path_for_agent_commands(monkeypatch, tmp_pat
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
     full_cmd = new_session[-1]
-    assert f"export PATH={clawteam_bin.parent}:/usr/bin:/bin" in full_cmd
-    assert f"export CLAWTEAM_BIN={clawteam_bin}" in full_cmd
+    assert "export PATH=" in full_cmd
+    assert str(clawteam_bin.parent) in full_cmd
+    assert "/usr/bin" in full_cmd
+    assert "/bin" in full_cmd
+    assert "export CLAWTEAM_BIN=" in full_cmd
+    assert str(clawteam_bin) in full_cmd
     assert "export CLAWTEAM_DATA_DIR=/tmp/clawteam-data" in full_cmd
     assert "export GOOGLE_CLOUD_PROJECT=demo-project" in full_cmd
     assert "cd /tmp/demo &&" in full_cmd
     assert "PROGRAMFILES(X86)" not in full_cmd
-    assert f"{clawteam_bin} lifecycle on-exit --team demo-team --agent worker1" in full_cmd
+    assert "lifecycle on-exit --team demo-team --agent worker1" in full_cmd
 
 
 def test_tmux_backend_uses_configured_timeout_for_workspace_trust_prompt(monkeypatch, tmp_path):
@@ -303,6 +331,22 @@ def test_tmux_backend_returns_error_when_command_missing(monkeypatch, tmp_path):
         "Install the agent CLI first or pass an executable path."
     )
     assert run_calls == []
+
+
+def test_tmux_backend_suggests_subprocess_on_windows_when_tmux_missing(monkeypatch):
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.shutil.which", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.is_windows", lambda: True)
+
+    backend = TmuxBackend()
+    result = backend.spawn(
+        command=["openclaw"],
+        agent_name="worker1",
+        agent_id="agent-1",
+        agent_type="general-purpose",
+        team_name="demo-team",
+    )
+
+    assert "use the subprocess backend" in result.lower()
 
 
 def test_subprocess_backend_returns_error_when_command_missing(monkeypatch, tmp_path):
@@ -679,7 +723,7 @@ def test_subprocess_backend_normalizes_nanobot_and_uses_message_flag(monkeypatch
         skip_permissions=True,
     )
 
-    assert "nanobot agent -w /tmp/demo -m 'do work'" in captured["cmd"]
+    assert captured["cmd"][-6:] == ["nanobot", "agent", "-w", "/tmp/demo", "-m", "do work"]
 
 
 def test_tmux_backend_gemini_skip_permissions_and_prompt(monkeypatch, tmp_path):
@@ -769,7 +813,7 @@ def test_subprocess_backend_gemini_skip_permissions_and_prompt(monkeypatch, tmp_
         skip_permissions=True,
     )
 
-    assert "gemini --yolo -p 'analyze this repo'" in captured["cmd"]
+    assert captured["cmd"][-4:] == ["gemini", "--yolo", "-p", "analyze this repo"]
 
 
 def test_tmux_backend_confirms_gemini_workspace_trust_prompt(monkeypatch):
@@ -888,7 +932,7 @@ def test_subprocess_backend_kimi_skip_permissions_workspace_and_prompt(monkeypat
         skip_permissions=True,
     )
 
-    assert "kimi --yolo -w /tmp/demo --print -p 'fix the bug'" in captured["cmd"]
+    assert captured["cmd"][-7:] == ["kimi", "--yolo", "-w", "/tmp/demo", "--print", "-p", "fix the bug"]
 
 
 def test_resolve_clawteam_executable_ignores_unrelated_argv0(monkeypatch, tmp_path):
@@ -902,7 +946,7 @@ def test_resolve_clawteam_executable_ignores_unrelated_argv0(monkeypatch, tmp_pa
     monkeypatch.setattr("clawteam.spawn.cli_env.shutil.which", lambda name: str(resolved_bin))
 
     assert resolve_clawteam_executable() == str(resolved_bin)
-    assert build_spawn_path("/usr/bin:/bin").startswith(f"{resolved_bin.parent}:")
+    assert build_spawn_path("/usr/bin:/bin").startswith(f"{resolved_bin.parent}{os.pathsep}")
 
 
 def test_resolve_clawteam_executable_ignores_relative_argv0_even_if_local_file_exists(
@@ -919,7 +963,7 @@ def test_resolve_clawteam_executable_ignores_relative_argv0_even_if_local_file_e
     monkeypatch.setattr("clawteam.spawn.cli_env.shutil.which", lambda name: str(resolved_bin))
 
     assert resolve_clawteam_executable() == str(resolved_bin)
-    assert build_spawn_path("/usr/bin:/bin").startswith(f"{resolved_bin.parent}:")
+    assert build_spawn_path("/usr/bin:/bin").startswith(f"{resolved_bin.parent}{os.pathsep}")
 
 
 def test_resolve_clawteam_executable_accepts_relative_path_with_explicit_directory(
@@ -937,7 +981,7 @@ def test_resolve_clawteam_executable_accepts_relative_path_with_explicit_directo
     monkeypatch.setattr("clawteam.spawn.cli_env.shutil.which", lambda name: str(fallback_bin))
 
     assert resolve_clawteam_executable() == str(relative_bin.resolve())
-    assert build_spawn_path("/usr/bin:/bin").startswith(f"{relative_bin.parent.resolve()}:")
+    assert build_spawn_path("/usr/bin:/bin").startswith(f"{relative_bin.parent.resolve()}{os.pathsep}")
 
 
 # ---------------------------------------------------------------------------
@@ -1149,7 +1193,7 @@ def test_subprocess_backend_qwen_skip_permissions_and_prompt(monkeypatch, tmp_pa
         skip_permissions=True,
     )
 
-    assert "qwen --dangerously-skip-permissions -p 'refactor this'" in captured["cmd"]
+    assert captured["cmd"][-4:] == ["qwen", "--dangerously-skip-permissions", "-p", "refactor this"]
 
 
 def test_subprocess_backend_opencode_skip_permissions_and_prompt(monkeypatch, tmp_path):
@@ -1184,4 +1228,4 @@ def test_subprocess_backend_opencode_skip_permissions_and_prompt(monkeypatch, tm
         skip_permissions=True,
     )
 
-    assert "opencode --yolo -p 'fix the bug'" in captured["cmd"]
+    assert captured["cmd"][-4:] == ["opencode", "--yolo", "-p", "fix the bug"]

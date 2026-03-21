@@ -1720,13 +1720,28 @@ def lifecycle_check_zombies(
     raise typer.Exit(1)
 
 
+def _resolve_spawn_backend_and_command(
+    backend: Optional[str],
+    command: list[str] | None,
+) -> tuple[Optional[str], list[str]]:
+    """Treat a non-backend positional token as the first command token."""
+    normalized_command = list(command or [])
+    if backend is not None and backend not in ("tmux", "subprocess"):
+        normalized_command = [backend, *normalized_command]
+        backend = None
+    return backend, normalized_command
+
+
 # ============================================================================
 # Spawn Command
 # ============================================================================
 
 @app.command("spawn")
 def spawn_agent(
-    backend: Optional[str] = typer.Argument(None, help="Backend: tmux (default) or subprocess"),
+    backend: Optional[str] = typer.Argument(
+        None,
+        help="Backend: platform default (tmux on Linux/macOS, subprocess on Windows) or explicit backend",
+    ),
     command: list[str] = typer.Argument(None, help="Command and arguments to run (default: openclaw)"),
     team: Optional[str] = typer.Option(None, "--team", "-t", help="Team name"),
     agent_name: Optional[str] = typer.Option(None, "--agent-name", "-n", help="Agent name"),
@@ -1741,15 +1756,16 @@ def spawn_agent(
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
-    Defaults: tmux backend, openclaw command, git worktree isolation, skip-permissions on.
+    Defaults: platform backend, openclaw command, git worktree isolation, skip-permissions on.
     """
     from clawteam.config import get_effective
-    from clawteam.spawn import get_backend
+    from clawteam.spawn import get_backend, normalize_backend_name
 
+    backend, command = _resolve_spawn_backend_and_command(backend, command)
     # Resolve defaults from config
     if backend is None:
         backend, _ = get_effective("default_backend")
-        backend = backend or "tmux"
+    backend = normalize_backend_name(backend or None)
     if not command:
         command = ["openclaw"]
 
@@ -2291,7 +2307,7 @@ def launch_team(
     """Launch a full agent team from a template with one command."""
     import os as _os
 
-    from clawteam.spawn import get_backend
+    from clawteam.spawn import get_backend, normalize_backend_name
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
@@ -2315,7 +2331,7 @@ def launch_team(
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
-    be_name = backend or tmpl.backend
+    be_name = normalize_backend_name(backend or tmpl.backend)
     cmd = command_override or tmpl.command
 
     # 3. Create team

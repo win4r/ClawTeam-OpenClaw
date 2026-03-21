@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -43,7 +44,18 @@ def atomic_write_text(
     try:
         with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(content)
-        os.replace(tmp, str(path))
+            f.flush()
+            os.fsync(f.fileno())
+
+        retry_count = 20 if sys.platform == "win32" else 1
+        for attempt in range(retry_count):
+            try:
+                os.replace(tmp, str(path))
+                break
+            except PermissionError:
+                if attempt == retry_count - 1:
+                    raise
+                time.sleep(0.01)
     except BaseException:
         try:
             os.unlink(tmp)

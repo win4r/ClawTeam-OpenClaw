@@ -2,6 +2,7 @@
 
 import pytest
 
+from clawteam.platform_compat import default_spawn_backend
 from clawteam.templates import (
     AgentDef,
     TaskDef,
@@ -78,7 +79,7 @@ class TestModels:
         t = TemplateDef(name="my-tmpl", leader=leader)
         assert t.description == ""
         assert t.command == ["openclaw"]
-        assert t.backend == "tmux"
+        assert t.backend == default_spawn_backend()
         assert t.agents == []
         assert t.tasks == []
         assert t.max_agents == 4

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from clawteam.fileutil import atomic_write_text, file_locked
 from clawteam.paths import ensure_within_root, validate_identifier
+from clawteam.platform_compat import pid_alive
 from clawteam.team.models import get_data_dir
 
 
@@ -80,10 +81,10 @@ def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
             # fall back to PID check
             pid = info.get("pid", 0)
             if pid:
-                return _pid_alive(pid)
+                return pid_alive(pid)
         return alive
     elif backend == "subprocess":
-        return _pid_alive(info.get("pid", 0))
+        return pid_alive(info.get("pid", 0))
     return None
 
 
@@ -153,18 +154,8 @@ def _tmux_pane_alive(target: str) -> bool:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Check if a process with the given PID is still running."""
-    if pid <= 0:
-        return False
-    try:
-        import os
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it
-        return True
+    """Backward-compatible alias for the cross-platform PID liveness helper."""
+    return pid_alive(pid)
 
 
 def _load(path: Path) -> dict:

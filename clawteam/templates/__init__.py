@@ -5,7 +5,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from clawteam.platform_compat import default_spawn_backend
 
 # TOML support: built-in on 3.11+, conditional dependency on 3.10
 if sys.version_info >= (3, 11):
@@ -49,7 +51,7 @@ class TemplateDef(BaseModel):
     name: str
     description: str = ""
     command: list[str] = ["openclaw"]
-    backend: str = "tmux"
+    backend: str = Field(default_factory=default_spawn_backend)
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
@@ -123,7 +125,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         name=tmpl.get("name", path.stem),
         description=tmpl.get("description", ""),
         command=tmpl.get("command", ["openclaw"]),
-        backend=tmpl.get("backend", "tmux"),
+        backend=tmpl.get("backend", default_spawn_backend()),
         leader=leader,
         agents=agents,
         tasks=tasks,
