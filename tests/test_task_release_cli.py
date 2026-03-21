@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from clawteam.cli.commands import app
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
+from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskStore
 
 
@@ -148,6 +149,105 @@ def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
     assert "Regression QA" in call["prompt"]
     assert "Release QA now" in call["prompt"]
     assert TaskStore("demo").get(task.id).status.value == "pending"
+
+
+def test_task_complete_auto_notifies_and_respawns_unblocked_owner(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    impl = store.create("Implement fix", owner="dev1")
+    qa = store.create("Regression QA", description="Verify the fix", owner="qa1", blocked_by=[impl.id])
+
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda team, agent: False if agent == "qa1" else True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "update", "demo", impl.id, "--status", "completed"],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["agent_name"] == "qa1"
+    assert call["cwd"] == str(workspace)
+    assert "Regression QA" in call["prompt"]
+    assert "unblocked because dependency" in call["prompt"]
+
+    qa_after = TaskStore("demo").get(qa.id)
+    assert qa_after.status.value == "pending"
+    assert qa_after.blocked_by == []
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("qa1")
+    assert any("unblocked because dependency" in (msg.content or "") for msg in messages)
+
+
+def test_task_failed_auto_notifies_and_respawns_reopened_owner(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    impl = store.create("Implement fix", description="Fix the broken path", owner="dev1")
+    qa = store.create(
+        "Regression QA",
+        owner="qa1",
+        blocked_by=[impl.id],
+        metadata={"on_fail": [impl.id]},
+    )
+    store.update(impl.id, status=TaskStatus.completed)
+
+    workspace = tmp_path / "dev1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "dev1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda team, agent: False if agent == "dev1" else True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", qa.id,
+            "--status", "failed",
+            "--failure-kind", "regular",
+            "--failure-note", "Repro is clear; send back to implement",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["agent_name"] == "dev1"
+    assert call["cwd"] == str(workspace)
+    assert "Implement fix" in call["prompt"]
+    assert "reopened because task" in call["prompt"]
+
+    impl_after = TaskStore("demo").get(impl.id)
+    assert impl_after.status.value == "pending"
+    assert qa.id in impl_after.blocked_by
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("dev1")
+    assert any("reopened because task" in (msg.content or "") for msg in messages)
 
 
 def test_task_update_failed_complex_notifies_leader(monkeypatch, tmp_path):

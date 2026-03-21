@@ -954,6 +954,34 @@ def _release_task_to_owner(
     }
 
 
+def _wake_tasks_to_pending(
+    team: str,
+    task_ids: list[str],
+    caller: str,
+    message_builder,
+    repo: str | None = None,
+) -> list[dict]:
+    from clawteam.team.models import TaskStatus
+    from clawteam.team.tasks import TaskStore
+
+    store = TaskStore(team)
+    releases: list[dict] = []
+    for target_id in task_ids:
+        target = store.get(target_id)
+        if target is None or not target.owner or target.status != TaskStatus.pending:
+            continue
+        release = _release_task_to_owner(
+            team,
+            target,
+            caller=caller,
+            message=message_builder(target),
+            respawn=True,
+            repo=repo,
+        )
+        releases.append({"taskId": target.id, "owner": target.owner, **release})
+    return releases
+
+
 @task_app.command("create")
 def task_create(
     team: str = typer.Argument(..., help="Team name"),
@@ -1086,6 +1114,22 @@ def task_update(
 
     caller = AgentIdentity.from_env().agent_name
 
+    existing = store.get(task_id)
+    if not existing:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    dependent_ids_to_wake: list[str] = []
+    failed_targets_to_wake: list[str] = []
+    if ts == TaskStatus.completed:
+        dependent_ids_to_wake = [
+            candidate.id
+            for candidate in store.list_tasks()
+            if task_id in candidate.blocked_by and candidate.status == TaskStatus.blocked
+        ]
+    elif ts == TaskStatus.failed:
+        failed_targets_to_wake = list(existing.metadata.get("on_fail", []))
+
     try:
         task = store.update(
             task_id,
@@ -1103,10 +1147,6 @@ def task_update(
         _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
         raise typer.Exit(1)
 
-    if not task:
-        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-
     wake = None
     if wake_owner and task.status == TaskStatus.pending and task.owner:
         try:
@@ -1115,6 +1155,36 @@ def task_update(
             _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
             raise typer.Exit(1)
 
+    auto_releases: list[dict] = []
+    try:
+        if dependent_ids_to_wake:
+            auto_releases.extend(
+                _wake_tasks_to_pending(
+                    team,
+                    dependent_ids_to_wake,
+                    caller=caller,
+                    message_builder=lambda target: (
+                        f"Task {target.id} is unblocked because dependency {task.id} completed. "
+                        "Start now and report only real blockers."
+                    ),
+                )
+            )
+        if failed_targets_to_wake:
+            auto_releases.extend(
+                _wake_tasks_to_pending(
+                    team,
+                    failed_targets_to_wake,
+                    caller=caller,
+                    message_builder=lambda target: (
+                        f"Task {target.id} is reopened because task {task.id} failed and routed work back to you. "
+                        "Start now and report only real blockers."
+                    ),
+                )
+            )
+    except RuntimeError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
     failure_notice = None
     if task.status == TaskStatus.failed:
         failure_notice = _handle_failed_task_notice(team, task, caller)
@@ -1122,8 +1192,18 @@ def task_update(
     data = _dump(task)
     if failure_notice is not None:
         data.update(failure_notice)
+    if auto_releases:
+        data["autoReleasedTasks"] = auto_releases
     if wake is None:
-        _output(data, lambda d: console.print(f"[green]OK[/green] Task {d['id']} updated"))
+        def _human(d):
+            console.print(f"[green]OK[/green] Task {d['id']} updated")
+            for release in d.get("autoReleasedTasks", []):
+                console.print(
+                    f"  Auto-notified {release['owner']} for task {release['taskId']}"
+                    + (f" and respawned via {release['spawn'].get('backend', '')}" if release.get("respawned") else "")
+                )
+
+        _output(data, _human)
     else:
         data.update(wake)
 
@@ -1136,6 +1216,11 @@ def task_update(
                     console.print(f"  Workspace: {d['spawn']['cwd']}")
             else:
                 console.print("  Respawned: no")
+            for release in d.get("autoReleasedTasks", []):
+                console.print(
+                    f"  Auto-notified {release['owner']} for task {release['taskId']}"
+                    + (f" and respawned via {release['spawn'].get('backend', '')}" if release.get("respawned") else "")
+                )
 
         _output(data, _human)
 
