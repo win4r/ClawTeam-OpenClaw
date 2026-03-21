@@ -62,7 +62,7 @@ def build_agent_prompt(
         f"- Starting a task: `clawteam task update {team_name} <task-id> --status in_progress`",
         f"- Finishing a task: `clawteam task update {team_name} <task-id> --status completed`",
         f"- Regular fail with clear retry route: `clawteam task update {team_name} <task-id> --status failed --failure-kind regular --failure-note \"<evidence>\"`",
-        f"- Complex fail needing leader decision: `clawteam task update {team_name} <task-id> --status failed --failure-kind complex --failure-note \"<evidence>\"`",
+        f"- Complex fail needing leader decision: `clawteam task update {team_name} <task-id> --status failed --failure-kind complex --failure-root-cause \"<cause>\" --failure-evidence \"<evidence>\" --failure-recommended-next-owner \"<owner>\" --failure-recommended-action \"<action>\"`",
         "- When you finish all tasks, send a summary to the leader:",
         f'  `clawteam inbox send {team_name} {leader_name} "All tasks completed. <brief summary>"`',
         "- If you are blocked or need help, message the leader:",

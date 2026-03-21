@@ -167,7 +167,10 @@ def test_task_update_failed_complex_notifies_leader(monkeypatch, tmp_path):
             "task", "update", "demo", task.id,
             "--status", "failed",
             "--failure-kind", "complex",
-            "--failure-note", "Need leader decision on ownership",
+            "--failure-root-cause", "Owner and reroute are unclear",
+            "--failure-evidence", "Both backend and frontend changed; QA cannot isolate",
+            "--failure-recommended-next-owner", "leader",
+            "--failure-recommended-action", "Decide whether dev1 or dev2 owns the next fix",
         ],
         env=env,
     )
@@ -176,11 +179,15 @@ def test_task_update_failed_complex_notifies_leader(monkeypatch, tmp_path):
     updated = TaskStore("demo").get(task.id)
     assert updated.status.value == "failed"
     assert updated.metadata["failure_kind"] == "complex"
-    assert updated.metadata["failure_note"] == "Need leader decision on ownership"
+    assert updated.metadata["failure_root_cause"] == "Owner and reroute are unclear"
+    assert updated.metadata["failure_evidence"] == "Both backend and frontend changed; QA cannot isolate"
+    assert updated.metadata["failure_recommended_next_owner"] == "leader"
+    assert updated.metadata["failure_recommended_action"] == "Decide whether dev1 or dev2 owns the next fix"
 
     inbox = MailboxManager("demo")
     messages = inbox.peek("leader")
     assert any("COMPLEX FAIL" in (msg.content or "") for msg in messages)
+    assert any("Root cause: Owner and reroute are unclear" in (msg.content or "") for msg in messages)
     assert any(task.id in (msg.content or "") for msg in messages)
 
 
@@ -202,6 +209,10 @@ def test_task_update_failed_regular_does_not_notify_leader(monkeypatch, tmp_path
             "--status", "failed",
             "--failure-kind", "regular",
             "--failure-note", "Clear repro, return to implement",
+            "--failure-root-cause", "Validation mismatch",
+            "--failure-evidence", "Regression reproduced twice",
+            "--failure-recommended-next-owner", "dev1",
+            "--failure-recommended-action", "Fix API contract and rerun QA",
         ],
         env=env,
     )
@@ -209,7 +220,33 @@ def test_task_update_failed_regular_does_not_notify_leader(monkeypatch, tmp_path
     assert result.exit_code == 0, result.output
     updated = TaskStore("demo").get(task.id)
     assert updated.metadata["failure_kind"] == "regular"
+    assert updated.metadata["failure_root_cause"] == "Validation mismatch"
 
     inbox = MailboxManager("demo")
     messages = inbox.peek("leader")
     assert messages == []
+
+
+def test_task_update_failed_complex_requires_structured_fields(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    task = TaskStore("demo").create("Regression QA", owner="qa1")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", task.id,
+            "--status", "failed",
+            "--failure-kind", "complex",
+            "--failure-root-cause", "Owner unclear",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "complex fail requires" in result.output

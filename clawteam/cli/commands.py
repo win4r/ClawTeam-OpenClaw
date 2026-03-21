@@ -82,12 +82,18 @@ def _handle_failed_task_notice(team: str, task, caller: str) -> dict | None:
     if not leader_name:
         return {"failureNotice": "no-leader", "failureKind": failure_kind}
 
-    summary = task.metadata.get("failure_note") or "No failure note provided."
-    content = (
-        f"COMPLEX FAIL: task '{task.subject}' ({task.id}) failed. "
-        f"Owner={task.owner or '(unassigned)'}. "
-        f"Reason/evidence: {summary}"
-    )
+    root_cause = task.metadata.get("failure_root_cause") or "Unspecified"
+    evidence = task.metadata.get("failure_evidence") or (task.metadata.get("failure_note") or "No evidence provided.")
+    next_owner = task.metadata.get("failure_recommended_next_owner") or "leader"
+    next_action = task.metadata.get("failure_recommended_action") or "Decide reroute/recovery"
+    content = "\n".join([
+        f"COMPLEX FAIL: {task.subject} ({task.id})",
+        f"Owner: {task.owner or '(unassigned)'}",
+        f"Root cause: {root_cause}",
+        f"Evidence: {evidence}",
+        f"Recommended next owner: {next_owner}",
+        f"Recommended action: {next_action}",
+    ])
     mailbox = MailboxManager(team)
     msg = mailbox.send(from_agent=caller, to=leader_name, content=content)
     return {
@@ -1027,6 +1033,10 @@ def task_update(
     add_blocked_by: Optional[str] = typer.Option(None, "--add-blocked-by", help="Comma-separated task IDs blocking this"),
     failure_kind: Optional[str] = typer.Option(None, "--failure-kind", help="Failure routing kind when status=failed: regular or complex"),
     failure_note: Optional[str] = typer.Option(None, "--failure-note", help="Concrete failure summary/evidence when status=failed"),
+    failure_root_cause: Optional[str] = typer.Option(None, "--failure-root-cause", help="Root cause summary when status=failed"),
+    failure_evidence: Optional[str] = typer.Option(None, "--failure-evidence", help="Concrete evidence when status=failed"),
+    failure_recommended_next_owner: Optional[str] = typer.Option(None, "--failure-recommended-next-owner", help="Suggested next owner when status=failed"),
+    failure_recommended_action: Optional[str] = typer.Option(None, "--failure-recommended-action", help="Suggested next action when status=failed"),
     wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
     message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
@@ -1050,8 +1060,28 @@ def task_update(
         failure_metadata = {"failure_kind": kind}
         if failure_note:
             failure_metadata["failure_note"] = failure_note.strip()
-    elif failure_kind or failure_note:
-        _output({"error": "--failure-kind/--failure-note require --status failed"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        if failure_root_cause:
+            failure_metadata["failure_root_cause"] = failure_root_cause.strip()
+        if failure_evidence:
+            failure_metadata["failure_evidence"] = failure_evidence.strip()
+        if failure_recommended_next_owner:
+            failure_metadata["failure_recommended_next_owner"] = failure_recommended_next_owner.strip()
+        if failure_recommended_action:
+            failure_metadata["failure_recommended_action"] = failure_recommended_action.strip()
+
+        if kind == "complex":
+            required = {
+                "--failure-root-cause": failure_root_cause,
+                "--failure-evidence": failure_evidence,
+                "--failure-recommended-next-owner": failure_recommended_next_owner,
+                "--failure-recommended-action": failure_recommended_action,
+            }
+            missing = [flag for flag, value in required.items() if not (value or "").strip()]
+            if missing:
+                _output({"error": f"complex fail requires: {', '.join(missing)}"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+                raise typer.Exit(1)
+    elif failure_kind or failure_note or failure_root_cause or failure_evidence or failure_recommended_next_owner or failure_recommended_action:
+        _output({"error": "failure options require --status failed"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
     caller = AgentIdentity.from_env().agent_name
