@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from clawteam.platform_compat import default_spawn_backend
 
 
 class ClawTeamConfig(BaseModel):
@@ -15,12 +17,15 @@ class ClawTeamConfig(BaseModel):
     default_team: str = ""
     transport: str = ""
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
-    default_backend: str = "tmux"  # "tmux" | "subprocess"
+    default_backend: str = Field(default_factory=default_spawn_backend)  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
 
 
 def config_path() -> Path:
     """Fixed config location: ~/.clawteam/config.json (never affected by data_dir)."""
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    if home:
+        return Path(home) / ".clawteam" / "config.json"
     return Path.home() / ".clawteam" / "config.json"
 
 
@@ -42,7 +47,7 @@ def save_config(cfg: ClawTeamConfig) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(cfg.model_dump_json(indent=2), encoding="utf-8")
-    tmp.rename(p)
+    tmp.replace(p)
 
 
 def get_effective(key: str) -> tuple[str, str]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from clawteam.platform_compat import exclusive_file_lock
 from clawteam.team.models import TaskItem, TaskStatus, get_data_dir
 
 
@@ -49,13 +49,8 @@ class TaskStore:
     @contextmanager
     def _write_lock(self):
         lock_path = _tasks_lock_path(self.team_name)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(lock_path):
+            yield
 
     def create(
         self,

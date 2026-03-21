@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from clawteam.platform_compat import pid_alive
 from clawteam.team.models import get_data_dir
 
 
@@ -56,10 +57,10 @@ def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
             # fall back to PID check
             pid = info.get("pid", 0)
             if pid:
-                return _pid_alive(pid)
+                return pid_alive(pid)
         return alive
     elif backend == "subprocess":
-        return _pid_alive(info.get("pid", 0))
+        return pid_alive(info.get("pid", 0))
     return None
 
 
@@ -96,21 +97,6 @@ def _tmux_pane_alive(target: str) -> bool:
         if len(parts) >= 2 and parts[1] in ("bash", "zsh", "sh", "fish"):
             return False
     return True
-
-
-def _pid_alive(pid: int) -> bool:
-    """Check if a process with the given PID is still running."""
-    if pid <= 0:
-        return False
-    try:
-        import os
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it
-        return True
 
 
 def _load(path: Path) -> dict:

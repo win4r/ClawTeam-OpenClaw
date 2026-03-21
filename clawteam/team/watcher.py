@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import signal
 import subprocess
 import time
 
+from clawteam.platform_compat import install_signal_handlers, restore_signal_handlers
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import TeamMessage
 
@@ -41,10 +41,7 @@ class InboxWatcher:
         def _handle_signal(signum, frame):
             self._running = False
 
-        prev_int = signal.getsignal(signal.SIGINT)
-        prev_term = signal.getsignal(signal.SIGTERM)
-        signal.signal(signal.SIGINT, _handle_signal)
-        signal.signal(signal.SIGTERM, _handle_signal)
+        previous_handlers = install_signal_handlers(_handle_signal)
 
         try:
             while self._running:
@@ -55,8 +52,7 @@ class InboxWatcher:
                         self._run_callback(msg)
                 time.sleep(self.poll_interval)
         finally:
-            signal.signal(signal.SIGINT, prev_int)
-            signal.signal(signal.SIGTERM, prev_term)
+            restore_signal_handlers(previous_handlers)
 
     def _output(self, msg: TeamMessage) -> None:
         if self.json_output:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from clawteam.platform_compat import default_spawn_backend
 from clawteam.spawn.base import SpawnBackend
 
 
-def get_backend(name: str = "tmux") -> SpawnBackend:
+def get_backend(name: str | None = None) -> SpawnBackend:
     """Factory function to get a spawn backend by name."""
+    name = name or default_spawn_backend()
     if name == "subprocess":
         from clawteam.spawn.subprocess_backend import SubprocessBackend
         return SubprocessBackend()

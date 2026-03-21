@@ -2,6 +2,7 @@
 
 
 from clawteam.config import ClawTeamConfig, config_path, get_effective, load_config, save_config
+from clawteam.platform_compat import default_spawn_backend
 
 
 class TestClawTeamConfig:
@@ -9,7 +10,7 @@ class TestClawTeamConfig:
         cfg = ClawTeamConfig()
         assert cfg.data_dir == ""
         assert cfg.user == ""
-        assert cfg.default_backend == "tmux"
+        assert cfg.default_backend == default_spawn_backend()
         assert cfg.skip_permissions is True
         assert cfg.workspace == "auto"
 
@@ -70,12 +71,12 @@ class TestGetEffective:
         assert source == "default"
 
     def test_default_backend_treated_as_file(self, monkeypatch):
-        """default_backend has a non-empty default ('tmux'), so load_config()
+        """default_backend has a platform-specific default, so load_config()
         returns the default value with source='default' when no config file
         overrides it."""
         monkeypatch.delenv("CLAWTEAM_DEFAULT_BACKEND", raising=False)
         val, source = get_effective("default_backend")
-        assert val == "tmux"
+        assert val == default_spawn_backend()
         assert source == "default"
 
     def test_data_dir_env(self, monkeypatch):

@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from clawteam import __version__
+from clawteam.platform_compat import default_spawn_backend
 
 app = typer.Typer(
     name="clawteam",
@@ -1552,50 +1553,31 @@ def lifecycle_on_exit(
 
     This is called automatically as a post-exit hook when an agent process terminates.
     """
-    from clawteam.team.mailbox import MailboxManager
-    from clawteam.team.manager import TeamManager
-    from clawteam.team.models import TaskStatus
-    from clawteam.team.tasks import TaskStore
+    from clawteam.team.lifecycle import handle_agent_exit
 
-    store = TaskStore(team)
-    tasks = store.list_tasks()
-
-    # Find this agent's in_progress tasks and reset them
-    abandoned = [
-        t for t in tasks
-        if t.owner == agent and t.status == TaskStatus.in_progress
-    ]
-
-    if not abandoned:
-        # Agent exited cleanly (all tasks already completed or pending)
+    result = handle_agent_exit(team, agent)
+    if not result:
         return
 
-    for t in abandoned:
-        store.update(t.id, status=TaskStatus.pending)
-
-    # Notify leader
-    leader_name = TeamManager.get_leader_name(team)
-    if leader_name:
-        mailbox = MailboxManager(team)
-        task_subjects = ", ".join(t.subject for t in abandoned)
-        mailbox.send(
-            from_agent=agent,
-            to=leader_name,
-            content=f"Agent '{agent}' exited unexpectedly. "
-                    f"Reset {len(abandoned)} task(s) to pending: {task_subjects}",
-        )
-
     _output(
-        {
-            "status": "agent_exited",
-            "agent": agent,
-            "abandoned_tasks": [{"id": t.id, "subject": t.subject} for t in abandoned],
-        },
+        result,
         lambda d: console.print(
             f"[yellow]Agent '{agent}' exited.[/yellow] "
             f"Reset {len(d['abandoned_tasks'])} task(s) to pending."
         ),
     )
+
+
+def _resolve_spawn_backend_and_command(
+    backend: Optional[str],
+    command: list[str] | None,
+) -> tuple[Optional[str], list[str]]:
+    """Treat a non-backend positional token as the first command token."""
+    normalized_command = list(command or [])
+    if backend is not None and backend not in ("tmux", "subprocess"):
+        normalized_command = [backend, *normalized_command]
+        backend = None
+    return backend, normalized_command
 
 
 # ============================================================================
@@ -1604,8 +1586,11 @@ def lifecycle_on_exit(
 
 @app.command("spawn")
 def spawn_agent(
-    backend: Optional[str] = typer.Argument(None, help="Backend: tmux (default) or subprocess"),
-    command: list[str] = typer.Argument(None, help="Command and arguments to run (default: claude)"),
+    backend: Optional[str] = typer.Argument(
+        None,
+        help="Backend: platform default (tmux on Linux/macOS, subprocess on Windows) or explicit backend",
+    ),
+    command: list[str] = typer.Argument(None, help="Command and arguments to run (default: openclaw)"),
     team: Optional[str] = typer.Option(None, "--team", "-t", help="Team name"),
     agent_name: Optional[str] = typer.Option(None, "--agent-name", "-n", help="Agent name"),
     agent_type: str = typer.Option("general-purpose", "--agent-type", help="Agent type"),
@@ -1617,15 +1602,17 @@ def spawn_agent(
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
-    Defaults: tmux backend, openclaw command, git worktree isolation, skip-permissions on.
+    Defaults: platform backend, openclaw command, git worktree isolation, skip-permissions on.
     """
     from clawteam.config import get_effective
     from clawteam.spawn import get_backend
 
+    backend, command = _resolve_spawn_backend_and_command(backend, command)
+
     # Resolve defaults from config
     if backend is None:
         backend, _ = get_effective("default_backend")
-        backend = backend or "tmux"
+        backend = backend or default_spawn_backend()
     if not command:
         command = ["openclaw"]
 
@@ -1902,7 +1889,7 @@ def board_attach(
     """Attach to tmux session with all agent windows tiled side by side.
 
     Merges all agent tmux windows into a single tiled view so you can
-    watch every agent working simultaneously.
+    watch every agent working simultaneously. Best on Linux/macOS/WSL.
     """
     from clawteam.spawn.tmux_backend import TmuxBackend
 
