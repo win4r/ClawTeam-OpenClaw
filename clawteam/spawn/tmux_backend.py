@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -56,7 +57,9 @@ class TmuxBackend(SpawnBackend):
         transport = os.environ.get("CLAWTEAM_TRANSPORT", "")
         if transport:
             env_vars["CLAWTEAM_TRANSPORT"] = transport
-        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "")
+        from clawteam.team.models import get_data_dir
+
+        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "") or str(get_data_dir())
         if data_dir:
             env_vars["CLAWTEAM_DATA_DIR"] = data_dir
         if cwd:
@@ -84,20 +87,28 @@ class TmuxBackend(SpawnBackend):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
         session_key = ""
-        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
+        prompt_file = ""
+        # Formal OpenClaw worker runtime: run clawteam worker loop, not raw tui.
         if _is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
-            if final_command[0].endswith("openclaw") and len(final_command) == 1:
-                final_command = [final_command[0], "tui", "--session", session_key]
-                if prompt:
-                    final_command.extend(["--message", prompt])
-            elif "tui" in final_command:
-                final_command.extend(["--session", session_key])
-                if prompt:
-                    final_command.extend(["--message", prompt])
-            elif "agent" in final_command:
-                if prompt:
-                    final_command.extend(["--message", prompt])
+            if prompt:
+                prompt_path = Path(tempfile.gettempdir()) / f"clawteam-worker-{team_name}-{agent_name}.prompt.txt"
+                prompt_path.write_text(prompt, encoding="utf-8")
+                prompt_file = str(prompt_path)
+            final_command = [
+                clawteam_bin,
+                "worker",
+                "run",
+                team_name,
+                "--agent",
+                agent_name,
+                "--command",
+                normalized_command[0],
+            ]
+            for arg in normalized_command[1:]:
+                final_command.extend(["--command-arg", arg])
+            if prompt_file:
+                final_command.extend(["--startup-prompt-file", prompt_file])
 
         if _is_nanobot_command(normalized_command):
             if cwd and not _command_has_workspace_arg(normalized_command):
