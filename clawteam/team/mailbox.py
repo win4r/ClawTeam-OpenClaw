@@ -152,10 +152,36 @@ class MailboxManager:
                 messages.append(msg)
         return messages
 
-    def receive(self, agent_name: str, limit: int = 10) -> list[TeamMessage]:
-        """Receive and delete messages from an agent's inbox (FIFO)."""
+    def receive(
+        self,
+        agent_name: str,
+        limit: int = 10,
+        acknowledge: bool = False,
+        acknowledge_status: str | None = None,
+    ) -> list[TeamMessage]:
+        """Receive and delete messages from an agent's inbox (FIFO).
+
+        When acknowledge=True, send an explicit ack back to the original sender for
+        each received message that has both a sender and request_id.
+        """
         raw = self._transport.fetch(agent_name, limit=limit, consume=True)
-        return [TeamMessage.model_validate(json.loads(r)) for r in raw]
+        messages = [TeamMessage.model_validate(json.loads(r)) for r in raw]
+        if acknowledge:
+            ack_status = acknowledge_status or "acknowledged"
+            for msg in messages:
+                if msg.type == MessageType.ack or not msg.from_agent or not msg.request_id:
+                    continue
+                self.send(
+                    from_agent=agent_name,
+                    to=msg.from_agent,
+                    msg_type=MessageType.ack,
+                    request_id=msg.request_id,
+                    content=f"Ack: received message {msg.request_id}",
+                    key=msg.key,
+                    last_task=msg.last_task,
+                    status=ack_status,
+                )
+        return messages
 
     def peek(self, agent_name: str) -> list[TeamMessage]:
         """Return pending messages without consuming them."""
