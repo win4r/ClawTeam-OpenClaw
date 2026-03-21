@@ -114,6 +114,35 @@ def _output(data: dict | list, human_fn=None):
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def _require_team_identity(team: str):
+    from clawteam.identity import AgentIdentity
+
+    identity = AgentIdentity.from_env()
+    if not identity.team_name or identity.agent_name == "agent":
+        _output(
+            {
+                "error": (
+                    "Missing ClawTeam identity for this OpenClaw session. "
+                    "Spawn or resume the worker through clawteam so the session key maps to a team member."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    if identity.team_name != team:
+        _output(
+            {
+                "error": (
+                    f"Identity team mismatch: session belongs to '{identity.team_name}', "
+                    f"but command targeted '{team}'."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    return identity
+
+
 # ============================================================================
 # Config Commands
 # ============================================================================
@@ -613,11 +642,11 @@ def inbox_send(
     from_agent: Optional[str] = typer.Option(None, "--from", "-f", help="Override sender name (default: from env identity)"),
 ):
     """Send a point-to-point message (write)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.models import MessageType
 
-    sender = from_agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    sender = from_agent or identity.agent_name
     mailbox = MailboxManager(team)
     mt = MessageType(msg_type)
     msg = mailbox.send(
@@ -640,11 +669,11 @@ def inbox_broadcast(
     from_agent: Optional[str] = typer.Option(None, "--from", "-f", help="Override sender name (default: from env identity)"),
 ):
     """Broadcast a message to all team members (broadcast)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.models import MessageType
 
-    sender = from_agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    sender = from_agent or identity.agent_name
     mailbox = MailboxManager(team)
     mt = MessageType(msg_type)
     messages = mailbox.broadcast(
@@ -665,11 +694,10 @@ def inbox_receive(
     ack: bool = typer.Option(False, "--ack", help="Send ack messages back to original senders for received messages"),
 ):
     """Receive and consume messages from inbox."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
     messages = mailbox.receive(agent_name, limit=limit, acknowledge=ack)
@@ -696,11 +724,10 @@ def inbox_peek(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Peek at messages without consuming them."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
@@ -766,12 +793,11 @@ def inbox_watch(
     via env vars: CLAWTEAM_MSG_FROM, CLAWTEAM_MSG_TO, CLAWTEAM_MSG_CONTENT,
     CLAWTEAM_MSG_TYPE, CLAWTEAM_MSG_TIMESTAMP, CLAWTEAM_MSG_JSON.
     """
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.watcher import InboxWatcher
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
 
@@ -1080,10 +1106,10 @@ def task_update(
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
 ):
     """Update a task (TaskUpdate)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.models import TaskStatus
     from clawteam.team.tasks import TaskLockError, TaskStore
 
+    identity = _require_team_identity(team)
     store = TaskStore(team)
     ts = TaskStatus(status) if status else None
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
@@ -1122,7 +1148,7 @@ def task_update(
         _output({"error": "failure options require --status failed"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
-    caller = AgentIdentity.from_env().agent_name
+    caller = identity.agent_name
 
     existing = store.get(task_id)
     if not existing:
@@ -1245,11 +1271,11 @@ def task_release(
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock while releasing"),
 ):
     """Release a task back to its owner, notify them, and auto-respawn if needed."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.models import TaskStatus
     from clawteam.team.tasks import TaskLockError, TaskStore
 
-    caller = AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    caller = identity.agent_name
     store = TaskStore(team)
     existing = store.get(task_id)
     if not existing:
