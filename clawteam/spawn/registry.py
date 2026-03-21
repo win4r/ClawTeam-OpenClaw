@@ -20,6 +20,13 @@ def register_agent(
     tmux_target: str = "",
     pid: int = 0,
     command: list[str] | None = None,
+    spawn_env: dict[str, str] | None = None,
+    spawn_cwd: str = "",
+    agent_id: str = "",
+    agent_type: str = "",
+    prompt: str = "",
+    skip_permissions: bool = False,
+    stagger_seconds: float = 0,
 ) -> None:
     """Record spawn info for an agent (atomic write)."""
     path = _registry_path(team_name)
@@ -29,6 +36,13 @@ def register_agent(
         "tmux_target": tmux_target,
         "pid": pid,
         "command": command or [],
+        "spawn_env": spawn_env or {},
+        "spawn_cwd": spawn_cwd,
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "prompt": prompt,
+        "skip_permissions": skip_permissions,
+        "stagger_seconds": stagger_seconds,
     }
     _save(path, registry)
 
@@ -104,6 +118,7 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         import os
+
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
@@ -124,11 +139,13 @@ def _load(path: Path) -> dict:
 
 def _save(path: Path, data: dict) -> None:
     import tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         import os
+
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
         Path(tmp).replace(path)

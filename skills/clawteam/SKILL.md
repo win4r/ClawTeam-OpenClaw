@@ -84,6 +84,10 @@ clawteam board show my-team
 clawteam spawn --team my-team --agent-name worker1 --task "Implement the auth module"
 clawteam spawn --team my-team --agent-name worker2 --task "Write unit tests"
 
+# Stagger spawns to avoid API thundering herd (each agent sleeps 0-8s random jitter before starting)
+clawteam spawn --team my-team --agent-name worker1 --task "Auth module" --stagger 8
+clawteam spawn --team my-team --agent-name worker2 --task "Unit tests" --stagger 8
+
 # Or explicitly specify backend and command (positional args: [BACKEND] [COMMAND])
 clawteam spawn tmux claude --team my-team --agent-name worker3 --task "Build API endpoints"
 clawteam spawn subprocess claude --team my-team --agent-name worker4 --task "Run linting"
@@ -108,11 +112,22 @@ Spawning agents uses sensible defaults — no flags needed for the common case:
 | Command | `claude` | `clawteam spawn tmux my-cmd ...` |
 | Workspace | `auto` (git worktree) | `--no-workspace` or config `workspace=never` |
 | Permissions | skip (no approval needed) | `--no-skip-permissions` or config `skip_permissions=false` |
+| Stagger | `0` (no delay) | `--stagger 8` (random 0-8s jitter before agent starts) |
 
 Agents spawned with defaults get:
 - Their own **git worktree** (isolated branch, no conflicts with other agents)
 - **Full tool permissions** (`--dangerously-skip-permissions`) so they can work autonomously
 - A **tmux window** you can watch with `board attach`
+
+### Resilience: Auto-Respawn
+
+When using `task wait`, dead agents are automatically detected and respawned:
+- Dead agent's in-progress tasks are reset to `pending`
+- The agent is re-spawned using the same command and configuration
+- Exponential backoff between retries: 10s, 30s, 60s, 120s
+- Max 3 respawn attempts per agent (configurable)
+
+This handles transient failures like Claude API 500 errors gracefully.
 
 ### Task Lifecycle
 

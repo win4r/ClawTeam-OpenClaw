@@ -37,9 +37,10 @@ clawteam task create my-team "Build frontend" -o frontend --blocked-by abc123
 clawteam task create my-team "Write tests" -o tester
 
 # 3. Spawn agents (each gets its own tmux window + git worktree)
-clawteam spawn -t my-team -n architect --task "Design the API schema for a web app"
-clawteam spawn -t my-team -n backend --task "Implement OAuth2 authentication"
-clawteam spawn -t my-team -n frontend --task "Build React dashboard"
+# Use --stagger 8 when spawning multiple agents to avoid API thundering herd
+clawteam spawn -t my-team -n architect --task "Design the API schema for a web app" --stagger 8
+clawteam spawn -t my-team -n backend --task "Implement OAuth2 authentication" --stagger 8
+clawteam spawn -t my-team -n frontend --task "Build React dashboard" --stagger 8
 
 # 4. Monitor
 clawteam board show my-team        # Kanban view
@@ -101,6 +102,8 @@ Each spawned agent gets:
 - Commands are pre-validated before launch — you get a clear error if the agent CLI is not installed
 - If a spawn fails, the registered team member and worktree are automatically rolled back
 - Claude Code and Codex workspace trust prompts are auto-confirmed in fresh worktrees
+- `--stagger <seconds>` adds random jitter (0 to N seconds) before each agent starts, preventing API thundering herd
+- Auto-respawn: dead agents are detected during `task wait` and automatically re-spawned (up to 3 attempts with exponential backoff)
 
 ### Messaging
 
@@ -207,10 +210,11 @@ clawteam task create <team> "Integration tests" -o tester --blocked-by <backend-
 ### Phase 3: Spawn Workers
 ```bash
 # Each spawn launches an openclaw tui in its own tmux window
-clawteam spawn -t <team> -n architect --task "Design REST API schema for <goal>"
-clawteam spawn -t <team> -n backend --task "Implement backend based on API schema"
-clawteam spawn -t <team> -n frontend --task "Build React frontend"
-clawteam spawn -t <team> -n tester --task "Write and run integration tests"
+# Use --stagger 8 to avoid API thundering herd (random 0-8s jitter per agent)
+clawteam spawn -t <team> -n architect --task "Design REST API schema for <goal>" --stagger 8
+clawteam spawn -t <team> -n backend --task "Implement backend based on API schema" --stagger 8
+clawteam spawn -t <team> -n frontend --task "Build React frontend" --stagger 8
+clawteam spawn -t <team> -n tester --task "Write and run integration tests" --stagger 8
 ```
 
 ### Phase 4: Monitor Loop

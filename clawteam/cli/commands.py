@@ -1614,6 +1614,7 @@ def spawn_agent(
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path (default: cwd)"),
     skip_permissions: Optional[bool] = typer.Option(None, "--skip-permissions/--no-skip-permissions", help="Skip tool approval for claude (default: from config, true)"),
     resume: bool = typer.Option(False, "--resume", "-r", help="Resume previous session if available"),
+    stagger: float = typer.Option(0, "--stagger", help="Max random jitter seconds before agent starts (reduces API thundering herd)"),
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
@@ -1729,6 +1730,7 @@ def spawn_agent(
         prompt=prompt,
         cwd=cwd,
         skip_permissions=skip_permissions,
+        stagger_seconds=stagger,
     )
 
     if result.startswith("Error"):

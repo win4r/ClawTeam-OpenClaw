@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import time
 from dataclasses import dataclass, field
@@ -10,6 +11,8 @@ from typing import Callable
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import TaskItem, TaskStatus, TeamMessage
 from clawteam.team.tasks import TaskStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +52,8 @@ class TaskWaiter:
         on_message: Callable[[TeamMessage], None] | None = None,
         on_progress: Callable[[int, int, int, int, int], None] | None = None,
         on_agent_dead: Callable[[str, list[TaskItem]], None] | None = None,
+        max_respawn_attempts: int = 3,
+        auto_respawn: bool = True,
     ):
         self.team_name = team_name
         self.agent_name = agent_name
@@ -59,9 +64,12 @@ class TaskWaiter:
         self.on_message = on_message
         self.on_progress = on_progress
         self.on_agent_dead = on_agent_dead
+        self.max_respawn_attempts = max_respawn_attempts
+        self.auto_respawn = auto_respawn
         self._running = False
         self._messages_received = 0
         self._known_dead: set[str] = set()
+        self._respawn_attempts: dict[str, int] = {}
 
     def wait(self) -> WaitResult:
         """Block until all tasks are completed, timeout, or interrupted."""
@@ -164,9 +172,8 @@ class TaskWaiter:
             signal.signal(signal.SIGINT, prev_sigint)
             signal.signal(signal.SIGTERM, prev_sigterm)
 
-
     def _check_dead_agents(self) -> None:
-        """Detect dead agents and mark their in_progress tasks as pending."""
+        """Detect dead agents, reset their tasks, and attempt respawn."""
         try:
             from clawteam.spawn.registry import list_dead_agents
         except ImportError:
@@ -181,14 +188,86 @@ class TaskWaiter:
             # Find this agent's in_progress tasks and reset them
             tasks = self.task_store.list_tasks()
             abandoned = [
-                t for t in tasks
-                if t.owner == agent_name and t.status == TaskStatus.in_progress
+                t for t in tasks if t.owner == agent_name and t.status == TaskStatus.in_progress
             ]
             for t in abandoned:
                 self.task_store.update(t.id, status=TaskStatus.pending)
 
             if abandoned and self.on_agent_dead:
                 self.on_agent_dead(agent_name, abandoned)
+
+            # Attempt auto-respawn
+            if self.auto_respawn:
+                self._respawn_agent(agent_name)
+
+    def _respawn_agent(self, agent_name: str) -> None:
+        """Attempt to respawn a dead agent using stored spawn info."""
+        try:
+            from clawteam.spawn import get_backend
+            from clawteam.spawn.registry import get_registry
+        except ImportError:
+            return
+
+        attempt = self._respawn_attempts.get(agent_name, 0)
+        if attempt >= self.max_respawn_attempts:
+            logger.warning(
+                "Agent '%s' exceeded max respawn attempts (%d), skipping",
+                agent_name,
+                self.max_respawn_attempts,
+            )
+            return
+
+        registry = get_registry(self.team_name)
+        info = registry.get(agent_name)
+        if not info or not info.get("command"):
+            logger.warning("No spawn info for agent '%s', cannot respawn", agent_name)
+            return
+
+        backoff = respawn_backoff(attempt)
+        self._respawn_attempts[agent_name] = attempt + 1
+
+        logger.info(
+            "Respawning agent '%s' (attempt %d/%d, backoff %.0fs)",
+            agent_name,
+            attempt + 1,
+            self.max_respawn_attempts,
+            backoff,
+        )
+        time.sleep(backoff)
+
+        backend_name = info.get("backend", "tmux")
+        try:
+            be = get_backend(backend_name)
+            result = be.spawn(
+                command=info["command"],
+                agent_name=agent_name,
+                agent_id=info.get("agent_id", ""),
+                agent_type=info.get("agent_type", ""),
+                team_name=self.team_name,
+                prompt=info.get("prompt") or None,
+                cwd=info.get("spawn_cwd") or None,
+                skip_permissions=info.get("skip_permissions", False),
+                stagger_seconds=info.get("stagger_seconds", 0),
+            )
+            if result.startswith("Error"):
+                logger.error("Respawn failed for '%s': %s", agent_name, result)
+            else:
+                logger.info("Respawned agent '%s': %s", agent_name, result)
+                # Allow re-detection if it dies again
+                self._known_dead.discard(agent_name)
+        except Exception:
+            logger.exception("Respawn failed for agent '%s'", agent_name)
+
+
+def respawn_backoff(attempt: int, max_delay: float = 120.0) -> float:
+    """Calculate exponential backoff delay for respawn attempts.
+
+    Returns 10, 30, 60, 120 (capped) for attempts 0, 1, 2, 3+.
+    """
+    delays = [10.0, 30.0, 60.0, 120.0]
+    if attempt < len(delays):
+        return min(delays[attempt], max_delay)
+    return max_delay
 
 
 def _task_summary(task: TaskItem) -> dict:

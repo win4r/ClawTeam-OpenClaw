@@ -28,16 +28,19 @@ class SubprocessBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        stagger_seconds: float = 0,
     ) -> str:
         spawn_env = os.environ.copy()
         clawteam_bin = resolve_clawteam_executable()
-        spawn_env.update({
-            "CLAWTEAM_AGENT_ID": agent_id,
-            "CLAWTEAM_AGENT_NAME": agent_name,
-            "CLAWTEAM_AGENT_TYPE": agent_type,
-            "CLAWTEAM_TEAM_NAME": team_name,
-            "CLAWTEAM_AGENT_LEADER": "0",
-        })
+        spawn_env.update(
+            {
+                "CLAWTEAM_AGENT_ID": agent_id,
+                "CLAWTEAM_AGENT_NAME": agent_name,
+                "CLAWTEAM_AGENT_TYPE": agent_type,
+                "CLAWTEAM_TEAM_NAME": team_name,
+                "CLAWTEAM_AGENT_LEADER": "0",
+            }
+        )
         # Propagate user if set
         user = os.environ.get("CLAWTEAM_USER", "")
         if user:
@@ -92,7 +95,11 @@ class SubprocessBackend(SpawnBackend):
             f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
             f"--agent {shlex.quote(agent_name)}"
         )
-        shell_cmd = f"{cmd_str}; {exit_hook}"
+        # Add stagger delay (random jitter from 0 to stagger_seconds) before the agent command
+        stagger_prefix = ""
+        if stagger_seconds > 0:
+            stagger_prefix = f"sleep $(python3 -c 'import random; print(round(random.uniform(0, {stagger_seconds}), 1))'); "
+        shell_cmd = f"{stagger_prefix}{cmd_str}; {exit_hook}"
 
         process = subprocess.Popen(
             shell_cmd,
@@ -104,14 +111,21 @@ class SubprocessBackend(SpawnBackend):
         )
         self._processes[agent_name] = process
 
-        # Persist spawn info for liveness checking
+        # Persist spawn info for liveness checking and respawn
         from clawteam.spawn.registry import register_agent
+
         register_agent(
             team_name=team_name,
             agent_name=agent_name,
             backend="subprocess",
             pid=process.pid,
             command=list(normalized_command),
+            spawn_cwd=cwd or "",
+            agent_id=agent_id,
+            agent_type=agent_type,
+            prompt=prompt or "",
+            skip_permissions=skip_permissions,
+            stagger_seconds=stagger_seconds,
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"

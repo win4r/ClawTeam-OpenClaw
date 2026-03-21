@@ -35,6 +35,7 @@ class TmuxBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        stagger_seconds: float = 0,
     ) -> str:
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
@@ -113,10 +114,14 @@ class TmuxBackend(SpawnBackend):
         # Unset nesting-detection env vars so spawned agents
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
+        # Add stagger delay (random jitter from 0 to stagger_seconds) before the agent command
+        stagger_clause = ""
+        if stagger_seconds > 0:
+            stagger_clause = f"sleep $(python3 -c 'import random; print(round(random.uniform(0, {stagger_seconds}), 1))'); "
         if cwd:
-            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && {cmd_str}; {exit_hook}"
+            full_cmd = f"{unset_clause}{export_str}; {stagger_clause}cd {shlex.quote(cwd)} && {cmd_str}; {exit_hook}"
         else:
-            full_cmd = f"{unset_clause}{export_str}; {cmd_str}; {exit_hook}"
+            full_cmd = f"{unset_clause}{export_str}; {stagger_clause}{cmd_str}; {exit_hook}"
 
         # Check if tmux session exists
         check = subprocess.run(
@@ -202,7 +207,12 @@ class TmuxBackend(SpawnBackend):
                 stderr=subprocess.PIPE,
             )
             os.unlink(tmp_path)
-        elif prompt and not _is_codex_command(normalized_command) and not _is_openclaw_command(normalized_command) and not _is_nanobot_command(normalized_command):
+        elif (
+            prompt
+            and not _is_codex_command(normalized_command)
+            and not _is_openclaw_command(normalized_command)
+            and not _is_nanobot_command(normalized_command)
+        ):
             # Generic command: append prompt via send-keys
             time.sleep(1)
             subprocess.run(
@@ -217,7 +227,8 @@ class TmuxBackend(SpawnBackend):
         pane_pid = 0
         pid_result = subprocess.run(
             ["tmux", "list-panes", "-t", target, "-F", "#{pane_pid}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if pid_result.returncode == 0 and pid_result.stdout.strip():
             try:
@@ -225,8 +236,9 @@ class TmuxBackend(SpawnBackend):
             except ValueError:
                 pass
 
-        # Persist spawn info for liveness checking
+        # Persist spawn info for liveness checking and respawn
         from clawteam.spawn.registry import register_agent
+
         register_agent(
             team_name=team_name,
             agent_name=agent_name,
@@ -234,6 +246,12 @@ class TmuxBackend(SpawnBackend):
             tmux_target=target,
             pid=pane_pid,
             command=list(normalized_command),
+            spawn_cwd=cwd or "",
+            agent_id=agent_id,
+            agent_type=agent_type,
+            prompt=prompt or "",
+            skip_permissions=skip_permissions,
+            stagger_seconds=stagger_seconds,
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"
@@ -267,14 +285,16 @@ class TmuxBackend(SpawnBackend):
         # Count current panes in window 0
         pane_count = subprocess.run(
             ["tmux", "list-panes", "-t", f"{session}:0"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         num_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
 
         # Get windows
         result = subprocess.run(
             ["tmux", "list-windows", "-t", session, "-F", "#{window_index}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             return f"Error: failed to list windows: {result.stderr.strip()}"
@@ -290,19 +310,24 @@ class TmuxBackend(SpawnBackend):
             for w in windows[1:]:
                 subprocess.run(
                     ["tmux", "join-pane", "-s", f"{session}:{w}", "-t", f"{session}:{first}", "-h"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             subprocess.run(
                 ["tmux", "select-layout", "-t", f"{session}:{first}", "tiled"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
 
         # Recount
         pane_count = subprocess.run(
             ["tmux", "list-panes", "-t", f"{session}:0"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
-        final_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
+        final_panes = (
+            len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
+        )
         return f"Tiled {final_panes} panes in {session}"
 
     @staticmethod
@@ -411,4 +436,9 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
 
 def _is_interactive_cli(command: list[str]) -> bool:
     """Check if the command is an interactive AI CLI."""
-    return _is_claude_command(command) or _is_codex_command(command) or _is_openclaw_command(command) or _is_nanobot_command(command)
+    return (
+        _is_claude_command(command)
+        or _is_codex_command(command)
+        or _is_openclaw_command(command)
+        or _is_nanobot_command(command)
+    )
