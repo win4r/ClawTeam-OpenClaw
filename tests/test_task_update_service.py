@@ -49,7 +49,7 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
         caller="qa1",
         ctx=TaskUpdateContext(
             store=store,
-            release_team="demo",
+            team="demo",
             runtime=RuntimeOrchestrator(team="demo"),
             release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
             failure_notifier=fake_notifier,
@@ -128,7 +128,7 @@ def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(m
     effects = execute_task_update_effects(
         ctx=TaskUpdateContext(
             store=store,
-            release_team="demo",
+            team="demo",
             runtime=RuntimeOrchestrator(team="demo"),
             release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
             failure_notifier=fake_notifier,

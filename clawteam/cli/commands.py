@@ -940,7 +940,7 @@ def task_update(
     caller = identity.agent_name
     ctx = TaskUpdateContext(
         store=store,
-        release_team=team,
+        team=team,
         runtime=RuntimeOrchestrator(team=team),
         release_notifier=notify_task_release,
         failure_notifier=notify_task_failure,

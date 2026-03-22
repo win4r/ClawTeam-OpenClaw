@@ -84,11 +84,21 @@ class TaskUpdateResult:
 @dataclass(frozen=True)
 class TaskUpdateContext:
     store: TaskStore
-    release_team: str
+    team: str
     runtime: Any
     release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None]
     failure_notifier: Callable[[str, TaskItem, str], dict[str, Any] | None]
-    release_repo: str | None = None
+    repo: str | None = None
+
+    @property
+    def release_team(self) -> str:
+        """Backward-compatible alias for older call sites."""
+        return self.team
+
+    @property
+    def release_repo(self) -> str | None:
+        """Backward-compatible alias for older call sites."""
+        return self.repo
 
 
 def execute_task_update_effects(
@@ -132,14 +142,14 @@ def execute_task_update_effects(
     if failed_targets_to_wake:
         auto_releases.extend(
             wake_tasks_to_pending(
-                ctx.release_team,
+                ctx.team,
                 failed_targets_to_wake,
                 caller=caller,
                 message_builder=lambda target: (
                     f"Task {target.id} is reopened because task {task.id} failed and routed work back to you. "
                     "Start now and report only real blockers."
                 ),
-                repo=ctx.release_repo,
+                repo=ctx.repo,
                 store=ctx.store,
                 runtime=ctx.runtime,
                 release_notifier=ctx.release_notifier,
@@ -148,7 +158,7 @@ def execute_task_update_effects(
 
     failure_notice = None
     if task.status == TaskStatus.failed:
-        failure_notice = ctx.failure_notifier(ctx.release_team, task, caller)
+        failure_notice = ctx.failure_notifier(ctx.team, task, caller)
 
     return TaskUpdateEffects(
         wake=wake,
