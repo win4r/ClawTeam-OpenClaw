@@ -115,13 +115,18 @@ def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
     store = TaskStore("demo")
     task = store.create("Functional QA", description="Check company directory", owner="qa1")
 
-    workspace = tmp_path / "qa1-worktree"
-    workspace.mkdir()
-    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+    notices: list[dict[str, str]] = []
 
-    backend = RecordingBackend()
-    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
-    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda *_: False)
+    def fake_release_notifier(team, released_task, caller, message):
+        notices.append({
+            "team": team,
+            "task": released_task.id,
+            "caller": caller,
+            "message": message,
+        })
+        return {"messageSent": True, "message": message, "messageId": "msg-1"}
+
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", lambda *_: "alive")
 
     result = execute_task_release(
         task_id=task.id,
@@ -135,14 +140,15 @@ def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
             team="demo",
             store=store,
             runtime=RuntimeOrchestrator(team="demo", repo=str(tmp_path)),
+            release_notifier=fake_release_notifier,
             repo=str(tmp_path),
         ),
     )
 
     assert result.task.status == TaskStatus.pending
-    assert result.release["respawned"] is True
-    assert len(backend.calls) == 1
-    assert backend.calls[0]["cwd"] == str(workspace)
+    assert result.release["messageSent"] is True
+    assert result.release["messageId"] == "msg-1"
+    assert notices == [{"team": "demo", "task": task.id, "caller": "leader", "message": "Start immediately"}]
 
 
 def test_task_release_respawns_dead_owner_in_existing_workspace(monkeypatch, tmp_path):

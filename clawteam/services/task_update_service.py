@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from clawteam.team.tasks import TaskStore
-
 from clawteam.services.task_service import wake_tasks_to_pending
 from clawteam.task.transition import (
     TaskTransitionPlan,
@@ -18,6 +16,7 @@ from clawteam.task.transition import (
     plan_task_transition_followups,
 )
 from clawteam.team.models import TaskItem, TaskStatus
+from clawteam.team.tasks import TaskStore
 
 
 TaskUpdateValidationError = TaskTransitionValidationError
@@ -87,6 +86,7 @@ class TaskUpdateContext:
     store: TaskStore
     release_team: str
     runtime: Any
+    release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None]
     failure_notifier: Callable[[str, TaskItem, str], dict[str, Any] | None]
     release_repo: str | None = None
 
@@ -109,6 +109,7 @@ def execute_task_update_effects(
             caller=caller,
             message=message,
             respawn=True,
+            release_notifier=ctx.release_notifier,
         )
 
     auto_releases: list[dict[str, Any]] = []
@@ -125,6 +126,7 @@ def execute_task_update_effects(
                 repo=ctx.release_repo,
                 store=ctx.store,
                 runtime=ctx.runtime,
+                release_notifier=ctx.release_notifier,
             )
         )
     if failed_targets_to_wake:
@@ -138,6 +140,9 @@ def execute_task_update_effects(
                     "Start now and report only real blockers."
                 ),
                 repo=ctx.release_repo,
+                store=ctx.store,
+                runtime=ctx.runtime,
+                release_notifier=ctx.release_notifier,
             )
         )
 
@@ -204,4 +209,3 @@ def execute_task_update(
     )
 
     return TaskUpdateResult(task=task, plan=plan, effects=effects)
-
