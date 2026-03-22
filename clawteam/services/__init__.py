@@ -1,6 +1,7 @@
 """Minimal service-layer helpers for task release, failure routing, and task updates."""
 
 from clawteam.services.failure_service import handle_failed_task_notice
+from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.task_service import (
     TaskReleaseRequest,
     TaskReleaseResult,
@@ -9,6 +10,7 @@ from clawteam.services.task_service import (
     release_task_to_owner,
     wake_tasks_to_pending,
 )
+from clawteam.workflow.topology import WorkflowTopology
 from clawteam.services.task_update_service import (
     TaskUpdateEffects,
     TaskUpdatePlan,
@@ -25,6 +27,7 @@ from clawteam.services.task_update_service import (
 
 
 __all__ = [
+    "RuntimeOrchestrator",
     "TaskReleaseRequest",
     "TaskReleaseResult",
     "TaskUpdateEffects",
@@ -43,4 +46,5 @@ __all__ = [
     "plan_task_update_followups",
     "release_task_to_owner",
     "wake_tasks_to_pending",
+    "WorkflowTopology",
 ]

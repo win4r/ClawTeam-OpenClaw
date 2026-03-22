@@ -12,6 +12,7 @@ from clawteam.services.task_update_service import (
     plan_task_update,
     plan_task_update_followups,
 )
+from clawteam.workflow.topology import WorkflowTopology
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskItem, TaskStatus
@@ -67,6 +68,22 @@ def test_merge_update_metadata_merges_on_fail_without_duplicates():
         "failure_note": "repro ready",
         "on_fail": ["task-a", "task-b"],
     }
+
+
+def test_workflow_topology_wake_rules_cover_complete_and_regular_failure():
+    source = TaskItem(
+        id="task-1",
+        subject="impl",
+        started_at="2026-03-22T00:00:00+00:00",
+        metadata={"on_fail": ["task-fallback"]},
+    )
+    blocked = TaskItem(id="task-2", subject="qa", status=TaskStatus.blocked, blocked_by=["task-1"])
+    pending = TaskItem(id="task-3", subject="docs", status=TaskStatus.pending, blocked_by=["task-1"])
+
+    topology = WorkflowTopology([blocked, pending])
+
+    assert topology.wake_on_complete("task-1") == ["task-2"]
+    assert topology.wake_on_regular_failure(source) == ["task-fallback"]
 
 
 def test_plan_task_update_followups_wakes_unblocked_dependents():
