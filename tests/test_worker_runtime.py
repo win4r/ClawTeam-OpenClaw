@@ -7,6 +7,7 @@ from pathlib import Path
 from clawteam.spawn.subprocess_backend import SubprocessBackend
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
+from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskStore
 from clawteam.worker_runtime import (
     build_openclaw_agent_command,
@@ -87,6 +88,7 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
         called["command"] = command
         called["cwd"] = cwd
         called["env"] = env
+        TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
         return _Completed()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -103,8 +105,8 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
 
     updated = TaskStore("demo").get(task.id)
     assert updated is not None
-    assert updated.status.value == "in_progress"
-    assert updated.locked_by == "qa1"
+    assert updated.status.value == "completed"
+    assert updated.locked_by == ""
 
     acks = mailbox.receive("leader")
     assert len(acks) == 1
@@ -123,7 +125,11 @@ def test_run_worker_iteration_acks_matching_wake_without_consuming_other_message
     other = mailbox.send("leader", "qa1", "unrelated", key="note:1")
     wake = mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
 
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed())
+    def fake_run(*args, **kwargs):
+        TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
+        return _Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -148,14 +154,18 @@ def test_run_worker_iteration_selects_woken_task_not_first_pending(monkeypatch, 
     second = TaskStore("demo").create(subject="Task B", description="B", owner="qa1")
     wake = mailbox.send("leader", "qa1", "start task b", key=f"task-wake:{second.id}", last_task=second.id)
 
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed())
+    def fake_run(*args, **kwargs):
+        TaskStore("demo").update(second.id, status=TaskStatus.completed, caller="qa1")
+        return _Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
     assert result["status"] == "dispatched"
     assert result["taskId"] == second.id
     assert TaskStore("demo").get(first.id).status.value == "pending"
-    assert TaskStore("demo").get(second.id).status.value == "in_progress"
+    assert TaskStore("demo").get(second.id).status.value == "completed"
 
     acks = mailbox.receive("leader")
     assert len(acks) == 1
@@ -175,7 +185,11 @@ def test_run_worker_iteration_uses_oldest_matching_wake_order(monkeypatch, tmp_p
     mailbox.send("leader", "qa1", "note", key="note:1")
     second_wake = mailbox.send("leader", "qa1", "start task a", key=f"task-wake:{first.id}", last_task=first.id)
 
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed())
+    def fake_run(*args, **kwargs):
+        TaskStore("demo").update(second.id, status=TaskStatus.completed, caller="qa1")
+        return _Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -316,6 +330,43 @@ def test_run_worker_iteration_fails_closed_when_dispatch_raises(monkeypatch, tmp
     assert updated.metadata["failure_kind"] == "complex"
     assert updated.metadata["failure_root_cause"] == "worker runtime dispatch failed"
     assert "stream_read_error" in updated.metadata["failure_evidence"]
+
+
+def test_run_worker_iteration_fails_closed_when_agent_returns_success_without_terminal_task_update(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    transcript_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    (transcript_dir / "clawteam-demo-qa1.jsonl").write_text(
+        '{"type":"message","message":{"role":"tool","content":"ok"}}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""))
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "failed_closed"
+    assert result["taskId"] == task.id
+    assert result["reason"] == "worker agent turn stalled without terminal task update"
+    assert result["sessionKey"] == "clawteam-demo-qa1"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status.value == "failed"
+    assert updated.locked_by == ""
+    assert updated.metadata["failure_kind"] == "complex"
+    assert updated.metadata["failure_root_cause"] == "worker agent turn stalled without terminal task update"
+    assert "task remained in_progress" in updated.metadata["failure_evidence"]
+    assert "transcript_tail:" in updated.metadata["failure_evidence"]
 
 
 def test_subprocess_backend_wraps_openclaw_in_worker_runtime(monkeypatch, tmp_path):
