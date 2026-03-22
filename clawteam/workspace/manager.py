@@ -13,6 +13,20 @@ from clawteam.workspace.models import WorkspaceInfo, WorkspaceRegistry
 
 logger = logging.getLogger(__name__)
 
+_IGNORED_DIR_NAMES = {
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
+    "coverage",
+    "tmp",
+    "vendor",
+}
+
 
 def _workspaces_root() -> Path:
     from clawteam.team.models import get_data_dir
@@ -244,9 +258,11 @@ class WorkspaceManager:
             return
 
         for source_path in source_root.rglob("*"):
-            if ".git" in source_path.parts:
-                continue
             relative = source_path.relative_to(source_root)
+            if any(part in _IGNORED_DIR_NAMES for part in relative.parts):
+                continue
+            if source_path.name.endswith(('.pyc', '.pyo', '.so', '.o')):
+                continue
             target_path = target_root / relative
             if source_path.is_dir():
                 target_path.mkdir(parents=True, exist_ok=True)

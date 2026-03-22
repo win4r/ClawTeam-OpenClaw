@@ -92,8 +92,8 @@ class TmuxBackend(SpawnBackend):
             openclaw_agent, _ = get_effective("openclaw_agent")
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "agent"]
-            elif "tui" in final_command:
-                final_command = [final_command[0], "agent"]
+            elif len(final_command) >= 2 and final_command[1] == "tui":
+                final_command = [final_command[0], "agent", *final_command[2:]]
 
             if "agent" in final_command:
                 if openclaw_agent and "--agent" not in final_command:
