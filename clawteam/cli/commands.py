@@ -977,6 +977,7 @@ def _release_task_to_owner(
     from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
+    from clawteam.team.tasks import TaskStore
 
     release_message = message.strip() or f"Task {task.id} is released. Start now and report only real blockers."
 
@@ -985,7 +986,13 @@ def _release_task_to_owner(
     respawned = False
     terminated_stale = False
     spawn_info = None
-    if respawn and state_before != "alive":
+    replacement_required = False
+    cleared_tasks: list = []
+
+    if respawn and state_before in {"dead", "stale"}:
+        replacement_required = True
+        store = TaskStore(team)
+        cleared_tasks = store.clear_unfinished_tasks_for_owner(task.owner)
         member = TeamManager.get_member(team, task.owner)
         if member is None:
             raise RuntimeError(f"Owner '{task.owner}' is not a registered team member")
@@ -996,31 +1003,66 @@ def _release_task_to_owner(
             agent_name=task.owner,
             agent_id=member.agent_id,
             agent_type=member.agent_type,
-            task_prompt=_build_release_task_prompt(task, release_message),
+            task_prompt=(
+                "Your previous worker runtime was replaced. "
+                "All unfinished tasks previously assigned to you were cleared. "
+                "Do not resume old work. Wait for the leader to dispatch fresh tasks."
+            ),
             repo=repo,
-            resume=True,
+            resume=False,
         )
         respawned = True
 
-    mailbox = MailboxManager(team)
-    mailbox.send(
-        caller,
-        task.owner,
-        release_message,
-        key=f"task-wake:{task.id}",
-        last_task=task.id,
-        status=task.status.value,
-    )
+    if not replacement_required:
+        if respawn and state_before == "missing":
+            member = TeamManager.get_member(team, task.owner)
+            if member is None:
+                raise RuntimeError(f"Owner '{task.owner}' is not a registered team member")
+            spawn_info = _spawn_existing_agent(
+                team_name=team,
+                agent_name=task.owner,
+                agent_id=member.agent_id,
+                agent_type=member.agent_type,
+                task_prompt=_build_release_task_prompt(task, release_message),
+                repo=repo,
+                resume=True,
+            )
+            respawned = True
+
+        mailbox = MailboxManager(team)
+        mailbox.send(
+            caller,
+            task.owner,
+            release_message,
+            key=f"task-wake:{task.id}",
+            last_task=task.id,
+            status=task.status.value,
+        )
 
     return {
-        "messageSent": True,
+        "messageSent": not replacement_required,
         "message": release_message,
         "ownerAliveBefore": alive_before,
         "ownerRuntimeStateBefore": state_before,
         "terminatedStale": terminated_stale,
         "respawned": respawned,
         "spawn": spawn_info or {},
+        "replacementRequired": replacement_required,
+        "clearedTaskIds": [item.id for item in cleared_tasks],
+        "clearedTaskSubjects": [item.subject for item in cleared_tasks],
     }
+
+
+def _describe_release_action(release: dict) -> str:
+    if release.get("replacementRequired"):
+        return (
+            f"  Replacement cleanup for {release['owner']} task {release['taskId']}: "
+            f"cleared {len(release.get('clearedTaskIds', []))} unfinished task(s); leader must re-dispatch."
+        )
+    return (
+        f"  Auto-notified {release['owner']} for task {release['taskId']}"
+        + (f" and respawned via {release['spawn'].get('backend', '')}" if release.get("respawned") else "")
+    )
 
 
 def _wake_tasks_to_pending(
@@ -1196,8 +1238,9 @@ def task_update(
             for candidate in store.list_tasks()
             if task_id in candidate.blocked_by and candidate.status == TaskStatus.blocked
         ]
-    elif ts == TaskStatus.failed:
-        failed_targets_to_wake = list(existing.metadata.get("on_fail", []))
+    elif ts == TaskStatus.failed and failure_metadata:
+        if failure_metadata.get("failure_kind") == "regular" and existing.started_at:
+            failed_targets_to_wake = list(existing.metadata.get("on_fail", []))
 
     try:
         task = store.update(
@@ -1267,10 +1310,7 @@ def task_update(
         def _human(d):
             console.print(f"[green]OK[/green] Task {d['id']} updated")
             for release in d.get("autoReleasedTasks", []):
-                console.print(
-                    f"  Auto-notified {release['owner']} for task {release['taskId']}"
-                    + (f" and respawned via {release['spawn'].get('backend', '')}" if release.get("respawned") else "")
-                )
+                console.print(_describe_release_action(release))
 
         _output(data, _human)
     else:
@@ -1285,11 +1325,13 @@ def task_update(
                     console.print(f"  Workspace: {d['spawn']['cwd']}")
             else:
                 console.print("  Respawned: no")
-            for release in d.get("autoReleasedTasks", []):
+            if d.get("replacementRequired"):
                 console.print(
-                    f"  Auto-notified {release['owner']} for task {release['taskId']}"
-                    + (f" and respawned via {release['spawn'].get('backend', '')}" if release.get("respawned") else "")
+                    f"  Replacement cleanup: cleared {len(d.get('clearedTaskIds', []))} unfinished task(s); "
+                    "leader must re-dispatch fresh tasks."
                 )
+            for release in d.get("autoReleasedTasks", []):
+                console.print(_describe_release_action(release))
 
         _output(data, _human)
 
@@ -1359,6 +1401,11 @@ def task_release(
                 console.print(f"  Workspace: {d['spawn']['cwd']}")
         else:
             console.print("  Respawned: no")
+        if d.get("replacementRequired"):
+            console.print(
+                f"  Replacement cleanup: cleared {len(d.get('clearedTaskIds', []))} unfinished task(s); "
+                "leader must re-dispatch fresh tasks."
+            )
 
     _output(data, _human)
 
@@ -2251,7 +2298,11 @@ def worker_run(
     receive/ack -> claim -> dispatch agent turn -> continue polling.
     """
     from clawteam.identity import AgentIdentity
-    from clawteam.worker_runtime import load_startup_prompt, worker_loop
+    from clawteam.worker_runtime import (
+        clear_replaced_worker_unfinished_tasks,
+        load_startup_prompt,
+        worker_loop,
+    )
 
     identity = _require_team_identity(team)
     agent_name = agent or identity.agent_name
@@ -2268,6 +2319,11 @@ def worker_run(
 
     base_command = [command] + list(command_arg or [])
     startup_prompt = load_startup_prompt(startup_prompt_file)
+    cleared_task_ids = clear_replaced_worker_unfinished_tasks(
+        team_name=team,
+        agent_name=agent_name,
+        data_dir=os.environ.get("CLAWTEAM_DATA_DIR") or None,
+    )
     history = worker_loop(
         team_name=team,
         agent_name=agent_name,
@@ -2278,11 +2334,24 @@ def worker_run(
         cwd=os.environ.get("CLAWTEAM_WORKSPACE_DIR") or None,
         once=once,
     )
-    result = {"iterations": history, "count": len(history)}
+    result = {
+        "iterations": history,
+        "count": len(history),
+        "replacementCleanup": {
+            "clearedTaskIds": cleared_task_ids,
+            "count": len(cleared_task_ids),
+        },
+    }
 
     def _human(d):
         last = d["iterations"][-1] if d["iterations"] else {}
         console.print(f"[green]Worker runtime[/green] {agent_name} iteration(s): {d['count']}")
+        cleanup = d.get("replacementCleanup") or {}
+        if cleanup.get("count"):
+            console.print(
+                f"  Replacement cleanup: cleared {cleanup['count']} unfinished task(s): "
+                f"{', '.join(cleanup.get('clearedTaskIds', []))}"
+            )
         if last:
             console.print(f"  Last status: {last.get('status', '')}")
             if last.get("taskId"):

@@ -102,6 +102,64 @@ def test_task_release_respawns_dead_owner_in_existing_workspace(monkeypatch, tmp
     assert any("Start immediately" in (msg.content or "") for msg in messages)
 
 
+def test_task_release_respawns_dead_owner_before_wake(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    call_order: list[str] = []
+
+    def fake_state(team, agent, data_dir=None):
+        call_order.append("state")
+        return "dead"
+
+    original_send = MailboxManager.send
+    original_spawn = backend.spawn
+
+    def recording_send(self, *args, **kwargs):
+        call_order.append("send")
+        return original_send(self, *args, **kwargs)
+
+    def recording_spawn(**kwargs):
+        call_order.append("spawn")
+        return original_spawn(**kwargs)
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", fake_state)
+    monkeypatch.setattr(MailboxManager, "send", recording_send)
+    monkeypatch.setattr(backend, "spawn", recording_spawn)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "release", "demo", task.id, "--message", "Start immediately"],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["agent_name"] == "qa1"
+    assert call["cwd"] == str(workspace)
+    assert "previous worker runtime was replaced" in call["prompt"]
+    assert "Do not resume old work" in call["prompt"]
+    assert "send" not in call_order
+    assert store.get(task.id) is None
+
+    inbox = MailboxManager("demo")
+    assert inbox.peek("qa1") == []
+
+
 def test_task_update_wake_owner_respawns_dead_worker(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
@@ -348,6 +406,59 @@ def test_task_failed_without_actual_qa_start_does_not_reopen_owner(monkeypatch, 
     assert not any("reopened because task" in (msg.content or "") for msg in messages)
 
 
+def test_task_failed_complex_does_not_reopen_owner_even_after_actual_start(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    impl = store.create("Implement fix", description="Fix the broken path", owner="dev1")
+    qa = store.create(
+        "Regression QA",
+        owner="qa1",
+        blocked_by=[impl.id],
+        metadata={"on_fail": [impl.id]},
+    )
+    store.update(impl.id, status=TaskStatus.completed)
+    with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+        store.update(qa.id, status=TaskStatus.in_progress, caller="qa1")
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda team, agent: False if agent == "dev1" else True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", qa.id,
+            "--status", "failed",
+            "--failure-kind", "complex",
+            "--failure-root-cause", "Owner and reroute are unclear",
+            "--failure-evidence", "QA found issues but cannot assign precise owner",
+            "--failure-recommended-next-owner", "leader",
+            "--failure-recommended-action", "Decide whether dev1 or dev2 owns the follow-up",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 0
+
+    impl_after = TaskStore("demo").get(impl.id)
+    assert impl_after.status.value == "completed"
+    assert qa.id not in impl_after.blocked_by
+
+    inbox = MailboxManager("demo")
+    leader_messages = inbox.peek("leader")
+    assert any("COMPLEX FAIL" in (msg.content or "") for msg in leader_messages)
+    dev1_messages = inbox.peek("dev1")
+    assert not any("reopened because task" in (msg.content or "") for msg in dev1_messages)
+
+
 def test_task_update_failed_complex_notifies_leader(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
@@ -495,4 +606,6 @@ def test_task_release_terminates_stale_owner_before_wake(monkeypatch, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert len(backend.calls) == 1
-    assert call_order.index("terminate") < call_order.index("send")
+    assert "terminate" in call_order
+    assert "send" not in call_order
+    assert store.get(task.id) is None

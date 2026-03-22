@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -74,13 +75,14 @@ class TmuxBackend(SpawnBackend):
 
         from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
 
-        existing_state = get_agent_runtime_state(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
-        if existing_state == "stale":
-            terminate_agent(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
-
         command_error = validate_spawn_command(normalized_command, path=env_vars["PATH"], cwd=cwd)
         if command_error:
             return command_error
+
+        existing_state = get_agent_runtime_state(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        if existing_state != "missing":
+            terminate_agent(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        _kill_duplicate_tmux_windows(session_name, agent_name)
 
         export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in env_vars.items())
 
@@ -176,6 +178,18 @@ class TmuxBackend(SpawnBackend):
             return (
                 f"Error: agent command '{normalized_command[0]}' exited immediately after launch. "
                 "Verify the CLI works standalone before using it with clawteam spawn."
+            )
+        duplicates = _list_matching_tmux_windows(session_name, agent_name)
+        if len(duplicates) != 1:
+            for duplicate_target in duplicates[1:]:
+                subprocess.run(
+                    ["tmux", "kill-window", "-t", duplicate_target],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            return (
+                f"Error: expected exactly one runtime window for agent '{agent_name}' in team '{team_name}' "
+                f"after launch, found {len(duplicates)}."
             )
 
         _confirm_workspace_trust_if_prompted(target, normalized_command)
@@ -344,6 +358,43 @@ class TmuxBackend(SpawnBackend):
 
 def _tmux_binary() -> str:
     return shutil.which("tmux") or ""
+
+
+def _list_matching_tmux_windows(session_name: str, agent_name: str) -> list[str]:
+    result = subprocess.run(
+        ["tmux", "list-windows", "-t", session_name, "-F", "#{window_index} #{window_name}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    matches: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        window_index, window_name = parts
+        if window_name == agent_name:
+            matches.append(f"{session_name}:{window_index}")
+    return matches
+
+
+def _kill_duplicate_tmux_windows(session_name: str, agent_name: str) -> None:
+    matches = _list_matching_tmux_windows(session_name, agent_name)
+    if len(matches) <= 1:
+        return
+
+    def sort_key(target: str) -> tuple[int, str]:
+        match = re.search(r":(\d+)$", target)
+        return (int(match.group(1)) if match else 10**9, target)
+
+    for duplicate_target in sorted(matches, key=sort_key)[1:]:
+        subprocess.run(
+            ["tmux", "kill-window", "-t", duplicate_target],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
 
 def _is_claude_command(command: list[str]) -> bool:

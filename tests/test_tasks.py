@@ -184,7 +184,7 @@ class TestDependencyResolution:
 
         with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
             store.update(qa.id, status=TaskStatus.in_progress, caller="qa1")
-        store.update(qa.id, status=TaskStatus.failed)
+        store.update(qa.id, status=TaskStatus.failed, metadata={"failure_kind": "regular"})
 
         impl_after = store.get(impl.id)
         assert impl_after.status == TaskStatus.pending
@@ -204,6 +204,23 @@ class TestDependencyResolution:
         assert not qa_ready.started_at
 
         store.update(qa.id, status=TaskStatus.failed)
+
+        impl_after = store.get(impl.id)
+        assert impl_after.status == TaskStatus.completed
+        assert qa.id not in impl_after.blocked_by
+
+    def test_failed_task_complex_does_not_reopen_on_fail_targets(self, store):
+        impl = store.create("implement")
+        qa = store.create(
+            "qa",
+            blocked_by=[impl.id],
+            metadata={"on_fail": [impl.id]},
+        )
+
+        store.update(impl.id, status=TaskStatus.completed)
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            store.update(qa.id, status=TaskStatus.in_progress, caller="qa1")
+        store.update(qa.id, status=TaskStatus.failed, metadata={"failure_kind": "complex"})
 
         impl_after = store.get(impl.id)
         assert impl_after.status == TaskStatus.completed
@@ -314,6 +331,40 @@ class TestDurationTracking:
         t = TaskItem(subject="alias test")
         dumped = t.model_dump(by_alias=True)
         assert "startedAt" in dumped
+
+
+class TestReplacementCleanup:
+    def test_clear_unfinished_tasks_for_owner_removes_pending_in_progress_and_blocked(self, store):
+        keep = store.create("keep", owner="bob")
+        pending = store.create("pending", owner="alice")
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            in_progress = store.create("in progress", owner="alice")
+            store.update(in_progress.id, status=TaskStatus.in_progress, caller="alice")
+        blocked = store.create("blocked", owner="alice", blocked_by=[keep.id])
+        completed = store.create("done", owner="alice")
+        store.update(completed.id, status=TaskStatus.completed)
+
+        cleared = store.clear_unfinished_tasks_for_owner("alice")
+
+        assert {task.id for task in cleared} == {pending.id, in_progress.id, blocked.id}
+        assert store.get(pending.id) is None
+        assert store.get(in_progress.id) is None
+        assert store.get(blocked.id) is None
+        assert store.get(completed.id) is not None
+        assert store.get(keep.id) is not None
+
+    def test_clear_unfinished_tasks_for_owner_cascades_to_unfinished_dependents(self, store):
+        root = store.create("impl", owner="alice")
+        downstream = store.create("qa", owner="qa1", blocked_by=[root.id])
+        completed_downstream = store.create("archived", owner="qa2", blocked_by=[root.id])
+        store.update(completed_downstream.id, status=TaskStatus.completed)
+
+        cleared = store.clear_unfinished_tasks_for_owner("alice")
+
+        assert {task.id for task in cleared} == {root.id, downstream.id}
+        assert store.get(root.id) is None
+        assert store.get(downstream.id) is None
+        assert store.get(completed_downstream.id) is not None
 
 
 class TestGetStats:

@@ -185,21 +185,22 @@ def terminate_agent(team_name: str, agent_name: str, data_dir: str | Path | None
         return False
 
     backend = info.get("backend", "")
+    terminated = False
     if backend == "tmux":
         target = str(info.get("tmux_target") or "").strip()
         if target:
-            subprocess.run(["tmux", "kill-window", "-t", target], capture_output=True, text=True)
-            return True
+            result = subprocess.run(["tmux", "kill-window", "-t", target], capture_output=True, text=True)
+            terminated = result.returncode == 0
     pid = int(info.get("pid", 0) or 0)
     if pid > 0:
         try:
             os.kill(pid, signal.SIGTERM)
-            return True
+            terminated = True
         except ProcessLookupError:
-            return False
+            pass
         except PermissionError:
-            return False
-    return False
+            pass
+    return terminated
 
 
 def list_dead_agents(team_name: str) -> list[str]:

@@ -14,6 +14,13 @@ from typing import Any
 from clawteam.team.models import TaskItem, TaskStatus, get_data_dir
 
 
+UNFINISHED_TASK_STATUSES = {
+    TaskStatus.pending,
+    TaskStatus.in_progress,
+    TaskStatus.blocked,
+}
+
+
 class TaskLockError(Exception):
     """Raised when a task is locked by another agent."""
 
@@ -221,6 +228,50 @@ class TaskStore:
                 continue
         return tasks
 
+    def clear_unfinished_tasks_for_owner(self, owner: str) -> list[TaskItem]:
+        """Delete unfinished tasks owned by ``owner`` and unfinished dependents.
+
+        This is used when a worker runtime has been replaced and its old task
+        world must not leak into the new runtime. We clear the owner's own
+        unfinished tasks plus any unfinished tasks that still depend on them,
+        so the leader can re-dispatch a clean replacement chain.
+        """
+        if not owner:
+            return []
+
+        with self._write_lock():
+            tasks = self._list_tasks_unlocked()
+            unfinished = {
+                task.id: task
+                for task in tasks
+                if task.status in UNFINISHED_TASK_STATUSES
+            }
+            doomed = {
+                task.id
+                for task in unfinished.values()
+                if task.owner == owner
+            }
+            if not doomed:
+                return []
+
+            changed = True
+            while changed:
+                changed = False
+                for task in unfinished.values():
+                    if task.id in doomed:
+                        continue
+                    if any(dep in doomed for dep in task.blocked_by):
+                        doomed.add(task.id)
+                        changed = True
+
+            cleared: list[TaskItem] = []
+            for task in tasks:
+                if task.id not in doomed:
+                    continue
+                _task_path(self.team_name, task.id).unlink(missing_ok=True)
+                cleared.append(task)
+            return cleared
+
     def get_stats(self) -> dict[str, Any]:
         """Aggregate task timing stats for this team.
 
@@ -278,7 +329,11 @@ class TaskStore:
 
     def _apply_failure_flow_unlocked(self, failed_task: TaskItem) -> None:
         on_fail_targets = failed_task.metadata.get("on_fail", [])
-        if not on_fail_targets or not failed_task.started_at:
+        if (
+            not on_fail_targets
+            or not failed_task.started_at
+            or failed_task.metadata.get("failure_kind") != "regular"
+        ):
             return
 
         for target_id in on_fail_targets:
