@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from clawteam.spawn.registry import is_agent_alive
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.tasks import TaskStore
@@ -29,12 +30,14 @@ class BoardCollector:
         members = []
         for m in config.members:
             inbox_name = f"{m.user}_{m.name}" if m.user else m.name
+            alive = is_agent_alive(team_name, m.name)
             entry = {
                 "name": m.name,
                 "agentId": m.agent_id,
                 "agentType": m.agent_type,
                 "joinedAt": m.joined_at,
                 "inboxCount": mailbox.peek_count(inbox_name),
+                "alive": alive,
             }
             if m.user:
                 entry["user"] = m.user

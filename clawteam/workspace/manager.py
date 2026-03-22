@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,8 +48,16 @@ class WorkspaceManager:
     """Manages git worktree-based isolated workspaces for agents."""
 
     def __init__(self, repo_path: Path | None = None):
-        cwd = repo_path or Path.cwd()
+        cwd = (repo_path or Path.cwd()).resolve()
+        self.requested_path = cwd
         self.repo_root = git.repo_root(cwd)
+        self.repo_subpath = ""
+        try:
+            relative = cwd.relative_to(self.repo_root)
+            if str(relative) != ".":
+                self.repo_subpath = str(relative)
+        except ValueError:
+            self.repo_subpath = ""
         self.base_branch = git.current_branch(self.repo_root)
 
     # ------------------------------------------------------------------
@@ -79,6 +88,9 @@ class WorkspaceManager:
             self.repo_root, wt_path, branch, base_ref=self.base_branch,
         )
 
+        if self.repo_subpath:
+            self._overlay_untracked_subpath_files(wt_path)
+
         info = WorkspaceInfo(
             agent_name=agent_name,
             agent_id=agent_id,
@@ -86,6 +98,7 @@ class WorkspaceManager:
             branch_name=branch,
             worktree_path=str(wt_path),
             repo_root=str(self.repo_root),
+            repo_subpath=self.repo_subpath,
             base_branch=self.base_branch,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -223,3 +236,22 @@ class WorkspaceManager:
             if ws.agent_name == agent_name:
                 return ws
         return None
+
+    def _overlay_untracked_subpath_files(self, worktree_root: Path) -> None:
+        source_root = self.repo_root / self.repo_subpath
+        target_root = worktree_root / self.repo_subpath
+        if not source_root.exists() or not source_root.is_dir():
+            return
+
+        for source_path in source_root.rglob("*"):
+            if ".git" in source_path.parts:
+                continue
+            relative = source_path.relative_to(source_root)
+            target_path = target_root / relative
+            if source_path.is_dir():
+                target_path.mkdir(parents=True, exist_ok=True)
+                continue
+            if target_path.exists():
+                continue
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)

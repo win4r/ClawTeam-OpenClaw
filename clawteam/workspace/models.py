@@ -14,6 +14,7 @@ class WorkspaceInfo(BaseModel):
     branch_name: str        # "clawteam/{team}/{agent}"
     worktree_path: str      # "{data_dir}/workspaces/{team}/{agent}"
     repo_root: str
+    repo_subpath: str = ""
     base_branch: str        # branch from which the worktree was created
     created_at: str
 
