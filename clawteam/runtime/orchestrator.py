@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from clawteam.team.models import TaskItem
 
@@ -23,9 +23,10 @@ class RuntimeOrchestrator:
         caller: str,
         message: str = "",
         respawn: bool = True,
+        release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
+        from clawteam.delivery.release_notifier import notify_task_release
         from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
-        from clawteam.team.mailbox import MailboxManager
         from clawteam.team.manager import TeamManager
         from clawteam.team.tasks import TaskStore
 
@@ -63,6 +64,7 @@ class RuntimeOrchestrator:
             )
             respawned = True
 
+        notifier_result = None
         if not replacement_required:
             if respawn and state_before == "missing":
                 member = TeamManager.get_member(self.team, task.owner)
@@ -79,15 +81,8 @@ class RuntimeOrchestrator:
                 )
                 respawned = True
 
-            mailbox = MailboxManager(self.team)
-            mailbox.send(
-                caller,
-                task.owner,
-                release_message,
-                key=f"task-wake:{task.id}",
-                last_task=task.id,
-                status=task.status.value,
-            )
+            notifier = release_notifier or notify_task_release
+            notifier_result = notifier(self.team, task, caller, release_message)
 
         return {
             "messageSent": not replacement_required,
@@ -100,6 +95,7 @@ class RuntimeOrchestrator:
             "replacementRequired": replacement_required,
             "clearedTaskIds": [item.id for item in cleared_tasks],
             "clearedTaskSubjects": [item.subject for item in cleared_tasks],
+            **(notifier_result or {}),
         }
 
 

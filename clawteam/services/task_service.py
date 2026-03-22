@@ -5,10 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from clawteam.team.tasks import TaskStore
-
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.team.models import TaskItem, TaskStatus
+from clawteam.team.tasks import TaskStore
 
 
 @dataclass(frozen=True)
@@ -29,6 +28,7 @@ class TaskReleaseContext:
     team: str
     store: TaskStore
     runtime: RuntimeOrchestrator
+    release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None]
     repo: str | None = None
 
 
@@ -40,6 +40,7 @@ def release_task_to_owner(
     respawn: bool = True,
     repo: str | None = None,
     runtime: RuntimeOrchestrator | None = None,
+    release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     orchestrator = runtime or RuntimeOrchestrator(team=team, repo=repo)
     return orchestrator.release_to_owner(
@@ -47,6 +48,7 @@ def release_task_to_owner(
         caller=caller,
         message=message,
         respawn=respawn,
+        release_notifier=release_notifier,
     )
 
 
@@ -81,6 +83,7 @@ def execute_task_release(
             caller=caller,
             message=request.message,
             respawn=request.respawn,
+            release_notifier=ctx.release_notifier,
         )
     except TaskLockError:
         raise
@@ -108,6 +111,7 @@ def wake_tasks_to_pending(
     repo: str | None = None,
     store: TaskStore | None = None,
     runtime: RuntimeOrchestrator | None = None,
+    release_notifier: Callable[[str, TaskItem, str, str], dict[str, Any] | None] | None = None,
 ) -> list[dict[str, Any]]:
     from clawteam.team.tasks import TaskStore
 
@@ -125,6 +129,7 @@ def wake_tasks_to_pending(
             respawn=True,
             repo=repo,
             runtime=runtime,
+            release_notifier=release_notifier,
         )
         releases.append({"taskId": target.id, "owner": target.owner, **release})
     return releases

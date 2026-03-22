@@ -17,6 +17,7 @@ from rich.table import Table
 
 from clawteam import __version__
 from clawteam.delivery.failure_notifier import notify_task_failure
+from clawteam.delivery.release_notifier import notify_task_release
 from clawteam.services import (
     RuntimeOrchestrator,
     TaskReleaseContext,
@@ -941,6 +942,7 @@ def task_update(
         store=store,
         release_team=team,
         runtime=RuntimeOrchestrator(team=team),
+        release_notifier=notify_task_release,
         failure_notifier=notify_task_failure,
     )
     request = TaskUpdateRequest(
@@ -1039,6 +1041,7 @@ def task_release(
         team=team,
         store=store,
         runtime=RuntimeOrchestrator(team=team, repo=repo),
+        release_notifier=notify_task_release,
         repo=repo,
     )
     request = TaskReleaseRequest(

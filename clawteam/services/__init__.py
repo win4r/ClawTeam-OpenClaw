@@ -1,6 +1,7 @@
 """Minimal service-layer helpers for task release, failure routing, and task updates."""
 
 from clawteam.delivery.failure_notifier import notify_task_failure
+from clawteam.delivery.release_notifier import notify_task_release
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import (
@@ -58,6 +59,8 @@ __all__ = [
     "execute_task_update_effects",
     "handle_failed_task_notice",
     "merge_transition_metadata",
+    "notify_task_failure",
+    "notify_task_release",
     "merge_update_metadata",
     "plan_task_transition",
     "plan_task_transition_followups",
