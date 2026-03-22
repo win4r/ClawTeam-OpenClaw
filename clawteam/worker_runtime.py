@@ -4,6 +4,7 @@ import os
 import shlex
 import subprocess
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +148,28 @@ def clear_replaced_worker_unfinished_tasks(
     store = TaskStore(team_name)
     cleared = store.clear_unfinished_tasks_for_owner(agent_name)
     return [task.id for task in cleared]
+
+
+def _session_transcript_path(session_key: str) -> Path:
+    return Path.home() / ".openclaw" / "agents" / "main" / "sessions" / f"{session_key}.jsonl"
+
+
+def _read_transcript_tail(session_key: str, max_lines: int = 20) -> str:
+    path = _session_transcript_path(session_key)
+    if not path.exists():
+        return f"transcript missing: {path}"
+    try:
+        tail: deque[str] = deque(maxlen=max_lines)
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if line:
+                    tail.append(line)
+        if not tail:
+            return f"transcript empty: {path}"
+        return "\n".join(tail)
+    except OSError as exc:
+        return f"transcript unreadable: {path} ({exc!r})"
 
 
 def _fail_claimed_task(
@@ -324,6 +347,40 @@ def run_worker_iteration(
         })
         return failed
 
+    refreshed = store.get(claimed.id)
+    if (
+        refreshed is not None
+        and refreshed.status == TaskStatus.in_progress
+        and refreshed.locked_by == agent_name
+    ):
+        transcript_tail = _read_transcript_tail(session_key)
+        evidence_parts = [
+            "openclaw agent returned success but task remained in_progress and locked to the same worker",
+            f"session_key={session_key}",
+        ]
+        if result.stderr:
+            evidence_parts.append(f"stderr: {result.stderr.strip()}")
+        if result.stdout:
+            evidence_parts.append(f"stdout: {result.stdout.strip()}")
+        evidence_parts.append(f"transcript_tail:\n{transcript_tail}")
+        failed = _fail_claimed_task(
+            team_name=team_name,
+            agent_name=agent_name,
+            task_id=claimed.id,
+            reason="worker agent turn stalled without terminal task update",
+            evidence="\n".join(evidence_parts),
+        )
+        failed.update({
+            "messages": message_count,
+            "acked": acked_count,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "command": command,
+            "sessionKey": session_key,
+        })
+        return failed
+
     return {
         "status": "dispatched",
         "messages": message_count,
@@ -333,6 +390,7 @@ def run_worker_iteration(
         "stdout": result.stdout,
         "stderr": result.stderr,
         "command": command,
+        "sessionKey": session_key,
     }
 
 
