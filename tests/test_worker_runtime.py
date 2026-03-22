@@ -137,6 +137,57 @@ def test_run_worker_iteration_acks_matching_wake_without_consuming_other_message
     assert acks[0].request_id == wake.request_id
 
 
+def test_run_worker_iteration_selects_woken_task_not_first_pending(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    first = TaskStore("demo").create(subject="Task A", description="A", owner="qa1")
+    second = TaskStore("demo").create(subject="Task B", description="B", owner="qa1")
+    wake = mailbox.send("leader", "qa1", "start task b", key=f"task-wake:{second.id}", last_task=second.id)
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed())
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "dispatched"
+    assert result["taskId"] == second.id
+    assert TaskStore("demo").get(first.id).status.value == "pending"
+    assert TaskStore("demo").get(second.id).status.value == "in_progress"
+
+    acks = mailbox.receive("leader")
+    assert len(acks) == 1
+    assert acks[0].request_id == wake.request_id
+
+
+def test_run_worker_iteration_uses_oldest_matching_wake_order(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    first = TaskStore("demo").create(subject="Task A", description="A", owner="qa1")
+    second = TaskStore("demo").create(subject="Task B", description="B", owner="qa1")
+    first_wake = mailbox.send("leader", "qa1", "start task b", key=f"task-wake:{second.id}", last_task=second.id)
+    mailbox.send("leader", "qa1", "note", key="note:1")
+    second_wake = mailbox.send("leader", "qa1", "start task a", key=f"task-wake:{first.id}", last_task=first.id)
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed())
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["taskId"] == second.id
+    remaining = mailbox.peek("qa1")
+    assert [msg.request_id for msg in remaining if msg.key and msg.key.startswith("task-wake:")] == [second_wake.request_id]
+
+    acks = mailbox.receive("leader")
+    assert len(acks) == 1
+    assert acks[0].request_id == first_wake.request_id
+
+
 def test_run_worker_iteration_does_not_claim_pending_task_without_matching_wake(monkeypatch, tmp_path):
     _seed_team(tmp_path, monkeypatch)
     monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
