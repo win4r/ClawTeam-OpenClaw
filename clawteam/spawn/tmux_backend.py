@@ -357,7 +357,7 @@ def _command_has_workspace_arg(command: list[str]) -> bool:
 def _confirm_workspace_trust_if_prompted(
     target: str,
     command: list[str],
-    timeout_seconds: float = 5.0,
+    timeout_seconds: float = 30.0,
     poll_interval_seconds: float = 0.2,
 ) -> bool:
     """Acknowledge first-run workspace trust prompts for interactive CLIs.
