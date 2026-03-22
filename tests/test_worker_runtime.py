@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import clawteam.worker_runtime as worker_runtime
 from clawteam.spawn.subprocess_backend import SubprocessBackend
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
@@ -84,14 +85,14 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
 
     called = {}
 
-    def fake_run(command, cwd=None, env=None, capture_output=None, text=None):
+    def fake_run(command, cwd=None, env=None, session_key=None, total_timeout_seconds=None, progress_stall_timeout_seconds=None, progress_poll_interval_seconds=None):
         called["command"] = command
         called["cwd"] = cwd
         called["env"] = env
         TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -129,7 +130,7 @@ def test_run_worker_iteration_acks_matching_wake_without_consuming_other_message
         TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -158,7 +159,7 @@ def test_run_worker_iteration_selects_woken_task_not_first_pending(monkeypatch, 
         TaskStore("demo").update(second.id, status=TaskStatus.completed, caller="qa1")
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -189,7 +190,7 @@ def test_run_worker_iteration_uses_oldest_matching_wake_order(monkeypatch, tmp_p
         TaskStore("demo").update(second.id, status=TaskStatus.completed, caller="qa1")
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -218,7 +219,7 @@ def test_run_worker_iteration_does_not_claim_pending_task_without_matching_wake(
         called["ran"] = True
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -251,7 +252,7 @@ def test_run_worker_iteration_keeps_pending_task_idle_until_explicit_wake(monkey
         called["ran"] = True
         return _Completed()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -280,8 +281,8 @@ def test_run_worker_iteration_fails_closed_on_nonzero_agent_exit(monkeypatch, tm
     mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
 
     monkeypatch.setattr(
-        subprocess,
-        "run",
+        worker_runtime,
+        "_run_agent_with_progress_watchdog",
         lambda *args, **kwargs: _Completed(returncode=1, stdout="", stderr="502 Upstream request failed"),
     )
 
@@ -314,7 +315,7 @@ def test_run_worker_iteration_fails_closed_when_dispatch_raises(monkeypatch, tmp
     def boom(*args, **kwargs):
         raise RuntimeError("stream_read_error")
 
-    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", boom)
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -350,7 +351,7 @@ def test_run_worker_iteration_fails_closed_when_agent_returns_success_without_te
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""))
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -367,6 +368,93 @@ def test_run_worker_iteration_fails_closed_when_agent_returns_success_without_te
     assert updated.metadata["failure_root_cause"] == "worker agent turn stalled without terminal task update"
     assert "task remained in_progress" in updated.metadata["failure_evidence"]
     assert "transcript_tail:" in updated.metadata["failure_evidence"]
+
+
+def test_progress_watchdog_raises_when_transcript_stalls(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    timeline = iter([0.0, 0.0, 0.6, 1.2])
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: next(timeline))
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda _: None)
+    monkeypatch.setattr(worker_runtime, "_transcript_progress_marker", lambda session_key: (0, 0))
+
+    killed = {"value": False}
+
+    class DummyProc:
+        def __init__(self):
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            killed["value"] = True
+            self.returncode = -9
+
+        def communicate(self):
+            return ("", "")
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+
+    try:
+        worker_runtime._run_agent_with_progress_watchdog(
+            command=["openclaw", "agent"],
+            cwd=None,
+            env=os.environ.copy(),
+            session_key="clawteam-demo-qa1",
+            total_timeout_seconds=900,
+            progress_stall_timeout_seconds=1.0,
+            progress_poll_interval_seconds=0.01,
+        )
+        assert False, "expected TimeoutError"
+    except TimeoutError as exc:
+        assert "stalled without transcript progress" in str(exc)
+        assert killed["value"] is True
+
+
+
+def test_progress_watchdog_allows_running_process_when_transcript_keeps_growing(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    poll_count = {"value": 0}
+
+    class DummyProc:
+        def __init__(self):
+            self.returncode = None
+
+        def poll(self):
+            poll_count["value"] += 1
+            if poll_count["value"] >= 3:
+                self.returncode = 0
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def communicate(self):
+            return ("ok", "")
+
+    markers = iter([(0, 0), (1, 10), (2, 20)])
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+    monkeypatch.setattr(worker_runtime, "_transcript_progress_marker", lambda session_key: next(markers, (2, 20)))
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda _: None)
+
+    result = worker_runtime._run_agent_with_progress_watchdog(
+        command=["openclaw", "agent"],
+        cwd=None,
+        env=os.environ.copy(),
+        session_key="clawteam-demo-qa1",
+        total_timeout_seconds=900,
+        progress_stall_timeout_seconds=1.0,
+        progress_poll_interval_seconds=0.01,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "ok"
+
 
 
 def test_subprocess_backend_wraps_openclaw_in_worker_runtime(monkeypatch, tmp_path):

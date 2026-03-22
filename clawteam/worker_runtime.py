@@ -16,6 +16,8 @@ from clawteam.team.tasks import TaskLockError, TaskStore
 
 DEFAULT_POLL_INTERVAL = 2.0
 DEFAULT_AGENT_TIMEOUT = 900
+DEFAULT_PROGRESS_STALL_TIMEOUT = 120.0
+DEFAULT_PROGRESS_POLL_INTERVAL = 1.0
 
 
 def load_startup_prompt(path: str | None) -> str:
@@ -172,6 +174,68 @@ def _read_transcript_tail(session_key: str, max_lines: int = 20) -> str:
         return f"transcript unreadable: {path} ({exc!r})"
 
 
+def _transcript_progress_marker(session_key: str) -> tuple[int, int]:
+    path = _session_transcript_path(session_key)
+    try:
+        stat = path.stat()
+        return (int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return (0, 0)
+
+
+def _run_agent_with_progress_watchdog(
+    *,
+    command: list[str],
+    cwd: str | None,
+    env: dict[str, str],
+    session_key: str,
+    total_timeout_seconds: int,
+    progress_stall_timeout_seconds: float,
+    progress_poll_interval_seconds: float,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    started_at = time.monotonic()
+    last_progress_at = started_at
+    last_marker = _transcript_progress_marker(session_key)
+
+    while True:
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate()
+            return subprocess.CompletedProcess(command, proc.returncode or 0, stdout or "", stderr or "")
+
+        now = time.monotonic()
+        marker = _transcript_progress_marker(session_key)
+        if marker != last_marker:
+            last_marker = marker
+            last_progress_at = now
+
+        if total_timeout_seconds > 0 and now - started_at > total_timeout_seconds:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise TimeoutError(f"worker agent turn exceeded total timeout of {total_timeout_seconds}s")
+
+        if progress_stall_timeout_seconds > 0 and now - last_progress_at > progress_stall_timeout_seconds:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            tail = _read_transcript_tail(session_key)
+            raise TimeoutError(
+                "worker agent turn stalled without transcript progress for "
+                f"{progress_stall_timeout_seconds:.0f}s\n"
+                f"stdout: {(stdout or '').strip()}\n"
+                f"stderr: {(stderr or '').strip()}\n"
+                f"transcript_tail:\n{tail}"
+            )
+
+        time.sleep(max(progress_poll_interval_seconds, 0.05))
+
+
 def _fail_claimed_task(
     *,
     team_name: str,
@@ -305,8 +369,22 @@ def run_worker_iteration(
         timeout_seconds=timeout_seconds,
     )
     env = os.environ.copy()
+    progress_stall_timeout_seconds = float(
+        env.get("CLAWTEAM_WORKER_PROGRESS_STALL_TIMEOUT", DEFAULT_PROGRESS_STALL_TIMEOUT)
+    )
+    progress_poll_interval_seconds = float(
+        env.get("CLAWTEAM_WORKER_PROGRESS_POLL_INTERVAL", DEFAULT_PROGRESS_POLL_INTERVAL)
+    )
     try:
-        result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+        result = _run_agent_with_progress_watchdog(
+            command=command,
+            cwd=cwd,
+            env=env,
+            session_key=session_key,
+            total_timeout_seconds=timeout_seconds,
+            progress_stall_timeout_seconds=progress_stall_timeout_seconds,
+            progress_poll_interval_seconds=progress_poll_interval_seconds,
+        )
     except Exception as exc:
         failed = _fail_claimed_task(
             team_name=team_name,
