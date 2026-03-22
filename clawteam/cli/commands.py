@@ -17,11 +17,12 @@ from rich.table import Table
 
 from clawteam import __version__
 from clawteam.services import (
+    TaskReleaseRequest,
     TaskUpdateRequest,
     TaskUpdateValidationError,
     describe_release_action,
+    execute_task_release,
     execute_task_update,
-    release_task_to_owner,
     wake_tasks_to_pending,
 )
 
@@ -1020,47 +1021,41 @@ def task_release(
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock while releasing"),
 ):
     """Release a task back to its owner, notify them, and auto-respawn if needed."""
-    from clawteam.team.models import TaskStatus
     from clawteam.team.tasks import TaskLockError, TaskStore
 
     identity = _require_team_identity(team)
     caller = identity.agent_name
     store = TaskStore(team)
-    existing = store.get(task_id)
-    if not existing:
-        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-    if not existing.owner:
-        _output({"error": f"Task '{task_id}' has no owner"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
+    request = TaskReleaseRequest(
+        message=message,
+        respawn=respawn,
+        repo=repo,
+        force=force,
+    )
 
     try:
-        task = store.update(
-            task_id,
-            status=TaskStatus.pending,
+        result = execute_task_release(
+            team=team,
+            task_id=task_id,
             caller=caller,
-            force=force,
+            request=request,
+            store=store,
         )
+    except KeyError:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    except ValueError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
     except TaskLockError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
         raise typer.Exit(1)
-
-    if not task:
-        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-
-    try:
-        release = release_task_to_owner(
-            team,
-            task,
-            caller=caller,
-            message=message,
-            respawn=respawn,
-            repo=repo,
-        )
     except RuntimeError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
+
+    task = result.task
+    release = result.release
 
     data = _dump(task)
     data.update(release)

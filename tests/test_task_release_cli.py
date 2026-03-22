@@ -7,6 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from clawteam.cli.commands import app
+from clawteam.services.task_service import TaskReleaseRequest, execute_task_release
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus

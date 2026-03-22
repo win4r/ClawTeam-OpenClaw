@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from clawteam.team.models import TaskItem, TaskStatus
+
+
+@dataclass(frozen=True)
+class TaskReleaseRequest:
+    message: str
+    respawn: bool
+    repo: str | None
+    force: bool
+
+
+@dataclass(frozen=True)
+class TaskReleaseResult:
+    task: TaskItem
+    release: dict[str, Any]
 
 
 def _workspace_registry_path(team_name: str) -> Path:
@@ -213,6 +228,47 @@ def release_task_to_owner(
         "clearedTaskIds": [item.id for item in cleared_tasks],
         "clearedTaskSubjects": [item.subject for item in cleared_tasks],
     }
+
+
+def execute_task_release(
+    *,
+    team: str,
+    task_id: str,
+    caller: str,
+    request: TaskReleaseRequest,
+    store: Any,
+) -> TaskReleaseResult:
+    """Run the full task-release use case behind the CLI adapter."""
+    from clawteam.team.tasks import TaskLockError
+
+    existing = store.get(task_id)
+    if not existing:
+        raise KeyError(task_id)
+    if not existing.owner:
+        raise ValueError(f"Task '{task_id}' has no owner")
+
+    task = store.update(
+        task_id,
+        status=TaskStatus.pending,
+        caller=caller,
+        force=request.force,
+    )
+    if not task:
+        raise KeyError(task_id)
+
+    try:
+        release = release_task_to_owner(
+            team,
+            task,
+            caller=caller,
+            message=request.message,
+            respawn=request.respawn,
+            repo=request.repo,
+        )
+    except TaskLockError:
+        raise
+
+    return TaskReleaseResult(task=task, release=release)
 
 
 def describe_release_action(release: dict[str, Any]) -> str:
