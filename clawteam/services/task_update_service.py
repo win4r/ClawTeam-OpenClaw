@@ -1,4 +1,4 @@
-"""Task update application services: validation, planning, and follow-up execution."""
+"""Task update application services: use-case orchestration and follow-up execution."""
 
 from __future__ import annotations
 
@@ -7,27 +7,44 @@ from typing import Any
 
 from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import release_task_to_owner, wake_tasks_to_pending
+from clawteam.task.transition import (
+    TaskTransitionPlan,
+    TaskTransitionRequest,
+    TaskTransitionValidationError,
+    build_failure_metadata,
+    merge_transition_metadata,
+    plan_task_transition,
+    plan_task_transition_followups,
+)
 from clawteam.team.models import TaskItem, TaskStatus
-from clawteam.workflow.topology import WorkflowTopology
 
 
-COMPLEX_FAILURE_REQUIRED_FLAGS = {
-    "--failure-root-cause": "failure_root_cause",
-    "--failure-evidence": "failure_evidence",
-    "--failure-recommended-next-owner": "failure_recommended_next_owner",
-    "--failure-recommended-action": "failure_recommended_action",
-}
+TaskUpdateValidationError = TaskTransitionValidationError
+TaskUpdatePlan = TaskTransitionPlan
+merge_update_metadata = merge_transition_metadata
+plan_task_update_followups = plan_task_transition_followups
 
 
-class TaskUpdateValidationError(ValueError):
-    """Raised when task update options violate workflow policy."""
-
-
-@dataclass(frozen=True)
-class TaskUpdatePlan:
-    metadata_to_apply: dict[str, Any] | None
-    dependent_ids_to_wake: list[str]
-    failed_targets_to_wake: list[str]
+def plan_task_update(
+    *,
+    existing: TaskItem,
+    status: TaskStatus | None,
+    all_tasks: list[TaskItem],
+    failure_metadata: dict[str, str] | None,
+    add_on_fail_list: list[str] | None,
+) -> TaskUpdatePlan:
+    """Backward-compatible wrapper around the task transition planner."""
+    transition_request = TaskTransitionRequest(
+        status=status,
+        add_on_fail=add_on_fail_list,
+        failure_kind=(failure_metadata or {}).get("failure_kind"),
+        failure_note=(failure_metadata or {}).get("failure_note"),
+        failure_root_cause=(failure_metadata or {}).get("failure_root_cause"),
+        failure_evidence=(failure_metadata or {}).get("failure_evidence"),
+        failure_recommended_next_owner=(failure_metadata or {}).get("failure_recommended_next_owner"),
+        failure_recommended_action=(failure_metadata or {}).get("failure_recommended_action"),
+    )
+    return plan_task_transition(existing=existing, request=transition_request, all_tasks=all_tasks)
 
 
 @dataclass(frozen=True)
@@ -62,117 +79,6 @@ class TaskUpdateResult:
     task: TaskItem
     plan: TaskUpdatePlan
     effects: TaskUpdateEffects
-
-
-def build_failure_metadata(
-    *,
-    status: TaskStatus | None,
-    failure_kind: str | None,
-    failure_note: str | None,
-    failure_root_cause: str | None,
-    failure_evidence: str | None,
-    failure_recommended_next_owner: str | None,
-    failure_recommended_action: str | None,
-) -> dict[str, str] | None:
-    """Validate failure options and normalize metadata payload."""
-    option_values = {
-        "failure_kind": failure_kind,
-        "failure_note": failure_note,
-        "failure_root_cause": failure_root_cause,
-        "failure_evidence": failure_evidence,
-        "failure_recommended_next_owner": failure_recommended_next_owner,
-        "failure_recommended_action": failure_recommended_action,
-    }
-
-    if status != TaskStatus.failed:
-        if any((value or "").strip() for value in option_values.values()):
-            raise TaskUpdateValidationError("failure options require --status failed")
-        return None
-
-    kind = (failure_kind or "complex").strip().lower()
-    if kind not in ("regular", "complex"):
-        raise TaskUpdateValidationError("--failure-kind must be regular or complex")
-
-    failure_metadata: dict[str, str] = {"failure_kind": kind}
-    for key, value in option_values.items():
-        if key == "failure_kind":
-            continue
-        if value and value.strip():
-            failure_metadata[key] = value.strip()
-
-    if kind == "complex":
-        missing = [
-            flag
-            for flag, key in COMPLEX_FAILURE_REQUIRED_FLAGS.items()
-            if not (option_values.get(key) or "").strip()
-        ]
-        if missing:
-            raise TaskUpdateValidationError(f"complex fail requires: {', '.join(missing)}")
-
-    return failure_metadata
-
-
-def merge_update_metadata(
-    existing: TaskItem,
-    failure_metadata: dict[str, str] | None,
-    add_on_fail_list: list[str] | None,
-) -> dict[str, Any] | None:
-    """Merge task-update metadata patches without duplicating on_fail targets."""
-    merged_metadata: dict[str, Any] = dict(failure_metadata or {})
-    if add_on_fail_list:
-        current_on_fail = list(existing.metadata.get("on_fail", []))
-        for target in add_on_fail_list:
-            if target not in current_on_fail:
-                current_on_fail.append(target)
-        merged_metadata["on_fail"] = current_on_fail
-    return merged_metadata or None
-
-
-def plan_task_update_followups(
-    *,
-    existing: TaskItem,
-    status: TaskStatus | None,
-    all_tasks: list[TaskItem],
-    failure_metadata: dict[str, str] | None,
-) -> dict[str, list[str]]:
-    """Plan transition follow-ups implied by a task status update."""
-    topology = WorkflowTopology(all_tasks)
-    dependent_ids_to_wake: list[str] = []
-    failed_targets_to_wake: list[str] = []
-
-    if status == TaskStatus.completed:
-        dependent_ids_to_wake = topology.wake_on_complete(existing.id)
-    elif status == TaskStatus.failed and failure_metadata:
-        if failure_metadata.get("failure_kind") == "regular":
-            failed_targets_to_wake = topology.wake_on_regular_failure(existing)
-
-    return {
-        "dependent_ids_to_wake": dependent_ids_to_wake,
-        "failed_targets_to_wake": failed_targets_to_wake,
-    }
-
-
-def plan_task_update(
-    *,
-    existing: TaskItem,
-    status: TaskStatus | None,
-    all_tasks: list[TaskItem],
-    failure_metadata: dict[str, str] | None,
-    add_on_fail_list: list[str] | None,
-) -> TaskUpdatePlan:
-    """Build the complete task-update plan before mutating stores."""
-    metadata_to_apply = merge_update_metadata(existing, failure_metadata, add_on_fail_list)
-    followups = plan_task_update_followups(
-        existing=existing,
-        status=status,
-        all_tasks=all_tasks,
-        failure_metadata=failure_metadata,
-    )
-    return TaskUpdatePlan(
-        metadata_to_apply=metadata_to_apply,
-        dependent_ids_to_wake=followups["dependent_ids_to_wake"],
-        failed_targets_to_wake=followups["failed_targets_to_wake"],
-    )
 
 
 def execute_task_update_effects(
@@ -240,8 +146,9 @@ def execute_task_update(
     if not existing:
         raise KeyError(task_id)
 
-    failure_metadata = build_failure_metadata(
+    transition_request = TaskTransitionRequest(
         status=request.status,
+        add_on_fail=request.add_on_fail,
         failure_kind=request.failure_kind,
         failure_note=request.failure_note,
         failure_root_cause=request.failure_root_cause,
@@ -249,13 +156,10 @@ def execute_task_update(
         failure_recommended_next_owner=request.failure_recommended_next_owner,
         failure_recommended_action=request.failure_recommended_action,
     )
-
-    plan = plan_task_update(
+    plan = plan_task_transition(
         existing=existing,
-        status=request.status,
+        request=transition_request,
         all_tasks=store.list_tasks(),
-        failure_metadata=failure_metadata,
-        add_on_fail_list=request.add_on_fail,
     )
 
     task = store.update(

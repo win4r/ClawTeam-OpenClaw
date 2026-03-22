@@ -1,7 +1,7 @@
 """Minimal service-layer helpers for task release, failure routing, and task updates."""
 
-from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
+from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import (
     TaskReleaseRequest,
     TaskReleaseResult,
@@ -10,7 +10,6 @@ from clawteam.services.task_service import (
     release_task_to_owner,
     wake_tasks_to_pending,
 )
-from clawteam.workflow.topology import WorkflowTopology
 from clawteam.services.task_update_service import (
     TaskUpdateEffects,
     TaskUpdatePlan,
@@ -24,12 +23,24 @@ from clawteam.services.task_update_service import (
     plan_task_update,
     plan_task_update_followups,
 )
+from clawteam.task.transition import (
+    TaskTransitionPlan,
+    TaskTransitionRequest,
+    TaskTransitionValidationError,
+    merge_transition_metadata,
+    plan_task_transition,
+    plan_task_transition_followups,
+)
+from clawteam.workflow.topology import WorkflowTopology
 
 
 __all__ = [
     "RuntimeOrchestrator",
     "TaskReleaseRequest",
     "TaskReleaseResult",
+    "TaskTransitionPlan",
+    "TaskTransitionRequest",
+    "TaskTransitionValidationError",
     "TaskUpdateEffects",
     "TaskUpdatePlan",
     "TaskUpdateRequest",
@@ -41,7 +52,10 @@ __all__ = [
     "execute_task_update",
     "execute_task_update_effects",
     "handle_failed_task_notice",
+    "merge_transition_metadata",
     "merge_update_metadata",
+    "plan_task_transition",
+    "plan_task_transition_followups",
     "plan_task_update",
     "plan_task_update_followups",
     "release_task_to_owner",

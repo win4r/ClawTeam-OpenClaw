@@ -18,8 +18,8 @@ from rich.table import Table
 from clawteam import __version__
 from clawteam.services import (
     TaskReleaseRequest,
+    TaskTransitionValidationError,
     TaskUpdateRequest,
-    TaskUpdateValidationError,
     describe_release_action,
     execute_task_release,
     execute_task_update,
@@ -963,7 +963,7 @@ def task_update(
     except KeyError:
         _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
-    except TaskUpdateValidationError as e:
+    except TaskTransitionValidationError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
     except TaskLockError as e:

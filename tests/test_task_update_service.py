@@ -4,147 +4,13 @@ from unittest.mock import patch
 
 from clawteam.services.task_update_service import (
     TaskUpdateRequest,
-    TaskUpdateValidationError,
-    build_failure_metadata,
     execute_task_update,
     execute_task_update_effects,
-    merge_update_metadata,
-    plan_task_update,
-    plan_task_update_followups,
 )
-from clawteam.workflow.topology import WorkflowTopology
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
-from clawteam.team.models import TaskItem, TaskStatus
+from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskStore
-
-
-def test_build_failure_metadata_rejects_failure_options_without_failed_status():
-    try:
-        build_failure_metadata(
-            status=TaskStatus.pending,
-            failure_kind=None,
-            failure_note="still broken",
-            failure_root_cause=None,
-            failure_evidence=None,
-            failure_recommended_next_owner=None,
-            failure_recommended_action=None,
-        )
-    except TaskUpdateValidationError as exc:
-        assert "failure options require --status failed" in str(exc)
-    else:
-        raise AssertionError("expected TaskUpdateValidationError")
-
-
-def test_build_failure_metadata_requires_structured_fields_for_complex_failures():
-    try:
-        build_failure_metadata(
-            status=TaskStatus.failed,
-            failure_kind="complex",
-            failure_note=None,
-            failure_root_cause="owner unclear",
-            failure_evidence=None,
-            failure_recommended_next_owner=None,
-            failure_recommended_action=None,
-        )
-    except TaskUpdateValidationError as exc:
-        assert "complex fail requires" in str(exc)
-        assert "--failure-evidence" in str(exc)
-    else:
-        raise AssertionError("expected TaskUpdateValidationError")
-
-
-def test_merge_update_metadata_merges_on_fail_without_duplicates():
-    existing = TaskItem(subject="review", metadata={"on_fail": ["task-a"]})
-
-    merged = merge_update_metadata(
-        existing,
-        {"failure_kind": "regular", "failure_note": "repro ready"},
-        ["task-b", "task-a"],
-    )
-
-    assert merged == {
-        "failure_kind": "regular",
-        "failure_note": "repro ready",
-        "on_fail": ["task-a", "task-b"],
-    }
-
-
-def test_workflow_topology_wake_rules_cover_complete_and_regular_failure():
-    source = TaskItem(
-        id="task-1",
-        subject="impl",
-        started_at="2026-03-22T00:00:00+00:00",
-        metadata={"on_fail": ["task-fallback"]},
-    )
-    blocked = TaskItem(id="task-2", subject="qa", status=TaskStatus.blocked, blocked_by=["task-1"])
-    pending = TaskItem(id="task-3", subject="docs", status=TaskStatus.pending, blocked_by=["task-1"])
-
-    topology = WorkflowTopology([blocked, pending])
-
-    assert topology.wake_on_complete("task-1") == ["task-2"]
-    assert topology.wake_on_regular_failure(source) == ["task-fallback"]
-
-
-def test_plan_task_update_followups_wakes_unblocked_dependents():
-    existing = TaskItem(id="task-1", subject="impl")
-    blocked = TaskItem(id="task-2", subject="qa", status=TaskStatus.blocked, blocked_by=["task-1"])
-    already_pending = TaskItem(id="task-3", subject="docs", status=TaskStatus.pending, blocked_by=["task-1"])
-
-    plan = plan_task_update_followups(
-        existing=existing,
-        status=TaskStatus.completed,
-        all_tasks=[blocked, already_pending],
-        failure_metadata=None,
-    )
-
-    assert plan["dependent_ids_to_wake"] == ["task-2"]
-    assert plan["failed_targets_to_wake"] == []
-
-
-def test_plan_task_update_followups_reopens_regular_fail_targets_only_after_actual_start():
-    existing = TaskItem(
-        id="task-qa",
-        subject="qa",
-        started_at="2026-03-22T00:00:00+00:00",
-        metadata={"on_fail": ["task-impl"]},
-    )
-
-    plan = plan_task_update_followups(
-        existing=existing,
-        status=TaskStatus.failed,
-        all_tasks=[],
-        failure_metadata={"failure_kind": "regular"},
-    )
-
-    assert plan["dependent_ids_to_wake"] == []
-    assert plan["failed_targets_to_wake"] == ["task-impl"]
-
-
-def test_plan_task_update_combines_metadata_and_followups():
-    existing = TaskItem(
-        id="task-qa",
-        subject="qa",
-        started_at="2026-03-22T00:00:00+00:00",
-        metadata={"on_fail": ["task-impl"]},
-    )
-    blocked = TaskItem(id="task-docs", subject="docs", status=TaskStatus.blocked, blocked_by=["task-qa"])
-
-    plan = plan_task_update(
-        existing=existing,
-        status=TaskStatus.failed,
-        all_tasks=[blocked],
-        failure_metadata={"failure_kind": "regular", "failure_note": "clear repro"},
-        add_on_fail_list=["task-dev", "task-impl"],
-    )
-
-    assert plan.metadata_to_apply == {
-        "failure_kind": "regular",
-        "failure_note": "clear repro",
-        "on_fail": ["task-impl", "task-dev"],
-    }
-    assert plan.failed_targets_to_wake == ["task-impl"]
-    assert plan.dependent_ids_to_wake == []
 
 
 def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, tmp_path):
@@ -211,7 +77,13 @@ def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(m
             qa.id,
             status=TaskStatus.failed,
             caller="qa1",
-            metadata={"failure_kind": "complex", "failure_root_cause": "ownership unclear", "failure_evidence": "cross-cutting regression", "failure_recommended_next_owner": "leader", "failure_recommended_action": "triage owner"},
+            metadata={
+                "failure_kind": "complex",
+                "failure_root_cause": "ownership unclear",
+                "failure_evidence": "cross-cutting regression",
+                "failure_recommended_next_owner": "leader",
+                "failure_recommended_action": "triage owner",
+            },
         )
 
     monkeypatch.setattr(
