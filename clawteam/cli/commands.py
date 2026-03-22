@@ -1101,6 +1101,7 @@ def task_create(
     owner: Optional[str] = typer.Option(None, "--owner", "-o", help="Owner agent name"),
     blocks: Optional[str] = typer.Option(None, "--blocks", help="Comma-separated task IDs this blocks"),
     blocked_by: Optional[str] = typer.Option(None, "--blocked-by", help="Comma-separated task IDs this is blocked by"),
+    on_fail: Optional[str] = typer.Option(None, "--on-fail", help="Comma-separated task IDs to reopen when this task fails regularly after it has actually started"),
 ):
     """Create a new task (TaskCreate)."""
     from clawteam.team.tasks import TaskStore
@@ -1108,6 +1109,8 @@ def task_create(
     store = TaskStore(team)
     blocks_list = [b.strip() for b in blocks.split(",") if b.strip()] if blocks else []
     blocked_by_list = [b.strip() for b in blocked_by.split(",") if b.strip()] if blocked_by else []
+    on_fail_list = [b.strip() for b in on_fail.split(",") if b.strip()] if on_fail else []
+    metadata = {"on_fail": on_fail_list} if on_fail_list else None
 
     task = store.create(
         subject=subject,
@@ -1115,6 +1118,7 @@ def task_create(
         owner=owner or "",
         blocks=blocks_list,
         blocked_by=blocked_by_list,
+        metadata=metadata,
     )
 
     data = _dump(task)
@@ -1156,6 +1160,8 @@ def task_get(
             console.print(f"  Blocks: {', '.join(d['blocks'])}")
         if d.get('blockedBy'):
             console.print(f"  Blocked by: {', '.join(d['blockedBy'])}")
+        if d.get('metadata', {}).get('on_fail'):
+            console.print(f"  On fail: {', '.join(d['metadata']['on_fail'])}")
 
     _output(data, _human)
 
@@ -1170,6 +1176,7 @@ def task_update(
     description: Optional[str] = typer.Option(None, "--description", "-d", help="New description"),
     add_blocks: Optional[str] = typer.Option(None, "--add-blocks", help="Comma-separated task IDs this blocks"),
     add_blocked_by: Optional[str] = typer.Option(None, "--add-blocked-by", help="Comma-separated task IDs blocking this"),
+    add_on_fail: Optional[str] = typer.Option(None, "--add-on-fail", help="Comma-separated task IDs to reopen when this task fails regularly after it has actually started"),
     failure_kind: Optional[str] = typer.Option(None, "--failure-kind", help="Failure routing kind when status=failed: regular or complex"),
     failure_note: Optional[str] = typer.Option(None, "--failure-note", help="Concrete failure summary/evidence when status=failed"),
     failure_root_cause: Optional[str] = typer.Option(None, "--failure-root-cause", help="Root cause summary when status=failed"),
@@ -1189,6 +1196,7 @@ def task_update(
     ts = TaskStatus(status) if status else None
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
+    add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
 
     failure_metadata = None
     if ts == TaskStatus.failed:
@@ -1230,6 +1238,15 @@ def task_update(
         _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
+    merged_metadata = dict(failure_metadata or {})
+    if add_on_fail_list:
+        current_on_fail = list(existing.metadata.get("on_fail", []))
+        for target in add_on_fail_list:
+            if target not in current_on_fail:
+                current_on_fail.append(target)
+        merged_metadata["on_fail"] = current_on_fail
+    metadata_to_apply = merged_metadata or None
+
     dependent_ids_to_wake: list[str] = []
     failed_targets_to_wake: list[str] = []
     if ts == TaskStatus.completed:
@@ -1251,7 +1268,7 @@ def task_update(
             description=description,
             add_blocks=blocks_list,
             add_blocked_by=blocked_by_list,
-            metadata=failure_metadata,
+            metadata=metadata_to_apply,
             caller=caller,
             force=force,
         )
