@@ -17,8 +17,10 @@ from rich.table import Table
 
 from clawteam import __version__
 from clawteam.services import (
+    TaskReleaseContext,
     TaskReleaseRequest,
     TaskTransitionValidationError,
+    TaskUpdateContext,
     TaskUpdateRequest,
     describe_release_action,
     execute_task_release,
@@ -933,6 +935,10 @@ def task_update(
     add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
 
     caller = identity.agent_name
+    ctx = TaskUpdateContext(
+        store=store,
+        release_team=team,
+    )
     request = TaskUpdateRequest(
         status=ts,
         owner=owner,
@@ -954,11 +960,10 @@ def task_update(
 
     try:
         result = execute_task_update(
-            team=team,
             task_id=task_id,
             caller=caller,
             request=request,
-            store=store,
+            ctx=ctx,
         )
     except KeyError:
         _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
@@ -1026,20 +1031,23 @@ def task_release(
     identity = _require_team_identity(team)
     caller = identity.agent_name
     store = TaskStore(team)
+    ctx = TaskReleaseContext(
+        team=team,
+        store=store,
+        repo=repo,
+    )
     request = TaskReleaseRequest(
         message=message,
         respawn=respawn,
-        repo=repo,
         force=force,
     )
 
     try:
         result = execute_task_release(
-            team=team,
             task_id=task_id,
             caller=caller,
             request=request,
-            store=store,
+            ctx=ctx,
         )
     except KeyError:
         _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))

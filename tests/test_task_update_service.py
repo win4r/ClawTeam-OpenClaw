@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from clawteam.services.task_update_service import (
+    TaskUpdateContext,
     TaskUpdateRequest,
     execute_task_update,
     execute_task_update_effects,
@@ -30,10 +31,9 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
     )
 
     result = execute_task_update(
-        team="demo",
         task_id=qa.id,
         caller="qa1",
-        store=store,
+        ctx=TaskUpdateContext(store=store, release_team="demo"),
         request=TaskUpdateRequest(
             status=TaskStatus.failed,
             owner=None,
@@ -92,7 +92,7 @@ def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(m
     )
 
     effects = execute_task_update_effects(
-        team="demo",
+        ctx=TaskUpdateContext(store=store, release_team="demo"),
         task=task,
         caller="qa1",
         wake_owner=False,

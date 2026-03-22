@@ -8,7 +8,11 @@ from typer.testing import CliRunner
 
 from clawteam.cli.commands import app
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
-from clawteam.services.task_service import TaskReleaseRequest, execute_task_release
+from clawteam.services.task_service import (
+    TaskReleaseContext,
+    TaskReleaseRequest,
+    execute_task_release,
+)
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus
@@ -99,6 +103,41 @@ def test_runtime_orchestrator_release_to_owner_respawns_missing_owner(monkeypatc
     inbox = MailboxManager("demo")
     messages = inbox.peek("qa1")
     assert any("Start immediately" in (msg.content or "") for msg in messages)
+
+
+def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda *_: False)
+
+    result = execute_task_release(
+        task_id=task.id,
+        caller="leader",
+        request=TaskReleaseRequest(
+            message="Start immediately",
+            respawn=True,
+            force=False,
+        ),
+        ctx=TaskReleaseContext(team="demo", store=store, repo=str(tmp_path)),
+    )
+
+    assert result.task.status == TaskStatus.pending
+    assert result.release["respawned"] is True
+    assert len(backend.calls) == 1
+    assert backend.calls[0]["cwd"] == str(workspace)
 
 
 def test_task_release_respawns_dead_owner_in_existing_workspace(monkeypatch, tmp_path):

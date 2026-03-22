@@ -3,6 +3,7 @@
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import (
+    TaskReleaseContext,
     TaskReleaseRequest,
     TaskReleaseResult,
     describe_release_action,
@@ -11,6 +12,7 @@ from clawteam.services.task_service import (
     wake_tasks_to_pending,
 )
 from clawteam.services.task_update_service import (
+    TaskUpdateContext,
     TaskUpdateEffects,
     TaskUpdatePlan,
     TaskUpdateRequest,
@@ -36,11 +38,13 @@ from clawteam.workflow.topology import WorkflowTopology
 
 __all__ = [
     "RuntimeOrchestrator",
+    "TaskReleaseContext",
     "TaskReleaseRequest",
     "TaskReleaseResult",
     "TaskTransitionPlan",
     "TaskTransitionRequest",
     "TaskTransitionValidationError",
+    "TaskUpdateContext",
     "TaskUpdateEffects",
     "TaskUpdatePlan",
     "TaskUpdateRequest",

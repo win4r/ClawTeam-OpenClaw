@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from clawteam.team.tasks import TaskStore
+
 from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import release_task_to_owner, wake_tasks_to_pending
 from clawteam.task.transition import (
@@ -81,9 +83,16 @@ class TaskUpdateResult:
     effects: TaskUpdateEffects
 
 
+@dataclass(frozen=True)
+class TaskUpdateContext:
+    store: TaskStore
+    release_team: str
+    release_repo: str | None = None
+
+
 def execute_task_update_effects(
     *,
-    team: str,
+    ctx: TaskUpdateContext,
     task: TaskItem,
     caller: str,
     wake_owner: bool,
@@ -94,37 +103,46 @@ def execute_task_update_effects(
     """Execute post-update side effects after the task store mutation succeeds."""
     wake = None
     if wake_owner and task.status == TaskStatus.pending and task.owner:
-        wake = release_task_to_owner(team, task, caller=caller, message=message, respawn=True)
+        wake = release_task_to_owner(
+            ctx.release_team,
+            task,
+            caller=caller,
+            message=message,
+            respawn=True,
+            repo=ctx.release_repo,
+        )
 
     auto_releases: list[dict[str, Any]] = []
     if dependent_ids_to_wake:
         auto_releases.extend(
             wake_tasks_to_pending(
-                team,
+                ctx.release_team,
                 dependent_ids_to_wake,
                 caller=caller,
                 message_builder=lambda target: (
                     f"Task {target.id} is unblocked because dependency {task.id} completed. "
                     "Start now and report only real blockers."
                 ),
+                repo=ctx.release_repo,
             )
         )
     if failed_targets_to_wake:
         auto_releases.extend(
             wake_tasks_to_pending(
-                team,
+                ctx.release_team,
                 failed_targets_to_wake,
                 caller=caller,
                 message_builder=lambda target: (
                     f"Task {target.id} is reopened because task {task.id} failed and routed work back to you. "
                     "Start now and report only real blockers."
                 ),
+                repo=ctx.release_repo,
             )
         )
 
     failure_notice = None
     if task.status == TaskStatus.failed:
-        failure_notice = handle_failed_task_notice(team, task, caller)
+        failure_notice = handle_failed_task_notice(ctx.release_team, task, caller)
 
     return TaskUpdateEffects(
         wake=wake,
@@ -135,14 +153,13 @@ def execute_task_update_effects(
 
 def execute_task_update(
     *,
-    team: str,
     task_id: str,
     caller: str,
     request: TaskUpdateRequest,
-    store: Any,
+    ctx: TaskUpdateContext,
 ) -> TaskUpdateResult:
     """Run the full task-update use case behind the CLI adapter."""
-    existing = store.get(task_id)
+    existing = ctx.store.get(task_id)
     if not existing:
         raise KeyError(task_id)
 
@@ -159,10 +176,10 @@ def execute_task_update(
     plan = plan_task_transition(
         existing=existing,
         request=transition_request,
-        all_tasks=store.list_tasks(),
+        all_tasks=ctx.store.list_tasks(),
     )
 
-    task = store.update(
+    task = ctx.store.update(
         task_id,
         status=request.status,
         owner=request.owner,
@@ -176,7 +193,7 @@ def execute_task_update(
     )
 
     effects = execute_task_update_effects(
-        team=team,
+        ctx=ctx,
         task=task,
         caller=caller,
         wake_owner=request.wake_owner,

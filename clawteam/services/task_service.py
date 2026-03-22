@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from clawteam.team.tasks import TaskStore
+
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.team.models import TaskItem, TaskStatus
 
@@ -13,7 +15,6 @@ from clawteam.team.models import TaskItem, TaskStatus
 class TaskReleaseRequest:
     message: str
     respawn: bool
-    repo: str | None
     force: bool
 
 
@@ -21,6 +22,13 @@ class TaskReleaseRequest:
 class TaskReleaseResult:
     task: TaskItem
     release: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class TaskReleaseContext:
+    team: str
+    store: TaskStore
+    repo: str | None = None
 
 
 def release_task_to_owner(
@@ -42,22 +50,21 @@ def release_task_to_owner(
 
 def execute_task_release(
     *,
-    team: str,
     task_id: str,
     caller: str,
     request: TaskReleaseRequest,
-    store: Any,
+    ctx: TaskReleaseContext,
 ) -> TaskReleaseResult:
     """Run the full task-release use case behind the CLI adapter."""
     from clawteam.team.tasks import TaskLockError
 
-    existing = store.get(task_id)
+    existing = ctx.store.get(task_id)
     if not existing:
         raise KeyError(task_id)
     if not existing.owner:
         raise ValueError(f"Task '{task_id}' has no owner")
 
-    task = store.update(
+    task = ctx.store.update(
         task_id,
         status=TaskStatus.pending,
         caller=caller,
@@ -68,12 +75,12 @@ def execute_task_release(
 
     try:
         release = release_task_to_owner(
-            team,
+            ctx.team,
             task,
             caller=caller,
             message=request.message,
             respawn=request.respawn,
-            repo=request.repo,
+            repo=ctx.repo,
         )
     except TaskLockError:
         raise
