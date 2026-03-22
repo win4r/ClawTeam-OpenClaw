@@ -453,8 +453,9 @@ clawteam spawn --team <team> --agent-name <name> --task "do this"
 clawteam spawn tmux codex --team <team> --agent-name <name> --task "do this"
 
 # Task management
-clawteam task create <team> "subject" -o <owner> --blocked-by <id1>,<id2>
+clawteam task create <team> "subject" -o <owner> --blocked-by <id1>,<id2> --on-fail <retry-id1>,<retry-id2>
 clawteam task update <team> <id> --status completed   # auto-unblocks dependents
+clawteam task update <team> <id> --status failed --failure-kind regular   # auto-reopens on_fail targets after actual start
 clawteam task list <team> --status blocked --owner worker1
 clawteam task wait <team> --timeout 300
 
@@ -470,6 +471,9 @@ clawteam board live <team> --interval 3   # auto-refresh
 clawteam board attach <team>              # tiled tmux view
 clawteam board serve --port 8080          # web UI
 ```
+
+Leader/template should define workflow topology (`blocked_by`, `on_fail`) up front.
+Workers should normally only update task state (`in_progress`, `completed`, `failed`) and report evidence, not improvise new repair/retry task chains.
 
 </details>
 

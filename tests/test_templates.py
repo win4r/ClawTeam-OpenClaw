@@ -10,6 +10,7 @@ from clawteam.templates import (
     list_templates,
     load_template,
     render_task,
+    resolve_template_topology,
 )
 
 
@@ -62,14 +63,59 @@ class TestModels:
         t = TaskDef(subject="Run QA", on_fail=["Implement"])
         assert t.on_fail == ["Implement"]
 
+    def test_task_def_stage(self):
+        t = TaskDef(subject="Run QA", stage="qa")
+        assert t.stage == "qa"
+
     def test_template_def_defaults(self):
         leader = AgentDef(name="lead")
         t = TemplateDef(name="my-tmpl", leader=leader)
         assert t.description == ""
         assert t.command == ["openclaw"]
         assert t.backend == "tmux"
+        assert t.topology_mode == "explicit"
         assert t.agents == []
         assert t.tasks == []
+
+
+class TestTopologyResolver:
+    def test_delivery_default_resolver_fills_missing_edges(self):
+        tmpl = TemplateDef(
+            name="delivery",
+            topology_mode="delivery-default",
+            leader=AgentDef(name="leader"),
+            tasks=[
+                TaskDef(subject="Scope", owner="leader", stage="scope"),
+                TaskDef(subject="Setup", owner="config1", stage="setup"),
+                TaskDef(subject="Implement backend", owner="dev1", stage="implement"),
+                TaskDef(subject="Implement frontend", owner="dev2", stage="implement"),
+                TaskDef(subject="QA", owner="qa1", stage="qa"),
+                TaskDef(subject="Review", owner="review1", stage="review"),
+                TaskDef(subject="Deliver", owner="leader", stage="deliver"),
+            ],
+        )
+
+        resolved = resolve_template_topology(tmpl)
+        by_subject = {task.subject: task for task in resolved.tasks}
+        assert by_subject["Setup"].blocked_by == ["Scope"]
+        assert by_subject["Implement backend"].blocked_by == ["Setup"]
+        assert by_subject["Implement frontend"].blocked_by == ["Setup"]
+        assert by_subject["QA"].blocked_by == ["Implement backend", "Implement frontend"]
+        assert by_subject["QA"].on_fail == ["Implement backend", "Implement frontend"]
+        assert by_subject["Review"].blocked_by == ["QA"]
+        assert by_subject["Review"].on_fail == ["Implement backend", "Implement frontend"]
+        assert by_subject["Deliver"].blocked_by == ["Review"]
+
+    def test_delivery_default_resolver_fails_closed_without_stage(self):
+        tmpl = TemplateDef(
+            name="broken",
+            topology_mode="delivery-default",
+            leader=AgentDef(name="leader"),
+            tasks=[TaskDef(subject="Scope", owner="leader")],
+        )
+
+        with pytest.raises(ValueError, match="missing stage"):
+            resolve_template_topology(tmpl)
 
 
 class TestLoadBuiltinTemplate:
@@ -98,10 +144,14 @@ class TestLoadBuiltinTemplate:
 
     def test_five_step_delivery_parallel_structure(self):
         tmpl = load_template("five-step-delivery")
+        assert tmpl.topology_mode == "delivery-default"
         agent_names = {tmpl.leader.name} | {a.name for a in tmpl.agents}
         assert {"config1", "dev1", "dev2", "qa1", "qa2", "review1"}.issubset(agent_names)
 
         by_subject = {task.subject: task for task in tmpl.tasks}
+        assert by_subject["Scope the task into a minimal deliverable"].stage == "scope"
+        assert by_subject["Prepare repo, branch, env, and runnable baseline"].stage == "setup"
+        assert by_subject["Review code quality, maintainability, and delivery readiness"].stage == "review"
         assert by_subject["Implement backend/data changes with real validation"].blocked_by == [
             "Prepare repo, branch, env, and runnable baseline"
         ]

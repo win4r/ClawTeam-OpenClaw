@@ -28,3 +28,5 @@ def test_build_agent_prompt_bootstrap_uses_shell_and_quotes_data_dir(monkeypatch
     assert "clawteam identity set" in prompt
     assert "--shell" in prompt
     assert "--data-dir '/tmp/clawteam data dir'" in prompt
+    assert "Workflow topology belongs to the leader/template/state machine" in prompt
+    assert "Do not use `task create`, `--add-blocked-by`, or `--add-on-fail`" in prompt

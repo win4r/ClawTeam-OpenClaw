@@ -3,6 +3,7 @@ name = "five-step-delivery"
 description = "Reusable delivery workflow: Scope -> Setup -> parallel Backend/UI Implement -> parallel Main-flow/Regression QA -> Review -> Deliver"
 command = ["openclaw"]
 backend = "tmux"
+topology_mode = "delivery-default"
 
 [template.leader]
 name = "leader"
@@ -30,6 +31,7 @@ Operating rules:
 
 Your job:
 - Coordinate the team using clawteam tasks and inbox messages.
+- Own the workflow topology: create the full task chain, blocked_by edges, and on_fail edges up front instead of relying on workers to improvise repair chains.
 - Keep task descriptions concrete and verification-oriented.
 - Produce the final summary only after QA and Review evidence are available.
 - In the final report, clearly separate: delivered, validated, reviewed, not validated, and remaining risks.
@@ -195,6 +197,7 @@ When done, send a summary to leader and update the task status.
 [[template.tasks]]
 subject = "Scope the task into a minimal deliverable"
 owner = "leader"
+stage = "scope"
 description = """Goal:
 把需求收敛成一个最小可交付目标，只保留这次必须完成的范围。
 
@@ -225,6 +228,7 @@ Report:
 [[template.tasks]]
 subject = "Prepare repo, branch, env, and runnable baseline"
 owner = "config1"
+stage = "setup"
 blocked_by = ["Scope the task into a minimal deliverable"]
 description = """Goal:
 确认代码仓、分支、依赖、环境、启动命令、测试命令都真实可运行，为实现阶段建立干净基线。
@@ -257,6 +261,7 @@ Report:
 [[template.tasks]]
 subject = "Implement backend/data changes with real validation"
 owner = "dev1"
+stage = "implement"
 blocked_by = ["Prepare repo, branch, env, and runnable baseline"]
 description = """Goal:
 只完成本次最小必要的后端/数据/API 修改，并做真实本地验证。
@@ -289,6 +294,7 @@ Report:
 [[template.tasks]]
 subject = "Implement frontend/UI changes with real validation"
 owner = "dev2"
+stage = "implement"
 blocked_by = ["Prepare repo, branch, env, and runnable baseline"]
 description = """Goal:
 只完成本次最小必要的前端/UI/交互修改，并做真实本地验证。
@@ -321,6 +327,7 @@ Report:
 [[template.tasks]]
 subject = "Run main-flow QA on the real change"
 owner = "qa1"
+stage = "qa"
 blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
@@ -341,6 +348,7 @@ Do not:
 - 不要用 mock 结果替代真实验证
 - 不要把未验证说成已验证
 - 不要只说 looks good 而没有证据
+- 不要自己临时新建 repair task 或改 workflow 依赖边；失败时按约定提交 failed，让状态机回流
 
 Report:
 - Test scenarios executed
@@ -354,6 +362,7 @@ Report:
 [[template.tasks]]
 subject = "Run edge-case and regression QA on the real change"
 owner = "qa2"
+stage = "qa"
 blocked_by = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
@@ -374,6 +383,7 @@ Do not:
 - 不要用 mock 结果替代真实验证
 - 不要把未验证说成已验证
 - 不要只说 looks good 而没有证据
+- 不要自己临时新建 repair task 或改 workflow 依赖边；失败时按约定提交 failed，让状态机回流
 
 Report:
 - Test scenarios executed
@@ -387,6 +397,7 @@ Report:
 [[template.tasks]]
 subject = "Review code quality, maintainability, and delivery readiness"
 owner = "review1"
+stage = "review"
 blocked_by = ["Run main-flow QA on the real change", "Run edge-case and regression QA on the real change"]
 on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
@@ -406,6 +417,7 @@ Do not:
 - 不要把 code review 退化成重复 QA
 - 不要只因为任务状态是 completed 就默认通过
 - 不要忽略明显的结构、命名、边界和风险问题
+- 不要自己临时新建 repair task 或改 workflow 依赖边；失败时按约定提交 failed，让状态机回流
 
 Report:
 - Files/diff reviewed
@@ -418,6 +430,7 @@ Report:
 [[template.tasks]]
 subject = "Prepare final delivery package and human decision summary"
 owner = "leader"
+stage = "deliver"
 blocked_by = ["Review code quality, maintainability, and delivery readiness"]
 description = """Goal:
 整理最终交付结果，让人可以直接决定是否接受、继续修改或发起 PR/合并流程。

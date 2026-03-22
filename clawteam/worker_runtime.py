@@ -70,6 +70,7 @@ def build_worker_task_prompt(
         f"- Your task lock is already claimed as {agent_name}. Do not claim it again unless you explicitly released it.",
         f"- Use `clawteam inbox receive {team_name} --ack` to consume wake/context messages when needed.",
         f"- If blocked, send a concrete blocker to {leader_name} via `clawteam inbox send {team_name} {leader_name} \"<blocker>\"` and update the task to failed with the correct failure metadata.",
+        "- Workflow routing is owned by the leader/template/state machine. Do not create repair/retry/review tasks or mutate blocked_by/on_fail edges unless the leader explicitly told you to do that.",
         f"- When the task is truly complete, run `clawteam task update {team_name} {task.id} --status completed`.",
         f"- Do not pretend success. Use real validation and report exact files, commands, and results.",
         f"- If more context is needed, read your inbox and inspect the workspace before changing code.",
@@ -167,19 +168,34 @@ def run_worker_iteration(
         drained = mailbox.receive(agent_name, limit=50, acknowledge=True)
         return {"status": "idle", "messages": len(drained)}
 
-    task = pending[0]
+    pending_by_id = {task.id: task for task in pending}
+    first_wake = None
+    ordered_messages = sorted(visible_messages, key=lambda msg: (msg.timestamp or "", msg.request_id or ""))
+    for msg in ordered_messages:
+        candidate_id = None
+        if msg.key and msg.key.startswith("task-wake:"):
+            candidate_id = msg.key.split(":", 1)[1]
+        elif msg.last_task:
+            candidate_id = msg.last_task
+        if candidate_id in pending_by_id:
+            first_wake = (candidate_id, pending_by_id[candidate_id])
+            break
+
     message_count = len(visible_messages)
-    if message_count == 0:
+    if first_wake is None:
         return {
             "status": "waiting_for_wake",
-            "messages": 0,
+            "messages": message_count,
             "acked": 0,
-            "taskId": task.id,
+            "taskId": pending[0].id,
         }
 
+    selected_task_id, task = first_wake
     matched_wakes = mailbox.receive_matching(
         agent_name,
-        lambda msg: msg.key == f"task-wake:{task.id}" or msg.last_task == task.id,
+        lambda msg: (
+            msg.key == f"task-wake:{selected_task_id}" or msg.last_task == selected_task_id
+        ),
         limit=50,
         acknowledge=True,
     )
