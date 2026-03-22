@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -39,6 +40,14 @@ class TmuxBackend(SpawnBackend):
     ) -> str:
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
+
+        if openclaw_agent:
+            print(
+                f"Warning: openclaw_agent={openclaw_agent!r} requires openclaw tui to support "
+                "the --agent parameter (see openclaw/openclaw#51481). "
+                "This flag may have no effect if your openclaw version does not support it.",
+                file=sys.stderr,
+            )
 
         session_name = f"clawteam-{team_name}"
         clawteam_bin = resolve_clawteam_executable()
