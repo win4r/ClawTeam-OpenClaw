@@ -36,6 +36,33 @@ class TaskUpdateEffects:
     failure_notice: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class TaskUpdateRequest:
+    status: TaskStatus | None
+    owner: str | None
+    subject: str | None
+    description: str | None
+    add_blocks: list[str] | None
+    add_blocked_by: list[str] | None
+    add_on_fail: list[str] | None
+    failure_kind: str | None
+    failure_note: str | None
+    failure_root_cause: str | None
+    failure_evidence: str | None
+    failure_recommended_next_owner: str | None
+    failure_recommended_action: str | None
+    wake_owner: bool
+    message: str
+    force: bool
+
+
+@dataclass(frozen=True)
+class TaskUpdateResult:
+    task: TaskItem
+    plan: TaskUpdatePlan
+    effects: TaskUpdateEffects
+
+
 def build_failure_metadata(
     *,
     status: TaskStatus | None,
@@ -200,3 +227,60 @@ def execute_task_update_effects(
         auto_releases=auto_releases,
         failure_notice=failure_notice,
     )
+
+
+def execute_task_update(
+    *,
+    team: str,
+    task_id: str,
+    caller: str,
+    request: TaskUpdateRequest,
+    store: Any,
+) -> TaskUpdateResult:
+    """Run the full task-update use case behind the CLI adapter."""
+    existing = store.get(task_id)
+    if not existing:
+        raise KeyError(task_id)
+
+    failure_metadata = build_failure_metadata(
+        status=request.status,
+        failure_kind=request.failure_kind,
+        failure_note=request.failure_note,
+        failure_root_cause=request.failure_root_cause,
+        failure_evidence=request.failure_evidence,
+        failure_recommended_next_owner=request.failure_recommended_next_owner,
+        failure_recommended_action=request.failure_recommended_action,
+    )
+
+    plan = plan_task_update(
+        existing=existing,
+        status=request.status,
+        all_tasks=store.list_tasks(),
+        failure_metadata=failure_metadata,
+        add_on_fail_list=request.add_on_fail,
+    )
+
+    task = store.update(
+        task_id,
+        status=request.status,
+        owner=request.owner,
+        subject=request.subject,
+        description=request.description,
+        add_blocks=request.add_blocks,
+        add_blocked_by=request.add_blocked_by,
+        metadata=plan.metadata_to_apply,
+        caller=caller,
+        force=request.force,
+    )
+
+    effects = execute_task_update_effects(
+        team=team,
+        task=task,
+        caller=caller,
+        wake_owner=request.wake_owner,
+        message=request.message,
+        dependent_ids_to_wake=plan.dependent_ids_to_wake,
+        failed_targets_to_wake=plan.failed_targets_to_wake,
+    )
+
+    return TaskUpdateResult(task=task, plan=plan, effects=effects)

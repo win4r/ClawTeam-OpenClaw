@@ -17,11 +17,10 @@ from rich.table import Table
 
 from clawteam import __version__
 from clawteam.services import (
+    TaskUpdateRequest,
     TaskUpdateValidationError,
-    build_failure_metadata,
     describe_release_action,
-    execute_task_update_effects,
-    plan_task_update,
+    execute_task_update,
     release_task_to_owner,
     wake_tasks_to_pending,
 )
@@ -932,65 +931,49 @@ def task_update(
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
     add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
 
-    try:
-        failure_metadata = build_failure_metadata(
-            status=ts,
-            failure_kind=failure_kind,
-            failure_note=failure_note,
-            failure_root_cause=failure_root_cause,
-            failure_evidence=failure_evidence,
-            failure_recommended_next_owner=failure_recommended_next_owner,
-            failure_recommended_action=failure_recommended_action,
-        )
-    except TaskUpdateValidationError as e:
-        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-
     caller = identity.agent_name
-
-    existing = store.get(task_id)
-    if not existing:
-        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-
-    update_plan = plan_task_update(
-        existing=existing,
+    request = TaskUpdateRequest(
         status=ts,
-        all_tasks=store.list_tasks(),
-        failure_metadata=failure_metadata,
-        add_on_fail_list=add_on_fail_list,
+        owner=owner,
+        subject=subject,
+        description=description,
+        add_blocks=blocks_list,
+        add_blocked_by=blocked_by_list,
+        add_on_fail=add_on_fail_list,
+        failure_kind=failure_kind,
+        failure_note=failure_note,
+        failure_root_cause=failure_root_cause,
+        failure_evidence=failure_evidence,
+        failure_recommended_next_owner=failure_recommended_next_owner,
+        failure_recommended_action=failure_recommended_action,
+        wake_owner=wake_owner,
+        message=message or "",
+        force=force,
     )
 
     try:
-        task = store.update(
-            task_id,
-            status=ts,
-            owner=owner,
-            subject=subject,
-            description=description,
-            add_blocks=blocks_list,
-            add_blocked_by=blocked_by_list,
-            metadata=update_plan.metadata_to_apply,
+        result = execute_task_update(
+            team=team,
+            task_id=task_id,
             caller=caller,
-            force=force,
+            request=request,
+            store=store,
         )
+    except KeyError:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    except TaskUpdateValidationError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
     except TaskLockError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
         raise typer.Exit(1)
-
-    try:
-        effects = execute_task_update_effects(
-            team=team,
-            task=task,
-            caller=caller,
-            wake_owner=wake_owner,
-            message=message or "",
-            dependent_ids_to_wake=update_plan.dependent_ids_to_wake,
-            failed_targets_to_wake=update_plan.failed_targets_to_wake,
-        )
     except RuntimeError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
+
+    task = result.task
+    effects = result.effects
 
     data = _dump(task)
     if effects.failure_notice is not None:
