@@ -7,6 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from clawteam.cli.commands import app
+from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.task_service import TaskReleaseRequest, execute_task_release
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
@@ -63,6 +64,41 @@ def _team_env(tmp_path: Path) -> dict[str, str]:
         "CLAWTEAM_AGENT_LEADER": "1",
         "CLAWTEAM_TEAM_NAME": "demo",
     }
+
+
+def test_runtime_orchestrator_release_to_owner_respawns_missing_owner(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", lambda *_: "missing")
+
+    orchestrator = RuntimeOrchestrator(team="demo", repo=str(tmp_path))
+    release = orchestrator.release_to_owner(task, caller="leader", message="Start immediately", respawn=True)
+
+    assert release["respawned"] is True
+    assert release["replacementRequired"] is False
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["agent_name"] == "qa1"
+    assert call["cwd"] == str(workspace)
+    assert "Functional QA" in call["prompt"]
+    assert "Start immediately" in call["prompt"]
+
+    inbox = MailboxManager("demo")
+    messages = inbox.peek("qa1")
+    assert any("Start immediately" in (msg.content or "") for msg in messages)
 
 
 def test_task_release_respawns_dead_owner_in_existing_workspace(monkeypatch, tmp_path):

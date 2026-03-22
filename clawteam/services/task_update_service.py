@@ -8,6 +8,7 @@ from typing import Any
 from clawteam.services.failure_service import handle_failed_task_notice
 from clawteam.services.task_service import release_task_to_owner, wake_tasks_to_pending
 from clawteam.team.models import TaskItem, TaskStatus
+from clawteam.workflow.topology import WorkflowTopology
 
 
 COMPLEX_FAILURE_REQUIRED_FLAGS = {
@@ -135,18 +136,15 @@ def plan_task_update_followups(
     failure_metadata: dict[str, str] | None,
 ) -> dict[str, list[str]]:
     """Plan transition follow-ups implied by a task status update."""
+    topology = WorkflowTopology(all_tasks)
     dependent_ids_to_wake: list[str] = []
     failed_targets_to_wake: list[str] = []
 
     if status == TaskStatus.completed:
-        dependent_ids_to_wake = [
-            candidate.id
-            for candidate in all_tasks
-            if existing.id in candidate.blocked_by and candidate.status == TaskStatus.blocked
-        ]
+        dependent_ids_to_wake = topology.wake_on_complete(existing.id)
     elif status == TaskStatus.failed and failure_metadata:
-        if failure_metadata.get("failure_kind") == "regular" and existing.started_at:
-            failed_targets_to_wake = list(existing.metadata.get("on_fail", []))
+        if failure_metadata.get("failure_kind") == "regular":
+            failed_targets_to_wake = topology.wake_on_regular_failure(existing)
 
     return {
         "dependent_ids_to_wake": dependent_ids_to_wake,
