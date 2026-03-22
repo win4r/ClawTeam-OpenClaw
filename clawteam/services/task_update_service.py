@@ -8,7 +8,7 @@ from typing import Any
 from clawteam.team.tasks import TaskStore
 
 from clawteam.delivery.failure_notifier import notify_task_failure
-from clawteam.services.task_service import release_task_to_owner, wake_tasks_to_pending
+from clawteam.services.task_service import wake_tasks_to_pending
 from clawteam.task.transition import (
     TaskTransitionPlan,
     TaskTransitionRequest,
@@ -87,6 +87,7 @@ class TaskUpdateResult:
 class TaskUpdateContext:
     store: TaskStore
     release_team: str
+    runtime: Any
     release_repo: str | None = None
 
 
@@ -103,13 +104,11 @@ def execute_task_update_effects(
     """Execute post-update side effects after the task store mutation succeeds."""
     wake = None
     if wake_owner and task.status == TaskStatus.pending and task.owner:
-        wake = release_task_to_owner(
-            ctx.release_team,
+        wake = ctx.runtime.release_to_owner(
             task,
             caller=caller,
             message=message,
             respawn=True,
-            repo=ctx.release_repo,
         )
 
     auto_releases: list[dict[str, Any]] = []
@@ -124,6 +123,8 @@ def execute_task_update_effects(
                     "Start now and report only real blockers."
                 ),
                 repo=ctx.release_repo,
+                store=ctx.store,
+                runtime=ctx.runtime,
             )
         )
     if failed_targets_to_wake:

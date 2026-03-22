@@ -131,7 +131,12 @@ def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
             respawn=True,
             force=False,
         ),
-        ctx=TaskReleaseContext(team="demo", store=store, repo=str(tmp_path)),
+        ctx=TaskReleaseContext(
+            team="demo",
+            store=store,
+            runtime=RuntimeOrchestrator(team="demo", repo=str(tmp_path)),
+            repo=str(tmp_path),
+        ),
     )
 
     assert result.task.status == TaskStatus.pending

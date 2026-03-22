@@ -28,6 +28,7 @@ class TaskReleaseResult:
 class TaskReleaseContext:
     team: str
     store: TaskStore
+    runtime: RuntimeOrchestrator
     repo: str | None = None
 
 
@@ -38,8 +39,9 @@ def release_task_to_owner(
     message: str = "",
     respawn: bool = True,
     repo: str | None = None,
+    runtime: RuntimeOrchestrator | None = None,
 ) -> dict[str, Any]:
-    orchestrator = RuntimeOrchestrator(team=team, repo=repo)
+    orchestrator = runtime or RuntimeOrchestrator(team=team, repo=repo)
     return orchestrator.release_to_owner(
         task,
         caller=caller,
@@ -74,13 +76,11 @@ def execute_task_release(
         raise KeyError(task_id)
 
     try:
-        release = release_task_to_owner(
-            ctx.team,
+        release = ctx.runtime.release_to_owner(
             task,
             caller=caller,
             message=request.message,
             respawn=request.respawn,
-            repo=ctx.repo,
         )
     except TaskLockError:
         raise
@@ -106,10 +106,12 @@ def wake_tasks_to_pending(
     caller: str,
     message_builder: Callable[[TaskItem], str],
     repo: str | None = None,
+    store: TaskStore | None = None,
+    runtime: RuntimeOrchestrator | None = None,
 ) -> list[dict[str, Any]]:
     from clawteam.team.tasks import TaskStore
 
-    store = TaskStore(team)
+    store = store or TaskStore(team)
     releases: list[dict[str, Any]] = []
     for target_id in task_ids:
         target = store.get(target_id)
@@ -122,6 +124,7 @@ def wake_tasks_to_pending(
             message=message_builder(target),
             respawn=True,
             repo=repo,
+            runtime=runtime,
         )
         releases.append({"taskId": target.id, "owner": target.owner, **release})
     return releases

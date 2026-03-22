@@ -17,6 +17,7 @@ from rich.table import Table
 
 from clawteam import __version__
 from clawteam.services import (
+    RuntimeOrchestrator,
     TaskReleaseContext,
     TaskReleaseRequest,
     TaskTransitionValidationError,
@@ -938,6 +939,7 @@ def task_update(
     ctx = TaskUpdateContext(
         store=store,
         release_team=team,
+        runtime=RuntimeOrchestrator(team=team),
     )
     request = TaskUpdateRequest(
         status=ts,
@@ -1034,6 +1036,7 @@ def task_release(
     ctx = TaskReleaseContext(
         team=team,
         store=store,
+        runtime=RuntimeOrchestrator(team=team, repo=repo),
         repo=repo,
     )
     request = TaskReleaseRequest(

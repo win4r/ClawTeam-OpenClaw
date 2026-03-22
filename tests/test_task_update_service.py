@@ -8,6 +8,7 @@ from clawteam.services.task_update_service import (
     execute_task_update,
     execute_task_update_effects,
 )
+from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus
@@ -33,7 +34,11 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
     result = execute_task_update(
         task_id=qa.id,
         caller="qa1",
-        ctx=TaskUpdateContext(store=store, release_team="demo"),
+        ctx=TaskUpdateContext(
+            store=store,
+            release_team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+        ),
         request=TaskUpdateRequest(
             status=TaskStatus.failed,
             owner=None,
@@ -92,7 +97,11 @@ def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(m
     )
 
     effects = execute_task_update_effects(
-        ctx=TaskUpdateContext(store=store, release_team="demo"),
+        ctx=TaskUpdateContext(
+            store=store,
+            release_team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+        ),
         task=task,
         caller="qa1",
         wake_owner=False,
