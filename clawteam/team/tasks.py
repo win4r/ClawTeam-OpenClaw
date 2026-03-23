@@ -25,6 +25,10 @@ class TaskLockError(Exception):
     """Raised when a task is locked by another agent."""
 
 
+class TaskExecutionError(RuntimeError):
+    """Raised when an execution-scoped writeback does not match the active execution."""
+
+
 def _tasks_root(team_name: str) -> Path:
     d = get_data_dir() / "tasks" / team_name
     d.mkdir(parents=True, exist_ok=True)
@@ -41,6 +45,34 @@ def _tasks_lock_path(team_name: str) -> Path:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _next_execution_id(task: TaskItem) -> tuple[int, str]:
+    next_seq = max(int(task.execution_seq or 0), 0) + 1
+    return next_seq, f"{task.id}-exec-{next_seq}"
+
+
+def _append_transition_log(
+    task: TaskItem,
+    *,
+    case_name: str,
+    accepted: bool,
+    caller: str,
+    execution_id: str | None = None,
+    rejection_reason: str | None = None,
+) -> None:
+    entries = list(task.metadata.get("transition_log", []))
+    entries.append(
+        {
+            "at": _now_iso(),
+            "case": case_name,
+            "accepted": accepted,
+            "caller": caller,
+            "executionId": execution_id or "",
+            "rejectionReason": rejection_reason or "",
+        }
+    )
+    task.metadata["transition_log"] = entries[-20:]
 
 
 class TaskStore:
@@ -100,6 +132,107 @@ class TaskStore:
         except Exception:
             return None
 
+    def apply_transition_decision(
+        self,
+        task_id: str,
+        *,
+        decision: dict[str, Any],
+        caller: str,
+        status: TaskStatus | None = None,
+        force: bool = False,
+        execution_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
+        owner: str | None = None,
+        subject: str | None = None,
+        description: str | None = None,
+        add_blocks: list[str] | None = None,
+        add_blocked_by: list[str] | None = None,
+    ) -> TaskItem | None:
+        audit = {
+            "case_name": decision.get("case_name") or "unknown_transition",
+            "accepted": bool(decision.get("accepted", True)),
+            "caller": caller,
+            "execution_id": execution_id,
+            "rejection_reason": decision.get("rejection_reason"),
+        }
+        return self.update(
+            task_id,
+            status=status,
+            owner=owner,
+            subject=subject,
+            description=description,
+            add_blocks=add_blocks,
+            add_blocked_by=add_blocked_by,
+            metadata=metadata,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            execution_id=execution_id,
+            caller=caller,
+            force=force,
+            transition_audit=audit,
+        )
+
+    def claim_execution(self, task_id: str, *, caller: str, force: bool = False) -> TaskItem | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={"case_name": "claim_execution", "accepted": True},
+            status=TaskStatus.in_progress,
+            caller=caller,
+            force=force,
+        )
+
+    def record_transition_rejection(
+        self,
+        task_id: str,
+        *,
+        case_name: str,
+        caller: str,
+        execution_id: str | None = None,
+        rejection_reason: str | None = None,
+    ) -> TaskItem | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={
+                "case_name": case_name,
+                "accepted": False,
+                "rejection_reason": rejection_reason,
+            },
+            caller=caller,
+            execution_id=execution_id,
+        )
+
+    def accept_terminal_writeback(
+        self,
+        task_id: str,
+        *,
+        status: TaskStatus,
+        caller: str,
+        execution_id: str | None,
+        metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
+        force: bool = False,
+        case_name: str = "execution_scoped_terminal_writeback",
+    ) -> TaskItem | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={"case_name": case_name, "accepted": True},
+            status=status,
+            caller=caller,
+            execution_id=execution_id,
+            metadata=metadata,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            force=force,
+        )
+
+    def reopen_task(self, task_id: str, *, caller: str, force: bool = False) -> TaskItem | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={"case_name": "reopen_task", "accepted": True},
+            status=TaskStatus.pending,
+            caller=caller,
+            force=force,
+        )
+
     def update(
         self,
         task_id: str,
@@ -111,25 +244,53 @@ class TaskStore:
         add_blocked_by: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         metadata_keys_to_remove: list[str] | None = None,
+        execution_id: str | None = None,
         caller: str = "",
         force: bool = False,
+        transition_audit: dict[str, Any] | None = None,
     ) -> TaskItem | None:
         with self._write_lock():
             task = self._get_unlocked(task_id)
             if not task:
                 return None
 
+            if status in (TaskStatus.completed, TaskStatus.failed) and execution_id:
+                if not task.active_execution_id:
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' has no active execution; got terminal writeback for '{execution_id}'."
+                    )
+                if execution_id != task.active_execution_id:
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' active execution is '{task.active_execution_id}', not '{execution_id}'."
+                    )
+                if task.active_execution_owner and caller and caller != task.active_execution_owner:
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' active execution owner is '{task.active_execution_owner}', not '{caller}'."
+                    )
+
             # Lock logic when transitioning to in_progress
             if status == TaskStatus.in_progress:
+                previous_status = task.status
+                previous_owner = task.locked_by
                 self._acquire_lock(task, caller, force)
                 # Record when work actually started
                 if not task.started_at:
                     task.started_at = _now_iso()
+                if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+                    next_seq, execution_id = _next_execution_id(task)
+                    task.execution_seq = next_seq
+                    task.active_execution_id = execution_id
+                    task.active_execution_owner = task.locked_by or caller or task.owner
 
             # Clear lock when transitioning to completed, pending, or failed
             if status in (TaskStatus.completed, TaskStatus.pending, TaskStatus.failed):
                 task.locked_by = ""
                 task.locked_at = ""
+                if status in (TaskStatus.completed, TaskStatus.failed) and task.active_execution_id:
+                    task.last_terminal_execution_id = task.active_execution_id
+                    task.last_terminal_status = status.value
+                task.active_execution_id = ""
+                task.active_execution_owner = ""
 
             # Compute duration when completing a task that has a start time
             if status == TaskStatus.completed and task.started_at:
@@ -161,6 +322,15 @@ class TaskStore:
                     task.metadata.pop(key, None)
             if metadata:
                 task.metadata.update(metadata)
+            if transition_audit:
+                _append_transition_log(
+                    task,
+                    case_name=str(transition_audit.get("case_name") or "unknown_transition"),
+                    accepted=bool(transition_audit.get("accepted", True)),
+                    caller=str(transition_audit.get("caller") or caller),
+                    execution_id=transition_audit.get("execution_id"),
+                    rejection_reason=transition_audit.get("rejection_reason"),
+                )
             task.updated_at = _now_iso()
 
             if task.status == TaskStatus.completed:

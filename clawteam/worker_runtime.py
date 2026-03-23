@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from clawteam.delivery.failure_notifier import notify_task_failure
+from clawteam.task.transition import (
+    ClaimExecutionEvent,
+    TerminalWritebackEvent,
+    plan_claim_execution,
+    plan_terminal_writeback,
+)
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskLockError, TaskStore
@@ -70,6 +76,11 @@ def build_worker_task_prompt(
         f"--team {shlex.quote(team_name)} "
         f"--data-dir {shlex.quote(os.environ.get('CLAWTEAM_DATA_DIR', ''))} --shell)"
     )
+    if getattr(task, "active_execution_id", ""):
+        lines.extend([
+            f"- Active Execution ID: {task.active_execution_id}",
+        ])
+
     lines.extend([
         "",
         "## Required Runtime Protocol",
@@ -298,6 +309,7 @@ def _fail_claimed_task(
     task_id: str,
     reason: str,
     evidence: str,
+    execution_id: str | None = None,
     session_key: str | None = None,
     stall_phase: str | None = None,
 ) -> dict[str, Any]:
@@ -314,12 +326,37 @@ def _fail_claimed_task(
         failure_metadata["session_key"] = session_key
     if stall_phase:
         failure_metadata["stall_phase"] = stall_phase
-    task = store.update(
-        task_id,
-        status=TaskStatus.failed,
-        caller=agent_name,
-        metadata=failure_metadata,
-    )
+    existing = store.get(task_id)
+    task = None
+    if existing is not None:
+        decision = plan_terminal_writeback(
+            existing=existing,
+            event=TerminalWritebackEvent(
+                caller=agent_name,
+                status=TaskStatus.failed,
+                execution_id=execution_id,
+            ),
+        )
+        if decision and not decision.accepted:
+            store.record_transition_rejection(
+                task_id,
+                case_name=decision.case_name,
+                caller=agent_name,
+                execution_id=execution_id,
+                rejection_reason=decision.rejection_reason,
+            )
+        else:
+            applied_case = "worker_runtime_failed_closed"
+            if decision and decision.accepted:
+                applied_case = decision.case_name
+            task = store.accept_terminal_writeback(
+                task_id,
+                status=TaskStatus.failed,
+                caller=agent_name,
+                execution_id=execution_id,
+                metadata=failure_metadata,
+                case_name=applied_case,
+            )
     failure_notice = None
     if task is not None:
         failure_notice = notify_task_failure(team_name, task, agent_name)
@@ -394,8 +431,32 @@ def run_worker_iteration(
             "taskId": task.id,
         }
 
+    claim_decision = plan_claim_execution(
+        existing=task,
+        event=ClaimExecutionEvent(caller=agent_name),
+    )
+    if not claim_decision.accepted:
+        store.record_transition_rejection(
+            task.id,
+            case_name=claim_decision.case_name,
+            caller=agent_name,
+            rejection_reason=claim_decision.rejection_reason,
+        )
+        return {
+            "status": "contended",
+            "messages": message_count,
+            "acked": acked_count,
+            "taskId": task.id,
+            "rejectionReason": claim_decision.rejection_reason,
+        }
+
     try:
-        claimed = store.update(task.id, status=TaskStatus.in_progress, caller=agent_name)
+        claimed = store.apply_transition_decision(
+            task.id,
+            decision={"case_name": claim_decision.case_name, "accepted": True},
+            status=TaskStatus.in_progress,
+            caller=agent_name,
+        )
     except TaskLockError:
         return {
             "status": "contended",
@@ -432,6 +493,9 @@ def run_worker_iteration(
         timeout_seconds=timeout_seconds,
     )
     env = os.environ.copy()
+    env["CLAWTEAM_TASK_ID"] = claimed.id
+    env["CLAWTEAM_TASK_EXECUTION_ID"] = claimed.active_execution_id
+    env["CLAWTEAM_TASK_EXECUTION_SEQ"] = str(claimed.execution_seq)
     progress_stall_timeout_seconds = float(
         env.get("CLAWTEAM_WORKER_PROGRESS_STALL_TIMEOUT", DEFAULT_PROGRESS_STALL_TIMEOUT)
     )
@@ -455,6 +519,7 @@ def run_worker_iteration(
             task_id=claimed.id,
             reason="worker runtime dispatch failed",
             evidence=repr(exc),
+            execution_id=claimed.active_execution_id,
             session_key=session_key,
             stall_phase="dispatch",
         )
@@ -479,6 +544,7 @@ def run_worker_iteration(
             task_id=claimed.id,
             reason="worker agent turn failed",
             evidence=evidence,
+            execution_id=claimed.active_execution_id,
             session_key=session_key,
             stall_phase="agent_exit_nonzero",
         )
@@ -541,6 +607,7 @@ def run_worker_iteration(
                 task_id=claimed.id,
                 reason="worker agent turn stalled without terminal task update",
                 evidence="\n".join(evidence_parts),
+                execution_id=claimed.active_execution_id,
                 session_key=session_key,
                 stall_phase="post_exit_without_terminal_update",
             )
@@ -560,6 +627,8 @@ def run_worker_iteration(
         "messages": message_count,
         "acked": acked_count,
         "taskId": claimed.id,
+        "executionId": claimed.active_execution_id,
+        "executionSeq": claimed.execution_seq,
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,

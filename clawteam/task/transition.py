@@ -24,6 +24,9 @@ class TaskTransitionValidationError(ValueError):
 
 WATCHDOG_FAILURE_ROOT_CAUSE = "worker agent turn stalled without terminal task update"
 WATCHDOG_RECOVERY_CASE = "recover_watchdog_failed_completion"
+EXECUTION_TERMINAL_CASE = "execution_scoped_terminal_writeback"
+CLAIM_EXECUTION_CASE = "claim_execution"
+REOPEN_TASK_CASE = "reopen_task"
 WATCHDOG_RECOVERY_FAILURE_KEYS = [
     "failure_kind",
     "failure_root_cause",
@@ -46,6 +49,24 @@ class TaskTransitionRequest:
     failure_evidence: str | None
     failure_recommended_next_owner: str | None
     failure_recommended_action: str | None
+
+
+@dataclass(frozen=True)
+class ClaimExecutionEvent:
+    caller: str
+    force: bool = False
+
+
+@dataclass(frozen=True)
+class TerminalWritebackEvent:
+    caller: str
+    status: TaskStatus
+    execution_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ReopenTaskEvent:
+    caller: str
 
 
 @dataclass(frozen=True)
@@ -159,6 +180,94 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return None
+
+
+def plan_claim_execution(
+    *,
+    existing: TaskItem,
+    event: ClaimExecutionEvent,
+) -> TaskTransitionDecision:
+    if existing.status not in (TaskStatus.pending, TaskStatus.blocked):
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=CLAIM_EXECUTION_CASE,
+            rejection_reason="claim_requires_pending_or_blocked_task",
+        )
+    if existing.locked_by and existing.locked_by != event.caller and not event.force:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=CLAIM_EXECUTION_CASE,
+            rejection_reason="task_locked_by_other_agent",
+        )
+    return TaskTransitionDecision(
+        accepted=True,
+        case_name=CLAIM_EXECUTION_CASE,
+    )
+
+
+def plan_execution_scoped_terminal_writeback(
+    *,
+    existing: TaskItem,
+    caller: str,
+    requested_status: TaskStatus | None,
+    execution_id: str | None,
+) -> TaskTransitionDecision | None:
+    if requested_status not in (TaskStatus.completed, TaskStatus.failed):
+        return None
+    if not execution_id:
+        return None
+    if not existing.active_execution_id:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=EXECUTION_TERMINAL_CASE,
+            rejection_reason="no_active_execution",
+        )
+    if execution_id != existing.active_execution_id:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=EXECUTION_TERMINAL_CASE,
+            rejection_reason="stale_execution",
+        )
+    if existing.active_execution_owner and caller != existing.active_execution_owner:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=EXECUTION_TERMINAL_CASE,
+            rejection_reason="execution_owner_mismatch",
+        )
+    return TaskTransitionDecision(
+        accepted=True,
+        case_name=EXECUTION_TERMINAL_CASE,
+    )
+
+
+def plan_terminal_writeback(
+    *,
+    existing: TaskItem,
+    event: TerminalWritebackEvent,
+) -> TaskTransitionDecision | None:
+    return plan_execution_scoped_terminal_writeback(
+        existing=existing,
+        caller=event.caller,
+        requested_status=event.status,
+        execution_id=event.execution_id,
+    )
+
+
+def plan_reopen_task(
+    *,
+    existing: TaskItem,
+    event: ReopenTaskEvent,
+) -> TaskTransitionDecision:
+    if existing.status not in (TaskStatus.completed, TaskStatus.failed, TaskStatus.blocked):
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=REOPEN_TASK_CASE,
+            rejection_reason="reopen_requires_terminal_or_blocked_task",
+        )
+    return TaskTransitionDecision(
+        accepted=True,
+        case_name=REOPEN_TASK_CASE,
+    )
 
 
 def plan_watchdog_failed_completion_recovery(

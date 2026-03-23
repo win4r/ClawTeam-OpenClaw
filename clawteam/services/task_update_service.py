@@ -7,13 +7,17 @@ from typing import Any, Callable
 
 from clawteam.services.task_service import wake_tasks_to_pending
 from clawteam.task.transition import (
+    ReopenTaskEvent,
     TaskTransitionPlan,
     TaskTransitionRequest,
     TaskTransitionValidationError,
+    TerminalWritebackEvent,
     build_failure_metadata,
     merge_transition_metadata,
+    plan_reopen_task,
     plan_task_transition,
     plan_task_transition_followups,
+    plan_terminal_writeback,
     plan_watchdog_failed_completion_recovery,
 )
 from clawteam.team.models import TaskItem, TaskStatus
@@ -70,6 +74,7 @@ class TaskUpdateRequest:
     failure_evidence: str | None
     failure_recommended_next_owner: str | None
     failure_recommended_action: str | None
+    execution_id: str | None
     wake_owner: bool
     message: str
     force: bool
@@ -199,6 +204,28 @@ def execute_task_update(
 
     transition_case: str | None = None
     metadata_keys_to_remove: list[str] | None = None
+    execution_decision = plan_terminal_writeback(
+        existing=existing,
+        event=TerminalWritebackEvent(
+            caller=caller,
+            status=request.status,
+            execution_id=request.execution_id,
+        ) if request.status in (TaskStatus.completed, TaskStatus.failed) else None,
+    ) if request.status in (TaskStatus.completed, TaskStatus.failed) else None
+    if execution_decision and not execution_decision.accepted:
+        ctx.store.record_transition_rejection(
+            task_id,
+            case_name=execution_decision.case_name,
+            caller=caller,
+            execution_id=request.execution_id,
+            rejection_reason=execution_decision.rejection_reason,
+        )
+        raise RuntimeError(
+            f"terminal writeback rejected: {execution_decision.rejection_reason}"
+        )
+    if execution_decision and execution_decision.accepted:
+        transition_case = execution_decision.case_name
+
     recovery_decision = plan_watchdog_failed_completion_recovery(
         existing=existing,
         caller=caller,
@@ -215,19 +242,82 @@ def execute_task_update(
             failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
-    task = ctx.store.update(
-        task_id,
-        status=request.status,
-        owner=request.owner,
-        subject=request.subject,
-        description=request.description,
-        add_blocks=request.add_blocks,
-        add_blocked_by=request.add_blocked_by,
-        metadata=plan.metadata_to_apply,
-        metadata_keys_to_remove=metadata_keys_to_remove,
-        caller=caller,
-        force=request.force,
-    )
+    if request.status in (TaskStatus.completed, TaskStatus.failed):
+        decision = execution_decision or {
+            "case_name": transition_case or "terminal_writeback_without_execution_scope",
+            "accepted": True,
+        }
+        if hasattr(decision, "case_name"):
+            decision = {
+                "case_name": decision.case_name,
+                "accepted": decision.accepted,
+                "rejection_reason": decision.rejection_reason,
+            }
+        task = ctx.store.apply_transition_decision(
+            task_id,
+            decision=decision,
+            status=request.status,
+            caller=caller,
+            execution_id=request.execution_id,
+            metadata=plan.metadata_to_apply,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            force=request.force,
+        )
+    elif request.status == TaskStatus.pending and existing.status != TaskStatus.pending:
+        reopen_decision = plan_reopen_task(existing=existing, event=ReopenTaskEvent(caller=caller))
+        if not reopen_decision.accepted:
+            ctx.store.record_transition_rejection(
+                task_id,
+                case_name=reopen_decision.case_name,
+                caller=caller,
+                rejection_reason=reopen_decision.rejection_reason,
+            )
+            raise RuntimeError(f"reopen rejected: {reopen_decision.rejection_reason}")
+        task = ctx.store.apply_transition_decision(
+            task_id,
+            decision={"case_name": reopen_decision.case_name, "accepted": True},
+            status=TaskStatus.pending,
+            caller=caller,
+            force=request.force,
+        )
+        if any(
+            value is not None
+            for value in (
+                request.owner,
+                request.subject,
+                request.description,
+                request.add_blocks,
+                request.add_blocked_by,
+                plan.metadata_to_apply,
+            )
+        ):
+            task = ctx.store.update(
+                task_id,
+                owner=request.owner,
+                subject=request.subject,
+                description=request.description,
+                add_blocks=request.add_blocks,
+                add_blocked_by=request.add_blocked_by,
+                metadata=plan.metadata_to_apply,
+                metadata_keys_to_remove=metadata_keys_to_remove,
+                caller=caller,
+                force=request.force,
+            )
+    else:
+        task = ctx.store.update(
+            task_id,
+            status=request.status,
+            owner=request.owner,
+            subject=request.subject,
+            description=request.description,
+            add_blocks=request.add_blocks,
+            add_blocked_by=request.add_blocked_by,
+            metadata=plan.metadata_to_apply,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            execution_id=request.execution_id,
+            caller=caller,
+            force=request.force,
+        )
 
     effects = execute_task_update_effects(
         ctx=ctx,

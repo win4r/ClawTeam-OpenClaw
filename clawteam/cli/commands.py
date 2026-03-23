@@ -959,6 +959,7 @@ def task_update(
         failure_evidence=failure_evidence,
         failure_recommended_next_owner=failure_recommended_next_owner,
         failure_recommended_action=failure_recommended_action,
+        execution_id=os.environ.get("CLAWTEAM_TASK_EXECUTION_ID") or None,
         wake_owner=wake_owner,
         message=message or "",
         force=force,

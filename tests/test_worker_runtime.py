@@ -68,10 +68,27 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
     assert expected_bootstrap in prompt
     assert "clawteam identity set" in prompt
     assert "--shell" in prompt
+    assert f"- Active Execution ID: {task.active_execution_id}" not in prompt
     assert "Workflow routing is owned by the leader/template/state machine" in prompt
     assert "Do not create repair/retry/review tasks or mutate blocked_by/on_fail edges" in prompt
     assert "Use structured result blocks instead of free-form prose" in prompt
     assert "QA_RESULT must include exactly these headings" in prompt
+
+
+def test_build_worker_task_prompt_includes_active_execution_when_claimed(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    claimed = TaskStore("demo").update(task.id, status=TaskStatus.in_progress, caller="qa1")
+
+    prompt = build_worker_task_prompt(
+        team_name="demo",
+        agent_name="qa1",
+        leader_name="leader",
+        task=claimed,
+    )
+
+    assert f"- Active Execution ID: {claimed.active_execution_id}" in prompt
+
 
 
 def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_path):
@@ -102,14 +119,25 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
     assert result["taskId"] == task.id
     assert result["messages"] == 1
     assert result["acked"] == 1
+    assert result["executionId"].startswith(f"{task.id}-exec-")
+    assert result["executionSeq"] == 1
     assert called["command"][:2] == ["openclaw", "agent"]
     assert "--session-id" in called["command"]
     assert f"clawteam-demo-qa1" in called["command"]
+    assert called["env"]["CLAWTEAM_TASK_ID"] == task.id
+    assert called["env"]["CLAWTEAM_TASK_EXECUTION_ID"] == result["executionId"]
+    assert called["env"]["CLAWTEAM_TASK_EXECUTION_SEQ"] == "1"
 
     updated = TaskStore("demo").get(task.id)
     assert updated is not None
     assert updated.status.value == "completed"
     assert updated.locked_by == ""
+    assert updated.execution_seq == 1
+    assert updated.active_execution_id == ""
+    assert updated.last_terminal_execution_id == result["executionId"]
+    assert updated.last_terminal_status == "completed"
+    assert updated.metadata["transition_log"][0]["case"] == "claim_execution"
+    assert updated.metadata["transition_log"][-1]["accepted"] is True
 
     acks = mailbox.receive("leader")
     assert len(acks) == 1
@@ -302,6 +330,45 @@ def test_run_worker_iteration_fails_closed_on_nonzero_agent_exit(monkeypatch, tm
     assert updated.metadata["failure_kind"] == "complex"
     assert updated.metadata["failure_root_cause"] == "worker agent turn failed"
     assert "502 Upstream request failed" in updated.metadata["failure_evidence"]
+
+
+def test_task_store_rejects_stale_execution_terminal_writeback(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    first = store.claim_execution(task.id, caller="qa1")
+    stale_execution_id = first.active_execution_id
+    store.reopen_task(task.id, caller="qa1")
+    store.claim_execution(task.id, caller="qa1")
+
+    try:
+        store.accept_terminal_writeback(
+            task.id,
+            status=TaskStatus.completed,
+            caller="qa1",
+            execution_id=stale_execution_id,
+        )
+        assert False, "expected stale execution rejection"
+    except Exception as exc:
+        assert "active execution" in str(exc)
+
+
+
+def test_task_store_reopen_clears_active_execution(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+
+    reopened = store.reopen_task(task.id, caller="qa1")
+
+    assert claimed.active_execution_id != ""
+    assert reopened.status == TaskStatus.pending
+    assert reopened.active_execution_id == ""
+    assert reopened.active_execution_owner == ""
+    assert reopened.metadata["transition_log"][-1]["case"] == "reopen_task"
+    assert reopened.metadata["transition_log"][-1]["accepted"] is True
+
 
 
 def test_run_worker_iteration_fails_closed_when_dispatch_raises(monkeypatch, tmp_path):

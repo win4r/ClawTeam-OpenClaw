@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from clawteam.task.transition import (
+    CLAIM_EXECUTION_CASE,
+    EXECUTION_TERMINAL_CASE,
+    REOPEN_TASK_CASE,
+    ClaimExecutionEvent,
+    ReopenTaskEvent,
     TaskTransitionRequest,
     TaskTransitionValidationError,
+    TerminalWritebackEvent,
     WATCHDOG_RECOVERY_CASE,
     build_failure_metadata,
     merge_transition_metadata,
+    plan_claim_execution,
+    plan_reopen_task,
     plan_task_transition,
     plan_task_transition_followups,
+    plan_terminal_writeback,
     plan_watchdog_failed_completion_recovery,
 )
 from clawteam.team.models import TaskItem, TaskStatus
@@ -208,3 +217,45 @@ def test_plan_watchdog_failed_completion_recovery_ignores_non_watchdog_failures(
     )
 
     assert decision is None
+
+
+def test_plan_claim_execution_accepts_pending_task():
+    task = TaskItem(id="task-1", subject="impl", status=TaskStatus.pending)
+
+    decision = plan_claim_execution(existing=task, event=ClaimExecutionEvent(caller="dev1"))
+
+    assert decision.accepted is True
+    assert decision.case_name == CLAIM_EXECUTION_CASE
+
+
+def test_plan_terminal_writeback_rejects_stale_execution():
+    task = TaskItem(
+        id="task-1",
+        subject="impl",
+        status=TaskStatus.in_progress,
+        active_execution_id="task-1-exec-2",
+        active_execution_owner="dev1",
+    )
+
+    decision = plan_terminal_writeback(
+        existing=task,
+        event=TerminalWritebackEvent(
+            caller="dev1",
+            status=TaskStatus.completed,
+            execution_id="task-1-exec-1",
+        ),
+    )
+
+    assert decision is not None
+    assert decision.accepted is False
+    assert decision.case_name == EXECUTION_TERMINAL_CASE
+    assert decision.rejection_reason == "stale_execution"
+
+
+def test_plan_reopen_task_accepts_failed_task():
+    task = TaskItem(id="task-1", subject="impl", status=TaskStatus.failed)
+
+    decision = plan_reopen_task(existing=task, event=ReopenTaskEvent(caller="leader"))
+
+    assert decision.accepted is True
+    assert decision.case_name == REOPEN_TASK_CASE

@@ -68,6 +68,7 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
             failure_evidence="cross-cutting regression",
             failure_recommended_next_owner="leader",
             failure_recommended_action="triage owner",
+            execution_id=None,
             wake_owner=False,
             message="",
             force=False,
@@ -127,6 +128,7 @@ def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(m
             failure_evidence=None,
             failure_recommended_next_owner=None,
             failure_recommended_action=None,
+            execution_id=None,
             wake_owner=False,
             message="",
             force=False,
@@ -139,6 +141,63 @@ def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(m
     assert result.task.metadata["watchdog_recovered_by"] == "dev1"
     assert "failure_root_cause" not in result.task.metadata
     assert "failure_evidence" not in result.task.metadata
+
+
+
+def test_execute_task_update_rejects_stale_execution_writeback(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Implement fix", owner="dev1")
+    first_claim = store.update(task.id, status=TaskStatus.in_progress, caller="dev1")
+    stale_execution_id = first_claim.active_execution_id
+    store.update(task.id, status=TaskStatus.pending, caller="dev1")
+    store.update(task.id, status=TaskStatus.in_progress, caller="dev1")
+
+    try:
+        execute_task_update(
+            task_id=task.id,
+            caller="dev1",
+            ctx=TaskUpdateContext(
+                store=store,
+                team="demo",
+                runtime=RuntimeOrchestrator(team="demo"),
+                release_notifier=lambda team, task, caller, message: None,
+                failure_notifier=lambda team, task, caller: None,
+            ),
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description=None,
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                execution_id=stale_execution_id,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+    except RuntimeError as exc:
+        assert "stale_execution" in str(exc)
+    else:
+        raise AssertionError("expected stale execution writeback to be rejected")
+
+    rejected = store.get(task.id)
+    assert rejected is not None
+    assert rejected.metadata["transition_log"][-1]["case"] == "execution_scoped_terminal_writeback"
+    assert rejected.metadata["transition_log"][-1]["accepted"] is False
+    assert rejected.metadata["transition_log"][-1]["rejectionReason"] == "stale_execution"
 
 
 
