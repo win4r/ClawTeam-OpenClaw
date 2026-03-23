@@ -2568,9 +2568,16 @@ def launch_team(
         if task_def.on_fail:
             metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
 
+        rendered_description = render_task(
+            task_def.description,
+            goal=goal,
+            team_name=t_name,
+            agent_name=task_def.owner,
+        )
+
         task = ts.create(
             subject=task_def.subject,
-            description=task_def.description,
+            description=rendered_description,
             owner=task_def.owner,
             blocked_by=[created_task_ids[name] for name in task_def.blocked_by],
             metadata=metadata,

@@ -58,6 +58,9 @@ def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
     assert review.blocked_by == [qa_main.id, qa_reg.id]
     assert deliver.blocked_by == [review.id]
     assert qa_main.metadata.get("on_fail") == [backend.id, frontend.id]
+    assert "Ship the feature safely" in scope.description
+    assert "{goal}" not in scope.description
+
     assert qa_reg.metadata.get("on_fail") == [backend.id, frontend.id]
     assert review.metadata.get("on_fail") == [backend.id, frontend.id]
 
