@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Callable
 
 from clawteam.services.task_service import wake_tasks_to_pending
@@ -15,6 +14,7 @@ from clawteam.task.transition import (
     merge_transition_metadata,
     plan_task_transition,
     plan_task_transition_followups,
+    plan_watchdog_failed_completion_recovery,
 )
 from clawteam.team.models import TaskItem, TaskStatus
 from clawteam.team.tasks import TaskStore
@@ -24,47 +24,6 @@ TaskUpdateValidationError = TaskTransitionValidationError
 TaskUpdatePlan = TaskTransitionPlan
 merge_update_metadata = merge_transition_metadata
 plan_task_update_followups = plan_task_transition_followups
-
-
-WATCHDOG_FAILURE_ROOT_CAUSE = "worker agent turn stalled without terminal task update"
-
-
-def _parse_iso_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _is_watchdog_recoverable_completion(
-    *,
-    existing: TaskItem,
-    caller: str,
-    requested_status: TaskStatus | None,
-) -> bool:
-    if requested_status != TaskStatus.completed:
-        return False
-    if existing.status != TaskStatus.failed:
-        return False
-    if existing.owner and caller != existing.owner:
-        return False
-
-    metadata = existing.metadata or {}
-    if metadata.get("failure_root_cause") != WATCHDOG_FAILURE_ROOT_CAUSE:
-        return False
-
-    session_key = str(metadata.get("session_key") or "").strip()
-    if session_key and not session_key.endswith(f"-{caller}"):
-        return False
-
-    watchdog_at = _parse_iso_timestamp(metadata.get("watchdog_decision_at"))
-    updated_at = _parse_iso_timestamp(existing.updated_at)
-    if watchdog_at and updated_at and updated_at < watchdog_at:
-        return False
-
-    return True
 
 
 def plan_task_update(
@@ -121,6 +80,7 @@ class TaskUpdateResult:
     task: TaskItem
     plan: TaskUpdatePlan
     effects: TaskUpdateEffects
+    transition_case: str | None = None
 
 
 @dataclass(frozen=True)
@@ -237,17 +197,18 @@ def execute_task_update(
         all_tasks=ctx.store.list_tasks(),
     )
 
-    if _is_watchdog_recoverable_completion(
+    transition_case: str | None = None
+    metadata_keys_to_remove: list[str] | None = None
+    recovery_decision = plan_watchdog_failed_completion_recovery(
         existing=existing,
         caller=caller,
         requested_status=request.status,
-    ):
+    )
+    if recovery_decision and recovery_decision.accepted:
+        transition_case = recovery_decision.case_name
+        metadata_keys_to_remove = recovery_decision.metadata_keys_to_remove
         metadata = dict(plan.metadata_to_apply or {})
-        metadata["recovered_from_watchdog_failure"] = True
-        metadata["watchdog_recovered_at"] = datetime.now().astimezone().isoformat()
-        metadata["watchdog_recovered_by"] = caller
-        if existing.metadata.get("watchdog_decision_at"):
-            metadata["watchdog_original_decision_at"] = existing.metadata.get("watchdog_decision_at")
+        metadata.update(recovery_decision.metadata_to_apply or {})
         plan = TaskUpdatePlan(
             metadata_to_apply=metadata,
             dependent_ids_to_wake=plan.dependent_ids_to_wake,
@@ -263,6 +224,7 @@ def execute_task_update(
         add_blocks=request.add_blocks,
         add_blocked_by=request.add_blocked_by,
         metadata=plan.metadata_to_apply,
+        metadata_keys_to_remove=metadata_keys_to_remove,
         caller=caller,
         force=request.force,
     )
@@ -277,4 +239,4 @@ def execute_task_update(
         failed_targets_to_wake=plan.failed_targets_to_wake,
     )
 
-    return TaskUpdateResult(task=task, plan=plan, effects=effects)
+    return TaskUpdateResult(task=task, plan=plan, effects=effects, transition_case=transition_case)

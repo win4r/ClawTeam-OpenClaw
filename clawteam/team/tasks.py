@@ -110,6 +110,7 @@ class TaskStore:
         add_blocks: list[str] | None = None,
         add_blocked_by: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
         caller: str = "",
         force: bool = False,
     ) -> TaskItem | None:
@@ -155,19 +156,10 @@ class TaskStore:
                 for b in add_blocked_by:
                     if b not in task.blocked_by:
                         task.blocked_by.append(b)
+            if metadata_keys_to_remove:
+                for key in metadata_keys_to_remove:
+                    task.metadata.pop(key, None)
             if metadata:
-                if status == TaskStatus.completed and metadata.get("recovered_from_watchdog_failure"):
-                    for key in [
-                        "failure_kind",
-                        "failure_root_cause",
-                        "failure_evidence",
-                        "failure_note",
-                        "failure_recommended_next_owner",
-                        "failure_recommended_action",
-                        "stall_phase",
-                        "session_key",
-                    ]:
-                        task.metadata.pop(key, None)
                 task.metadata.update(metadata)
             task.updated_at = _now_iso()
 

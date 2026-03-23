@@ -3,10 +3,12 @@ from __future__ import annotations
 from clawteam.task.transition import (
     TaskTransitionRequest,
     TaskTransitionValidationError,
+    WATCHDOG_RECOVERY_CASE,
     build_failure_metadata,
     merge_transition_metadata,
     plan_task_transition,
     plan_task_transition_followups,
+    plan_watchdog_failed_completion_recovery,
 )
 from clawteam.team.models import TaskItem, TaskStatus
 
@@ -128,3 +130,81 @@ def test_plan_task_transition_combines_metadata_and_followups():
     }
     assert plan.failed_targets_to_wake == ["task-impl"]
     assert plan.dependent_ids_to_wake == []
+
+
+def test_plan_watchdog_failed_completion_recovery_accepts_owner_completed():
+    existing = TaskItem(
+        id="task-1",
+        subject="impl",
+        owner="dev1",
+        status=TaskStatus.failed,
+        updated_at="2026-03-23T00:00:05+00:00",
+        metadata={
+            "failure_root_cause": "worker agent turn stalled without terminal task update",
+            "session_key": "clawteam-demo-dev1",
+            "watchdog_decision_at": "2026-03-23T00:00:00+00:00",
+            "failure_evidence": "watchdog",
+        },
+    )
+
+    decision = plan_watchdog_failed_completion_recovery(
+        existing=existing,
+        caller="dev1",
+        requested_status=TaskStatus.completed,
+    )
+
+    assert decision is not None
+    assert decision.accepted is True
+    assert decision.case_name == WATCHDOG_RECOVERY_CASE
+    assert decision.metadata_to_apply is not None
+    assert decision.metadata_to_apply["recovered_from_watchdog_failure"] is True
+    assert decision.metadata_to_apply["watchdog_recovered_by"] == "dev1"
+    assert "failure_root_cause" in decision.metadata_keys_to_remove
+
+
+def test_plan_watchdog_failed_completion_recovery_rejects_non_owner():
+    existing = TaskItem(
+        id="task-1",
+        subject="impl",
+        owner="dev1",
+        status=TaskStatus.failed,
+        updated_at="2026-03-23T00:00:05+00:00",
+        metadata={
+            "failure_root_cause": "worker agent turn stalled without terminal task update",
+            "session_key": "clawteam-demo-dev1",
+            "watchdog_decision_at": "2026-03-23T00:00:00+00:00",
+        },
+    )
+
+    decision = plan_watchdog_failed_completion_recovery(
+        existing=existing,
+        caller="qa1",
+        requested_status=TaskStatus.completed,
+    )
+
+    assert decision is not None
+    assert decision.accepted is False
+    assert decision.case_name == WATCHDOG_RECOVERY_CASE
+    assert decision.rejection_reason == "watchdog_recovery_requires_owner"
+
+
+def test_plan_watchdog_failed_completion_recovery_ignores_non_watchdog_failures():
+    existing = TaskItem(
+        id="task-1",
+        subject="impl",
+        owner="dev1",
+        status=TaskStatus.failed,
+        updated_at="2026-03-23T00:00:05+00:00",
+        metadata={
+            "failure_root_cause": "ordinary regression",
+            "watchdog_decision_at": "2026-03-23T00:00:00+00:00",
+        },
+    )
+
+    decision = plan_watchdog_failed_completion_recovery(
+        existing=existing,
+        caller="dev1",
+        requested_status=TaskStatus.completed,
+    )
+
+    assert decision is None

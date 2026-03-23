@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from clawteam.team.models import TaskItem, TaskStatus
@@ -19,6 +20,20 @@ COMPLEX_FAILURE_REQUIRED_FLAGS = {
 
 class TaskTransitionValidationError(ValueError):
     """Raised when task transition options violate workflow policy."""
+
+
+WATCHDOG_FAILURE_ROOT_CAUSE = "worker agent turn stalled without terminal task update"
+WATCHDOG_RECOVERY_CASE = "recover_watchdog_failed_completion"
+WATCHDOG_RECOVERY_FAILURE_KEYS = [
+    "failure_kind",
+    "failure_root_cause",
+    "failure_evidence",
+    "failure_note",
+    "failure_recommended_next_owner",
+    "failure_recommended_action",
+    "stall_phase",
+    "session_key",
+]
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,15 @@ class TaskTransitionPlan:
     metadata_to_apply: dict[str, Any] | None
     dependent_ids_to_wake: list[str]
     failed_targets_to_wake: list[str]
+
+
+@dataclass(frozen=True)
+class TaskTransitionDecision:
+    accepted: bool
+    case_name: str
+    rejection_reason: str | None = None
+    metadata_to_apply: dict[str, Any] | None = None
+    metadata_keys_to_remove: list[str] | None = None
 
 
 def build_failure_metadata(
@@ -126,6 +150,69 @@ def plan_task_transition_followups(
         "dependent_ids_to_wake": dependent_ids_to_wake,
         "failed_targets_to_wake": failed_targets_to_wake,
     }
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def plan_watchdog_failed_completion_recovery(
+    *,
+    existing: TaskItem,
+    caller: str,
+    requested_status: TaskStatus | None,
+) -> TaskTransitionDecision | None:
+    if requested_status != TaskStatus.completed:
+        return None
+    if existing.status != TaskStatus.failed:
+        return None
+    if existing.owner and caller != existing.owner:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=WATCHDOG_RECOVERY_CASE,
+            rejection_reason="watchdog_recovery_requires_owner",
+        )
+
+    metadata = existing.metadata or {}
+    if metadata.get("failure_root_cause") != WATCHDOG_FAILURE_ROOT_CAUSE:
+        return None
+
+    session_key = str(metadata.get("session_key") or "").strip()
+    if session_key and not session_key.endswith(f"-{caller}"):
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=WATCHDOG_RECOVERY_CASE,
+            rejection_reason="watchdog_recovery_session_mismatch",
+        )
+
+    watchdog_at = _parse_iso_timestamp(metadata.get("watchdog_decision_at"))
+    updated_at = _parse_iso_timestamp(existing.updated_at)
+    if watchdog_at and updated_at and updated_at < watchdog_at:
+        return TaskTransitionDecision(
+            accepted=False,
+            case_name=WATCHDOG_RECOVERY_CASE,
+            rejection_reason="watchdog_recovery_stale_task_snapshot",
+        )
+
+    metadata_to_apply = {
+        "recovered_from_watchdog_failure": True,
+        "watchdog_recovered_at": datetime.now().astimezone().isoformat(),
+        "watchdog_recovered_by": caller,
+    }
+    if metadata.get("watchdog_decision_at"):
+        metadata_to_apply["watchdog_original_decision_at"] = metadata.get("watchdog_decision_at")
+
+    return TaskTransitionDecision(
+        accepted=True,
+        case_name=WATCHDOG_RECOVERY_CASE,
+        metadata_to_apply=metadata_to_apply,
+        metadata_keys_to_remove=list(WATCHDOG_RECOVERY_FAILURE_KEYS),
+    )
 
 
 def plan_task_transition(

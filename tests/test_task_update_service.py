@@ -134,6 +134,7 @@ def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(m
     )
 
     assert result.task.status == TaskStatus.completed
+    assert result.transition_case == "recover_watchdog_failed_completion"
     assert result.task.metadata["recovered_from_watchdog_failure"] is True
     assert result.task.metadata["watchdog_recovered_by"] == "dev1"
     assert "failure_root_cause" not in result.task.metadata
