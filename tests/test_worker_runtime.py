@@ -354,6 +354,11 @@ def test_run_worker_iteration_fails_closed_when_agent_returns_success_without_te
     )
 
     monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        worker_runtime,
+        "_wait_for_post_exit_settle",
+        lambda **kwargs: (TaskStore("demo").get(task.id), False),
+    )
 
     result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
 
@@ -456,6 +461,63 @@ def test_progress_watchdog_allows_running_process_when_transcript_keeps_growing(
 
     assert result.returncode == 0
     assert result.stdout == "ok"
+
+
+
+def test_post_exit_settle_detects_terminal_update_after_success(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    monkeypatch.setattr(
+        worker_runtime,
+        "_run_agent_with_progress_watchdog",
+        lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""),
+    )
+
+    def fake_wait_for_post_exit_settle(**kwargs):
+        TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
+        return TaskStore("demo").get(task.id), True
+
+    monkeypatch.setattr(worker_runtime, "_wait_for_post_exit_settle", fake_wait_for_post_exit_settle)
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "dispatched"
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status == TaskStatus.completed
+
+
+
+def test_wait_for_post_exit_settle_returns_false_when_session_goes_silent(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    TaskStore("demo").update(task.id, status=TaskStatus.in_progress, caller="qa1")
+
+    timeline = iter([0.0, 0.0, 0.5, 1.1])
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: next(timeline))
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda _: None)
+    monkeypatch.setattr(worker_runtime, "_transcript_progress_marker", lambda session_key: (0, 0))
+
+    refreshed, settled = worker_runtime._wait_for_post_exit_settle(
+        team_name="demo",
+        task_id=task.id,
+        agent_name="qa1",
+        session_key="clawteam-demo-qa1",
+        settle_timeout_seconds=5.0,
+        poll_interval_seconds=0.01,
+        progress_grace_seconds=1.0,
+    )
+
+    assert settled is False
+    assert refreshed is not None
+    assert refreshed.status == TaskStatus.in_progress
 
 
 
