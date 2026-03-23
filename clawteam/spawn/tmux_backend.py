@@ -74,7 +74,7 @@ class TmuxBackend(SpawnBackend):
 
         normalized_command = normalize_spawn_command(command)
 
-        from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
+        from clawteam.spawn.registry import get_agent_runtime_state, new_worker_instance_id, terminate_agent
 
         command_error = validate_spawn_command(normalized_command, path=env_vars["PATH"], cwd=cwd)
         if command_error:
@@ -83,6 +83,8 @@ class TmuxBackend(SpawnBackend):
         existing_state = get_agent_runtime_state(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
         if existing_state != "missing":
             terminate_agent(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        worker_instance_id = new_worker_instance_id(agent_name)
+        env_vars["CLAWTEAM_WORKER_INSTANCE_ID"] = worker_instance_id
         _kill_duplicate_tmux_windows(session_name, agent_name)
 
         export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in env_vars.items())
@@ -116,6 +118,7 @@ class TmuxBackend(SpawnBackend):
             ]
             for arg in normalized_command[1:]:
                 final_command.extend(["--command-arg", arg])
+            final_command.extend(["--worker-instance-id", worker_instance_id])
             if prompt_file:
                 final_command.extend(["--startup-prompt-file", prompt_file])
 
@@ -274,6 +277,7 @@ class TmuxBackend(SpawnBackend):
             agent_id=agent_id,
             agent_type=agent_type,
             data_dir=env_vars.get("CLAWTEAM_DATA_DIR", ""),
+            worker_instance_id=worker_instance_id,
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"

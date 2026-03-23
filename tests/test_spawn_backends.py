@@ -6,7 +6,7 @@ import sys
 
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.subprocess_backend import SubprocessBackend
-from clawteam.spawn.registry import current_runtime_generation, get_agent_runtime_state
+from clawteam.spawn.registry import current_runtime_generation, get_agent_runtime_state, register_agent
 from clawteam.spawn.tmux_backend import (
     TmuxBackend,
     _confirm_workspace_trust_if_prompted,
@@ -58,6 +58,7 @@ def test_subprocess_backend_prepends_current_clawteam_bin_to_path(monkeypatch, t
     env = captured["env"]
     assert env["PATH"].startswith(f"{clawteam_bin.parent}:")
     assert env["CLAWTEAM_BIN"] == str(clawteam_bin)
+    assert env["CLAWTEAM_WORKER_INSTANCE_ID"].startswith("worker1-")
 
 
 def test_kill_duplicate_tmux_windows_keeps_lowest_index(monkeypatch):
@@ -568,3 +569,23 @@ def test_current_runtime_generation_ignores_mtime_only_changes(tmp_path):
     second = current_runtime_generation(runtime_root)
 
     assert first == second
+
+
+def test_register_agent_persists_worker_instance_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="subprocess",
+        pid=12345,
+        worker_instance_id="worker1-instance",
+    )
+
+    record = get_agent_runtime_state("demo", "worker1")
+    assert record in {"alive", "dead", "stale"}
+
+    from clawteam.spawn.registry import get_agent_record
+
+    assert get_agent_record("demo", "worker1")["worker_instance_id"] == "worker1-instance"
