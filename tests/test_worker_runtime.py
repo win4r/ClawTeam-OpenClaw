@@ -809,10 +809,50 @@ def test_subprocess_backend_wraps_openclaw_in_worker_runtime(monkeypatch, tmp_pa
 
     assert "spawned as subprocess" in message
     assert "worker run demo --agent qa1 --command openclaw" in captured["shell_cmd"]
+    assert "--worker-instance-id" in captured["shell_cmd"]
     assert "--startup-prompt-file" in captured["shell_cmd"]
+    assert captured["env"]["CLAWTEAM_WORKER_INSTANCE_ID"].startswith("qa1-")
 
 
-def test_detect_worker_replacement_requires_pid_change(monkeypatch):
+def test_detect_worker_replacement_same_instance_id_wins_over_pid_and_generation(monkeypatch):
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {
+            "pid": 123,
+            "runtime_generation": "old-generation",
+            "worker_instance_id": "qa1-same",
+        },
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "new-generation")
+
+    assert detect_worker_replacement(
+        team_name="demo",
+        agent_name="qa1",
+        parent_pid=456,
+        worker_instance_id="qa1-same",
+    ) is False
+
+
+def test_detect_worker_replacement_different_instance_id_triggers_replacement(monkeypatch):
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {
+            "pid": 123,
+            "runtime_generation": "same-generation",
+            "worker_instance_id": "qa1-new",
+        },
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "same-generation")
+
+    assert detect_worker_replacement(
+        team_name="demo",
+        agent_name="qa1",
+        parent_pid=123,
+        worker_instance_id="qa1-old",
+    ) is True
+
+
+def test_detect_worker_replacement_requires_pid_change_when_instance_id_missing(monkeypatch):
     monkeypatch.setattr(
         "clawteam.spawn.registry.get_agent_record",
         lambda *args, **kwargs: {"pid": 123, "runtime_generation": "old-generation"},
@@ -846,3 +886,62 @@ def test_clear_replaced_worker_unfinished_tasks_ignores_generation_mismatch_with
     assert cleared == []
     assert store.get(task.id) is not None
     assert store.get(task.id).status == TaskStatus.pending
+
+
+def test_clear_replaced_worker_unfinished_tasks_same_instance_id_keeps_tasks(
+    monkeypatch,
+    tmp_path,
+):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {
+            "pid": 999,
+            "runtime_generation": "old-generation",
+            "worker_instance_id": "qa1-same",
+        },
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "new-generation")
+
+    cleared = clear_replaced_worker_unfinished_tasks(
+        team_name="demo",
+        agent_name="qa1",
+        parent_pid=123,
+        worker_instance_id="qa1-same",
+    )
+
+    assert cleared == []
+    assert store.get(task.id) is not None
+    assert store.get(task.id).status == TaskStatus.pending
+
+
+def test_clear_replaced_worker_unfinished_tasks_different_instance_id_clears_tasks(
+    monkeypatch,
+    tmp_path,
+):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {
+            "pid": 999,
+            "runtime_generation": "same-generation",
+            "worker_instance_id": "qa1-new",
+        },
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "same-generation")
+
+    cleared = clear_replaced_worker_unfinished_tasks(
+        team_name="demo",
+        agent_name="qa1",
+        parent_pid=999,
+        worker_instance_id="qa1-old",
+    )
+
+    assert cleared == [task.id]
+    assert store.get(task.id) is None

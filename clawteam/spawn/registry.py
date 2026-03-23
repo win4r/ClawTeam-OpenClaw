@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Iterable
 
@@ -69,6 +70,13 @@ def current_runtime_generation(root: str | Path | None = None) -> str:
     )
 
 
+def new_worker_instance_id(agent_name: str) -> str:
+    """Create a unique runtime instance id for one spawned worker."""
+    token = uuid.uuid4().hex[:12]
+    safe_agent = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in agent_name).strip("-") or "agent"
+    return f"{safe_agent}-{token}"
+
+
 def register_agent(
     team_name: str,
     agent_name: str,
@@ -81,6 +89,7 @@ def register_agent(
     agent_type: str = "",
     data_dir: str = "",
     runtime_generation: str | None = None,
+    worker_instance_id: str | None = None,
 ) -> None:
     """Record spawn info for an agent (atomic write)."""
     resolved_data_dir = str(_normalize_data_dir(data_dir))
@@ -98,6 +107,7 @@ def register_agent(
         "agent_name": agent_name,
         "data_dir": resolved_data_dir,
         "runtime_generation": current_runtime_generation() if runtime_generation is None else runtime_generation,
+        "worker_instance_id": worker_instance_id or new_worker_instance_id(agent_name),
     }
     _save(path, registry)
 

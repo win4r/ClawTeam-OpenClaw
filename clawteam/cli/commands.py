@@ -1975,6 +1975,7 @@ def worker_run(
     command: str = typer.Option("openclaw", "--command", help="Underlying agent CLI (currently openclaw)"),
     command_arg: list[str] = typer.Option(None, "--command-arg", help="Extra args for the underlying agent CLI"),
     startup_prompt_file: str = typer.Option("", "--startup-prompt-file", help="Path to startup prompt text to prepend on each dispatched task"),
+    worker_instance_id: str = typer.Option("", "--worker-instance-id", help="Explicit worker instance id injected by the spawner"),
     poll_interval: float = typer.Option(2.0, "--poll-interval", help="Idle poll interval in seconds"),
     timeout_seconds: int = typer.Option(900, "--timeout-seconds", help="Underlying agent turn timeout in seconds"),
     once: bool = typer.Option(False, "--once", help="Run a single iteration and exit"),
@@ -2003,6 +2004,8 @@ def worker_run(
     os.environ.setdefault("CLAWTEAM_TEAM_NAME", identity.team_name or team)
     if identity.data_dir:
         os.environ.setdefault("CLAWTEAM_DATA_DIR", identity.data_dir)
+    if worker_instance_id:
+        os.environ["CLAWTEAM_WORKER_INSTANCE_ID"] = worker_instance_id
 
     base_command = [command] + list(command_arg or [])
     startup_prompt = load_startup_prompt(startup_prompt_file)
@@ -2010,6 +2013,7 @@ def worker_run(
         team_name=team,
         agent_name=agent_name,
         data_dir=os.environ.get("CLAWTEAM_DATA_DIR") or None,
+        worker_instance_id=os.environ.get("CLAWTEAM_WORKER_INSTANCE_ID") or None,
     )
     history = worker_loop(
         team_name=team,

@@ -141,12 +141,18 @@ def detect_worker_replacement(
     agent_name: str,
     data_dir: str | None = None,
     parent_pid: int | None = None,
+    worker_instance_id: str | None = None,
 ) -> bool:
     from clawteam.spawn.registry import current_runtime_generation, get_agent_record
 
     record = get_agent_record(team_name, agent_name, data_dir)
     if not record:
         return False
+
+    current_instance_id = str(worker_instance_id or os.environ.get("CLAWTEAM_WORKER_INSTANCE_ID") or "").strip()
+    recorded_instance_id = str(record.get("worker_instance_id") or "").strip()
+    if current_instance_id and recorded_instance_id:
+        return current_instance_id != recorded_instance_id
 
     recorded_pid = int(record.get("pid", 0) or 0)
     observed_parent = parent_pid if parent_pid is not None else os.getppid()
@@ -166,12 +172,14 @@ def clear_replaced_worker_unfinished_tasks(
     agent_name: str,
     data_dir: str | None = None,
     parent_pid: int | None = None,
+    worker_instance_id: str | None = None,
 ) -> list[str]:
     if not detect_worker_replacement(
         team_name=team_name,
         agent_name=agent_name,
         data_dir=data_dir,
         parent_pid=parent_pid,
+        worker_instance_id=worker_instance_id,
     ):
         return []
 
