@@ -84,7 +84,7 @@ class CostStore:
         tmp.write_text(
             event.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
         )
-        tmp.rename(path)
+        tmp.replace(path)
         return event
 
     def list_events(self, agent_name: str = "") -> list[CostEvent]:

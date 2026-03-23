@@ -64,7 +64,7 @@ class SessionStore:
         tmp.write_text(
             session.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
         )
-        tmp.rename(path)
+        tmp.replace(path)
         return session
 
     def load(self, agent_name: str) -> SessionState | None:

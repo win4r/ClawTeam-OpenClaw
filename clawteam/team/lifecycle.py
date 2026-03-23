@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from typing import Any
 
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import MessageType, get_data_dir
@@ -99,3 +100,42 @@ class LifecycleManager:
                 shutil.rmtree(d)
                 cleaned = True
         return cleaned
+
+
+def handle_agent_exit(team_name: str, agent_name: str) -> dict[str, Any] | None:
+    """Reset abandoned tasks and notify the leader when an agent exits."""
+    from clawteam.team.manager import TeamManager
+    from clawteam.team.models import TaskStatus
+    from clawteam.team.tasks import TaskStore
+
+    store = TaskStore(team_name)
+    tasks = store.list_tasks()
+
+    abandoned = [
+        t for t in tasks
+        if t.owner == agent_name and t.status == TaskStatus.in_progress
+    ]
+    if not abandoned:
+        return None
+
+    for task in abandoned:
+        store.update(task.id, status=TaskStatus.pending)
+
+    leader_name = TeamManager.get_leader_name(team_name)
+    if leader_name:
+        mailbox = MailboxManager(team_name)
+        task_subjects = ", ".join(task.subject for task in abandoned)
+        mailbox.send(
+            from_agent=agent_name,
+            to=leader_name,
+            content=(
+                f"Agent '{agent_name}' exited unexpectedly. "
+                f"Reset {len(abandoned)} task(s) to pending: {task_subjects}"
+            ),
+        )
+
+    return {
+        "status": "agent_exited",
+        "agent": agent_name,
+        "abandoned_tasks": [{"id": task.id, "subject": task.subject} for task in abandoned],
+    }

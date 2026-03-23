@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import signal
 import time
 
 from rich.columns import Columns
@@ -11,6 +10,8 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from clawteam.platform_compat import install_signal_handlers, restore_signal_handlers
 
 
 class BoardRenderer:
@@ -54,10 +55,7 @@ class BoardRenderer:
             nonlocal running
             running = False
 
-        old_sigint = signal.getsignal(signal.SIGINT)
-        old_sigterm = signal.getsignal(signal.SIGTERM)
-        signal.signal(signal.SIGINT, _handle_signal)
-        signal.signal(signal.SIGTERM, _handle_signal)
+        previous_handlers = install_signal_handlers(_handle_signal)
 
         try:
             with Live(console=self.console, refresh_per_second=1, screen=False) as live:
@@ -72,8 +70,7 @@ class BoardRenderer:
                     live.update(renderable)
                     time.sleep(interval)
         finally:
-            signal.signal(signal.SIGINT, old_sigint)
-            signal.signal(signal.SIGTERM, old_sigterm)
+            restore_signal_handlers(previous_handlers)
 
     # ------------------------------------------------------------------
     # Internal builders

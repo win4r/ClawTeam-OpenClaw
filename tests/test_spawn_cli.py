@@ -17,6 +17,18 @@ class ErrorBackend:
         return []
 
 
+class RecordingBackend:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def spawn(self, **kwargs):
+        self.calls.append(kwargs)
+        return "Agent 'alice' spawned"
+
+    def list_running(self):
+        return []
+
+
 def test_spawn_cli_exits_nonzero_and_rolls_back_failed_member(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -36,3 +48,37 @@ def test_spawn_cli_exits_nonzero_and_rolls_back_failed_member(monkeypatch, tmp_p
     assert result.exit_code == 1
     assert "Error: command 'nanobot' not found in PATH" in result.output
     assert [member.name for member in TeamManager.list_members("demo")] == ["leader"]
+
+
+def test_spawn_cli_treats_unknown_backend_token_as_command(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAWTEAM_DEFAULT_BACKEND", "subprocess")
+    TeamManager.create_team(
+        name="demo",
+        leader_name="leader",
+        leader_id="leader001",
+    )
+
+    calls = []
+    selected_backends = []
+
+    def fake_get_backend(backend):
+        selected_backends.append(backend)
+        return RecordingBackend(calls)
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", fake_get_backend)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["spawn", "codex", "--team", "demo", "--agent-name", "alice", "--no-workspace"],
+        env={
+            "CLAWTEAM_DATA_DIR": str(tmp_path),
+            "CLAWTEAM_DEFAULT_BACKEND": "subprocess",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    assert selected_backends == ["subprocess"]
+    assert calls[0]["command"] == ["codex"]
