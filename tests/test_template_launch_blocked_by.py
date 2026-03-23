@@ -8,7 +8,7 @@ from clawteam.team.tasks import TaskStore
 
 class DummyBackend:
     def spawn(self, **kwargs):
-        return {"ok": True, "agent": kwargs.get("agent_name")}
+        return f"spawned:{kwargs.get('agent_name')}"
 
     def list_running(self):
         return []
@@ -68,3 +68,67 @@ def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
     assert qa_reg.status.value == "blocked"
     assert review.status.value == "blocked"
     assert deliver.status.value == "blocked"
+
+
+def test_launch_template_instantiates_agent_prompt_and_task_description(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+
+    spawned_prompts: list[dict[str, str]] = []
+
+    class CaptureBackend(DummyBackend):
+        def spawn(self, **kwargs):
+            spawned_prompts.append({
+                "agent_name": kwargs.get("agent_name", ""),
+                "prompt": kwargs.get("prompt", ""),
+            })
+            return super().spawn(**kwargs)
+
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: CaptureBackend())
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    monkeypatch.setattr("clawteam.templates._USER_DIR", template_dir)
+    (template_dir / "instantiation-demo.toml").write_text(
+        """
+[template]
+name = "instantiation-demo"
+description = "Instantiation contract test"
+backend = "tmux"
+command = ["openclaw"]
+
+[template.leader]
+name = "leader"
+type = "leader"
+task = "Lead {goal} for {team_name}"
+
+[[template.agents]]
+name = "dev1"
+type = "general-purpose"
+task = "Implement {goal} as {agent_name} for {team_name}"
+
+[[template.tasks]]
+subject = "Build {goal}"
+owner = "dev1"
+description = "Ship {goal} for {team_name} via {agent_name}"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["launch", "instantiation-demo", "--team-name", "inst-demo", "--goal", "search", "--no-workspace"],
+        env={"CLAWTEAM_DATA_DIR": str(tmp_path)},
+    )
+
+    assert result.exit_code == 0, result.output
+
+    store = TaskStore("inst-demo")
+    tasks = {task.subject: task for task in store.list_tasks()}
+    assert "Build search" in tasks
+    assert tasks["Build search"].description == "Ship search for inst-demo via dev1"
+
+    dev_prompt = next(item["prompt"] for item in spawned_prompts if item["agent_name"] == "dev1")
+    assert "Implement search as dev1 for inst-demo" in dev_prompt
+    assert "{goal}" not in dev_prompt
+    assert "{team_name}" not in dev_prompt

@@ -28,6 +28,7 @@ from clawteam.services import (
     describe_release_action,
     execute_task_release,
     execute_task_update,
+    release_task_to_owner,
     wake_tasks_to_pending,
 )
 
@@ -2452,6 +2453,41 @@ def template_show(
 # Launch Command
 # ============================================================================
 
+def _bootstrap_entry_tasks(
+    *,
+    team_name: str,
+    store,
+    caller: str,
+    repo: str | None = None,
+) -> list[dict[str, object]]:
+    """Release root pending tasks so wake-gated workers can start the workflow."""
+    bootstrap_results: list[dict[str, object]] = []
+    for task in store.list_tasks():
+        if task.status.value != "pending" or task.blocked_by or not task.owner:
+            continue
+        release = release_task_to_owner(
+            team_name,
+            task,
+            caller=caller,
+            message=(
+                f"Bootstrap entry task {task.id}. This is a launch-time first-hop release; "
+                "start now and follow the workflow as declared."
+            ),
+            respawn=True,
+            repo=repo,
+            release_notifier=notify_task_release,
+        )
+        bootstrap_results.append(
+            {
+                "taskId": task.id,
+                "subject": task.subject,
+                "owner": task.owner,
+                "release": release,
+            }
+        )
+    return bootstrap_results
+
+
 @app.command("launch")
 def launch_team(
     template: str = typer.Argument(..., help="Template name (e.g., hedge-fund)"),
@@ -2469,7 +2505,7 @@ def launch_team(
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
-    from clawteam.templates import TemplateDef, load_template, render_task
+    from clawteam.templates import TemplateDef, instantiate_template, load_template
 
     # 1. Load template
     try:
@@ -2480,6 +2516,8 @@ def launch_team(
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
+    instantiated = instantiate_template(tmpl, goal=goal, team_name=t_name)
+    tmpl = instantiated.template
     be_name = backend or tmpl.backend
     cmd = command_override or tmpl.command
 
@@ -2565,14 +2603,6 @@ def launch_team(
         a_id = agent_ids[agent.name]
         a_cmd = agent.command or cmd
 
-        # Variable substitution
-        rendered = render_task(
-            agent.task,
-            goal=goal,
-            team_name=t_name,
-            agent_name=agent.name,
-        )
-
         # Workspace
         cwd = None
         ws_branch = ""
@@ -2590,7 +2620,7 @@ def launch_team(
             agent_type=agent.type,
             team_name=t_name,
             leader_name=tmpl.leader.name,
-            task=rendered,
+            task=agent.task,
             user=_os.environ.get("CLAWTEAM_USER", ""),
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
@@ -2633,6 +2663,17 @@ def launch_team(
             table.add_row(s["name"], s["type"], s["id"])
         console.print(table)
         console.print()
+        bootstrap = _data.get("bootstrap") or []
+        if bootstrap:
+            console.print("[bold]Bootstrap:[/bold]")
+            for item in bootstrap:
+                release = item.get("release") or {}
+                owner = item.get("owner", "")
+                task_id = item.get("taskId", "")
+                respawned = " respawned" if release.get("respawned") else ""
+                sent = " wake-sent" if release.get("messageSent") else " wake-skipped"
+                console.print(f"  {task_id} -> {owner}:{sent}{respawned}")
+            console.print()
         if be_name == "tmux":
             console.print(f"[bold]Attach:[/bold] tmux attach -t clawteam-{t_name}")
         console.print(f"[bold]Board:[/bold]  clawteam board show {t_name}")

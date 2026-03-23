@@ -50,6 +50,16 @@ class TemplateDef(BaseModel):
     tasks: list[TaskDef] = []
 
 
+class TemplateInstantiationContext(BaseModel):
+    goal: str = ""
+    team_name: str = ""
+
+
+class InstantiatedTemplate(BaseModel):
+    template: TemplateDef
+    context: TemplateInstantiationContext
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -72,6 +82,55 @@ class _SafeDict(dict):
 def render_task(task: str, **variables: str) -> str:
     """Replace {goal}, {team_name}, {agent_name} etc. in task text."""
     return task.format_map(_SafeDict(**variables))
+
+
+def instantiate_template(
+    tmpl: TemplateDef,
+    *,
+    goal: str = "",
+    team_name: str = "",
+) -> InstantiatedTemplate:
+    """Resolve template-authored placeholders into launch-ready data.
+
+    Parsing/loading returns the authored template definition unchanged.
+    Instantiation is the explicit boundary that produces concrete launch-time
+    agent prompts and persisted task records.
+    """
+
+    def _render(text: str, *, agent_name: str = "") -> str:
+        return render_task(
+            text,
+            goal=goal,
+            team_name=team_name,
+            agent_name=agent_name,
+        )
+
+    leader = tmpl.leader.model_copy(update={
+        "task": _render(tmpl.leader.task, agent_name=tmpl.leader.name),
+    })
+    agents = [
+        agent.model_copy(update={
+            "task": _render(agent.task, agent_name=agent.name),
+        })
+        for agent in tmpl.agents
+    ]
+    tasks = [
+        task.model_copy(update={
+            "subject": _render(task.subject, agent_name=task.owner),
+            "description": _render(task.description, agent_name=task.owner),
+        })
+        for task in tmpl.tasks
+    ]
+
+    instantiated = tmpl.model_copy(update={
+        "leader": leader,
+        "agents": agents,
+        "tasks": tasks,
+    })
+    return InstantiatedTemplate(
+        template=instantiated,
+        context=TemplateInstantiationContext(goal=goal, team_name=team_name),
+    )
 
 
 # ---------------------------------------------------------------------------

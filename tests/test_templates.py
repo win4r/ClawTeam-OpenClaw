@@ -4,9 +4,12 @@ import pytest
 
 from clawteam.templates import (
     AgentDef,
+    InstantiatedTemplate,
     TaskDef,
     TemplateDef,
+    TemplateInstantiationContext,
     _SafeDict,
+    instantiate_template,
     list_templates,
     load_template,
     render_task,
@@ -42,6 +45,43 @@ class TestSafeDict:
         assert d["a"] == "1"
         # missing key wrapped back into braces
         assert "{missing}".format_map(d) == "{missing}"
+
+
+class TestInstantiateTemplate:
+    def test_instantiates_agent_and_task_fields(self):
+        tmpl = TemplateDef(
+            name="delivery",
+            leader=AgentDef(name="leader", task="Lead {goal} for {team_name}"),
+            agents=[AgentDef(name="dev1", task="Implement {goal} as {agent_name}")],
+            tasks=[
+                TaskDef(
+                    subject="Build {goal}",
+                    description="Ship {goal} for {team_name} via {agent_name}",
+                    owner="dev1",
+                )
+            ],
+        )
+
+        instantiated = instantiate_template(tmpl, goal="search", team_name="alpha")
+
+        assert isinstance(instantiated, InstantiatedTemplate)
+        assert instantiated.context == TemplateInstantiationContext(goal="search", team_name="alpha")
+        assert instantiated.template.leader.task == "Lead search for alpha"
+        assert instantiated.template.agents[0].task == "Implement search as dev1"
+        assert instantiated.template.tasks[0].subject == "Build search"
+        assert instantiated.template.tasks[0].description == "Ship search for alpha via dev1"
+
+    def test_keeps_unknown_placeholders_intact(self):
+        tmpl = TemplateDef(
+            name="partial",
+            leader=AgentDef(name="leader"),
+            tasks=[TaskDef(subject="Build {goal}", description="Keep {unknown}", owner="dev1")],
+        )
+
+        instantiated = instantiate_template(tmpl, goal="search", team_name="alpha")
+
+        assert instantiated.template.tasks[0].subject == "Build search"
+        assert instantiated.template.tasks[0].description == "Keep {unknown}"
 
 
 class TestModels:
