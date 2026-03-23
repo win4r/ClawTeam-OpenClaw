@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ DEFAULT_POLL_INTERVAL = 2.0
 DEFAULT_AGENT_TIMEOUT = 900
 DEFAULT_PROGRESS_STALL_TIMEOUT = 120.0
 DEFAULT_PROGRESS_POLL_INTERVAL = 1.0
+DEFAULT_POST_EXIT_SETTLE_TIMEOUT = 30.0
+DEFAULT_POST_EXIT_POLL_INTERVAL = 1.0
+DEFAULT_POST_EXIT_PROGRESS_GRACE = 5.0
 
 
 def load_startup_prompt(path: str | None) -> str:
@@ -162,6 +166,10 @@ def clear_replaced_worker_unfinished_tasks(
     return [task.id for task in cleared]
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _session_transcript_path(session_key: str) -> Path:
     return Path.home() / ".openclaw" / "agents" / "main" / "sessions" / f"{session_key}.jsonl"
 
@@ -246,6 +254,43 @@ def _run_agent_with_progress_watchdog(
         time.sleep(max(progress_poll_interval_seconds, 0.05))
 
 
+def _wait_for_post_exit_settle(
+    *,
+    team_name: str,
+    task_id: str,
+    agent_name: str,
+    session_key: str,
+    settle_timeout_seconds: float,
+    poll_interval_seconds: float,
+    progress_grace_seconds: float,
+) -> tuple[Any | None, bool]:
+    store = TaskStore(team_name)
+    started_at = time.monotonic()
+    last_progress_at = started_at
+    last_marker = _transcript_progress_marker(session_key)
+
+    while True:
+        task = store.get(task_id)
+        if task is None:
+            return None, False
+        if task.status != TaskStatus.in_progress or task.locked_by != agent_name:
+            return task, True
+
+        now = time.monotonic()
+        marker = _transcript_progress_marker(session_key)
+        if marker != last_marker:
+            last_marker = marker
+            last_progress_at = now
+
+        if settle_timeout_seconds > 0 and now - started_at >= settle_timeout_seconds:
+            return task, False
+
+        if progress_grace_seconds > 0 and now - last_progress_at >= progress_grace_seconds:
+            return task, False
+
+        time.sleep(max(poll_interval_seconds, 0.05))
+
+
 def _fail_claimed_task(
     *,
     team_name: str,
@@ -253,19 +298,27 @@ def _fail_claimed_task(
     task_id: str,
     reason: str,
     evidence: str,
+    session_key: str | None = None,
+    stall_phase: str | None = None,
 ) -> dict[str, Any]:
     store = TaskStore(team_name)
+    failure_metadata = {
+        "failure_kind": "complex",
+        "failure_root_cause": reason,
+        "failure_evidence": evidence,
+        "failure_recommended_next_owner": "leader",
+        "failure_recommended_action": "Inspect runtime failure and decide whether to retry or reroute.",
+        "watchdog_decision_at": _now_iso(),
+    }
+    if session_key:
+        failure_metadata["session_key"] = session_key
+    if stall_phase:
+        failure_metadata["stall_phase"] = stall_phase
     task = store.update(
         task_id,
         status=TaskStatus.failed,
         caller=agent_name,
-        metadata={
-            "failure_kind": "complex",
-            "failure_root_cause": reason,
-            "failure_evidence": evidence,
-            "failure_recommended_next_owner": "leader",
-            "failure_recommended_action": "Inspect runtime failure and decide whether to retry or reroute.",
-        },
+        metadata=failure_metadata,
     )
     failure_notice = None
     if task is not None:
@@ -402,6 +455,8 @@ def run_worker_iteration(
             task_id=claimed.id,
             reason="worker runtime dispatch failed",
             evidence=repr(exc),
+            session_key=session_key,
+            stall_phase="dispatch",
         )
         failed.update({
             "messages": message_count,
@@ -424,6 +479,8 @@ def run_worker_iteration(
             task_id=claimed.id,
             reason="worker agent turn failed",
             evidence=evidence,
+            session_key=session_key,
+            stall_phase="agent_exit_nonzero",
         )
         failed.update({
             "messages": message_count,
@@ -441,33 +498,62 @@ def run_worker_iteration(
         and refreshed.status == TaskStatus.in_progress
         and refreshed.locked_by == agent_name
     ):
-        transcript_tail = _read_transcript_tail(session_key)
-        evidence_parts = [
-            "openclaw agent returned success but task remained in_progress and locked to the same worker",
-            f"session_key={session_key}",
-        ]
-        if result.stderr:
-            evidence_parts.append(f"stderr: {result.stderr.strip()}")
-        if result.stdout:
-            evidence_parts.append(f"stdout: {result.stdout.strip()}")
-        evidence_parts.append(f"transcript_tail:\n{transcript_tail}")
-        failed = _fail_claimed_task(
-            team_name=team_name,
-            agent_name=agent_name,
-            task_id=claimed.id,
-            reason="worker agent turn stalled without terminal task update",
-            evidence="\n".join(evidence_parts),
+        settle_timeout_seconds = float(
+            env.get("CLAWTEAM_WORKER_POST_EXIT_SETTLE_TIMEOUT", DEFAULT_POST_EXIT_SETTLE_TIMEOUT)
         )
-        failed.update({
-            "messages": message_count,
-            "acked": acked_count,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "command": command,
-            "sessionKey": session_key,
-        })
-        return failed
+        settle_poll_interval_seconds = float(
+            env.get("CLAWTEAM_WORKER_POST_EXIT_POLL_INTERVAL", DEFAULT_POST_EXIT_POLL_INTERVAL)
+        )
+        settle_progress_grace_seconds = float(
+            env.get("CLAWTEAM_WORKER_POST_EXIT_PROGRESS_GRACE", DEFAULT_POST_EXIT_PROGRESS_GRACE)
+        )
+        refreshed, settled = _wait_for_post_exit_settle(
+            team_name=team_name,
+            task_id=claimed.id,
+            agent_name=agent_name,
+            session_key=session_key,
+            settle_timeout_seconds=settle_timeout_seconds,
+            poll_interval_seconds=settle_poll_interval_seconds,
+            progress_grace_seconds=settle_progress_grace_seconds,
+        )
+
+        if (
+            refreshed is not None
+            and refreshed.status == TaskStatus.in_progress
+            and refreshed.locked_by == agent_name
+        ):
+            transcript_tail = _read_transcript_tail(session_key)
+            evidence_parts = [
+                "openclaw agent returned success but task remained in_progress and locked to the same worker",
+                f"session_key={session_key}",
+                f"post_exit_settled={settled}",
+                f"post_exit_settle_timeout_seconds={settle_timeout_seconds}",
+                f"post_exit_progress_grace_seconds={settle_progress_grace_seconds}",
+            ]
+            if result.stderr:
+                evidence_parts.append(f"stderr: {result.stderr.strip()}")
+            if result.stdout:
+                evidence_parts.append(f"stdout: {result.stdout.strip()}")
+            evidence_parts.append(f"transcript_tail:\n{transcript_tail}")
+            failed = _fail_claimed_task(
+                team_name=team_name,
+                agent_name=agent_name,
+                task_id=claimed.id,
+                reason="worker agent turn stalled without terminal task update",
+                evidence="\n".join(evidence_parts),
+                session_key=session_key,
+                stall_phase="post_exit_without_terminal_update",
+            )
+            failed.update({
+                "messages": message_count,
+                "acked": acked_count,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "command": command,
+                "sessionKey": session_key,
+            })
+            return failed
 
     return {
         "status": "dispatched",
