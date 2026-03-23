@@ -255,6 +255,8 @@ bash scripts/install-openclaw.sh
 | `exec-approvals.json not found` | OpenClaw never ran | Run `openclaw` once to generate config, then retry Step 5 |
 | Agents block on permission prompts | Exec approvals security is "full" | Run Step 5 to switch to "allowlist" |
 | `pip install -e .` fails | Missing build deps | Run `pip install hatchling` first |
+| OpenClaw browser fails as root (`Running as root without --no-sandbox`) | Chromium sandbox restriction | In `~/.openclaw/openclaw.json` set `browser.noSandbox: true`, then `openclaw gateway restart` |
+| Agents exit with 429 / rate limit and tasks reset to pending | Provider rate limit; no backoff | Reduce concurrency, add retry/backoff (leader monitor loop), and ensure agents report `BLOCKED <task-id>: 429 ...` via inbox |
 
 ---
 

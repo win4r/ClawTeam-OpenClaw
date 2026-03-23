@@ -1107,6 +1107,7 @@ def task_wait(
     timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to wait (default: no limit)"),
 ):
     """Block until all tasks in a team are completed."""
+
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
@@ -1237,6 +1238,82 @@ def task_wait(
 
     if result.status != "completed":
         raise typer.Exit(1)
+
+
+@task_app.command("monitor")
+def task_monitor(
+    team: str = typer.Argument(..., help="Team name"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Leader inbox to monitor (default: leader from team config)"),
+    poll_interval: float = typer.Option(5.0, "--poll-interval", "-p", help="Seconds between polls"),
+    timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to monitor (default: no limit)"),
+    ping_after: float = typer.Option(30.0, "--ping-after", help="Seconds a task may stay pending before leader pings owner"),
+    nudge_after: float = typer.Option(180.0, "--nudge-after", help="Seconds a task may stay in_progress before leader nudges owner"),
+):
+    """Leader mode: monitor leader inbox + ping/nudge owners to keep the swarm moving.
+
+    This does NOT change task status automatically; it only coordinates via inbox messages
+    and surfaces progress. Combine with your normal spawn workflow.
+    """
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
+    from clawteam.team.tasks import TaskStore
+    from clawteam.team.leader_loop import LeaderLoop, LeaderLoopConfig
+
+    # Resolve agent name for inbox monitoring
+    agent_name = agent
+    if not agent_name:
+        agent_name = TeamManager.get_leader_inbox(team)
+    if not agent_name:
+        from clawteam.identity import AgentIdentity
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, identity.agent_name, identity.user)
+    elif agent:
+        from clawteam.identity import AgentIdentity
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, agent_name, identity.user)
+
+    mailbox = MailboxManager(team)
+    store = TaskStore(team)
+
+    def _on_message(msg):
+        ts = msg.timestamp
+        if ts and "T" in ts:
+            ts = ts.split("T")[1][:8]
+        from_agent = msg.from_agent or "?"
+        content = (msg.content or "").strip()
+        if _json_output:
+            print(json.dumps({"event": "message", "from": from_agent, "content": content, "timestamp": msg.timestamp}), flush=True)
+        else:
+            console.print(f"  {ts}  message from={from_agent}: {content}")
+
+    def _on_progress(completed, total, in_progress, pending, blocked):
+        if _json_output:
+            print(json.dumps({"event": "progress", "completed": completed, "total": total, "in_progress": in_progress, "pending": pending, "blocked": blocked}), flush=True)
+        else:
+            console.print(f"  {completed}/{total} completed  ({in_progress} in progress, {pending} pending, {blocked} blocked)")
+
+    if not _json_output:
+        timeout_str = f"{timeout:.0f}s" if timeout else "none"
+        console.print(f"Leader monitor for team '[cyan]{team}[/cyan]'...")
+        console.print(
+            f"  Inbox: {agent_name}  |  Poll: {poll_interval}s  |  Timeout: {timeout_str}\n"
+            f"  ping_after={ping_after}s  |  nudge_after={nudge_after}s"
+        )
+        console.print()
+
+    loop = LeaderLoop(
+        team_name=team,
+        leader_inbox=agent_name,
+        mailbox=mailbox,
+        task_store=store,
+        cfg=LeaderLoopConfig(
+            poll_interval=poll_interval,
+            ping_after=ping_after,
+            nudge_after=nudge_after,
+            timeout=timeout,
+        ),
+    )
+    loop.run(on_message=_on_message, on_progress=_on_progress)
 
 
 def _print_incomplete_tasks(task_details: list[dict]):
