@@ -23,17 +23,12 @@ class LeaderLoopConfig:
     ping_after: float = 30.0
     nudge_after: float = 180.0
     timeout: float | None = None
-    auto_respawn: bool = False
-    respawn_backoff_seconds: float = 30.0
-    max_respawns_per_agent: int = 2
 
 
 @dataclass
 class LeaderLoopState:
     last_ping: dict[str, float] = field(default_factory=dict)   # task_id -> ts
     last_nudge: dict[str, float] = field(default_factory=dict)  # task_id -> ts
-    respawn_count: dict[str, int] = field(default_factory=dict) # agent -> count
-    last_respawn_at: dict[str, float] = field(default_factory=dict)
 
 
 class LeaderLoop:
@@ -59,11 +54,16 @@ class LeaderLoop:
     def run(self, on_message=None, on_progress=None, on_agent_dead=None) -> None:
         self._running = True
         last_summary = ""
+        first_iteration = True
 
         while self._running:
-            # Timeout
-            if self.cfg.timeout is not None and (time.monotonic() - self._start) >= self.cfg.timeout:
-                return
+            # Always run at least once
+            if first_iteration:
+                first_iteration = False
+            else:
+                # Timeout
+                if self.cfg.timeout is not None and (time.monotonic() - self._start) >= self.cfg.timeout:
+                    return
 
             # 1) Drain inbox
             msgs = self.mailbox.receive(self.leader_inbox, limit=50)
@@ -141,6 +141,10 @@ def _age_seconds(t: TaskItem, started: bool = False) -> float:
     if not ts:
         return 0.0
     try:
+        # Handle both datetime objects and ISO format strings
+        if isinstance(ts, str):
+            from datetime import datetime
+            ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
         return time.time() - ts.timestamp()
     except Exception:
         return 0.0

@@ -55,7 +55,6 @@ def build_agent_prompt(
         "- When you finish all tasks, send a summary to the leader:",
         f'  `clawteam inbox send {team_name} {leader_name} "DONE: <brief summary>"`',
         f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
-        f"- Before finishing, save your session: `clawteam session save {team_name} --session-id <id>`",
         "",
     ])
     return "\n".join(lines)
