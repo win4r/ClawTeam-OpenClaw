@@ -121,6 +121,7 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
     assert result["acked"] == 1
     assert result["executionId"].startswith(f"{task.id}-exec-")
     assert result["executionSeq"] == 1
+    assert result["claimCase"] == "claim_execution"
     assert called["command"][:2] == ["openclaw", "agent"]
     assert "--session-id" in called["command"]
     assert f"clawteam-demo-qa1" in called["command"]
@@ -337,7 +338,8 @@ def test_task_store_rejects_stale_execution_terminal_writeback(monkeypatch, tmp_
     store = TaskStore("demo")
     task = store.create(subject="Fix thing", description="Real task", owner="qa1")
     first = store.claim_execution(task.id, caller="qa1")
-    stale_execution_id = first.active_execution_id
+    stale_execution_id = first.task.active_execution_id
+    assert first.case_name == "claim_execution"
     store.reopen_task(task.id, caller="qa1")
     store.claim_execution(task.id, caller="qa1")
 
@@ -362,12 +364,14 @@ def test_task_store_reopen_clears_active_execution(monkeypatch, tmp_path):
 
     reopened = store.reopen_task(task.id, caller="qa1")
 
-    assert claimed.active_execution_id != ""
-    assert reopened.status == TaskStatus.pending
-    assert reopened.active_execution_id == ""
-    assert reopened.active_execution_owner == ""
-    assert reopened.metadata["transition_log"][-1]["case"] == "reopen_task"
-    assert reopened.metadata["transition_log"][-1]["accepted"] is True
+    assert claimed.task.active_execution_id != ""
+    assert claimed.case_name == "claim_execution"
+    assert reopened.case_name == "reopen_task"
+    assert reopened.task.status == TaskStatus.pending
+    assert reopened.task.active_execution_id == ""
+    assert reopened.task.active_execution_owner == ""
+    assert reopened.task.metadata["transition_log"][-1]["case"] == "reopen_task"
+    assert reopened.task.metadata["transition_log"][-1]["accepted"] is True
 
 
 

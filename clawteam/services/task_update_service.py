@@ -21,7 +21,7 @@ from clawteam.task.transition import (
     plan_watchdog_failed_completion_recovery,
 )
 from clawteam.team.models import TaskItem, TaskStatus
-from clawteam.team.tasks import TaskStore
+from clawteam.team.tasks import TaskPatch, TaskStore, TransitionApplyResult
 
 
 TaskUpdateValidationError = TaskTransitionValidationError
@@ -86,6 +86,11 @@ class TaskUpdateResult:
     plan: TaskUpdatePlan
     effects: TaskUpdateEffects
     transition_case: str | None = None
+    apply_result: TransitionApplyResult | None = None
+
+    def __post_init__(self) -> None:
+        if self.transition_case is None and self.apply_result is not None:
+            object.__setattr__(self, "transition_case", self.apply_result.case_name)
 
 
 @dataclass(frozen=True)
@@ -174,6 +179,150 @@ def execute_task_update_effects(
     )
 
 
+def _build_generic_task_patch(
+    *,
+    request: TaskUpdateRequest,
+    metadata_to_apply: dict[str, Any] | None,
+    metadata_keys_to_remove: list[str] | None,
+) -> TaskPatch:
+    return TaskPatch(
+        owner=request.owner,
+        subject=request.subject,
+        description=request.description,
+        add_blocks=request.add_blocks,
+        add_blocked_by=request.add_blocked_by,
+        metadata=metadata_to_apply,
+        metadata_keys_to_remove=metadata_keys_to_remove,
+    )
+
+
+def _decision_to_payload(decision: Any, default_case_name: str) -> dict[str, Any]:
+    if hasattr(decision, "case_name"):
+        return {
+            "case_name": decision.case_name,
+            "accepted": decision.accepted,
+            "rejection_reason": decision.rejection_reason,
+        }
+    if isinstance(decision, dict):
+        return {
+            "case_name": decision.get("case_name", default_case_name),
+            "accepted": decision.get("accepted", True),
+            "rejection_reason": decision.get("rejection_reason"),
+        }
+    return {
+        "case_name": default_case_name,
+        "accepted": True,
+        "rejection_reason": None,
+    }
+
+
+def _terminal_decision_for_apply(
+    *,
+    execution_decision: Any,
+    recovery_decision: Any,
+) -> dict[str, Any]:
+    if recovery_decision is not None and getattr(recovery_decision, "accepted", False):
+        return _decision_to_payload(
+            recovery_decision,
+            default_case_name="recover_watchdog_failed_completion",
+        )
+    if execution_decision is not None:
+        return _decision_to_payload(
+            execution_decision,
+            default_case_name="terminal_writeback_without_execution_scope",
+        )
+    return {
+        "case_name": "terminal_writeback_without_execution_scope",
+        "accepted": True,
+        "rejection_reason": None,
+    }
+
+
+def _apply_terminal_transition(
+    *,
+    ctx: TaskUpdateContext,
+    task_id: str,
+    caller: str,
+    status: TaskStatus,
+    execution_id: str | None,
+    decision: Any,
+    metadata_to_apply: dict[str, Any] | None,
+    metadata_keys_to_remove: list[str] | None,
+    force: bool,
+) -> TransitionApplyResult | None:
+    return ctx.store.apply_transition_decision(
+        task_id,
+        decision=_decision_to_payload(
+            decision,
+            default_case_name="terminal_writeback_without_execution_scope",
+        ),
+        status=status,
+        caller=caller,
+        execution_id=execution_id,
+        metadata=metadata_to_apply,
+        metadata_keys_to_remove=metadata_keys_to_remove,
+        force=force,
+    )
+
+
+def _apply_reopen_transition(
+    *,
+    ctx: TaskUpdateContext,
+    task_id: str,
+    caller: str,
+    force: bool,
+    decision: Any,
+) -> TransitionApplyResult | None:
+    return ctx.store.apply_transition_decision(
+        task_id,
+        decision=_decision_to_payload(decision, default_case_name="reopen_task"),
+        status=TaskStatus.pending,
+        caller=caller,
+        force=force,
+    )
+
+
+def _apply_generic_patch(
+    *,
+    ctx: TaskUpdateContext,
+    task_id: str,
+    caller: str,
+    force: bool,
+    patch: TaskPatch,
+) -> TaskItem | None:
+    return ctx.store.apply_patch(
+        task_id,
+        patch=patch,
+        caller=caller,
+        force=force,
+    )
+
+
+def _apply_generic_status_update(
+    *,
+    ctx: TaskUpdateContext,
+    task_id: str,
+    caller: str,
+    request: TaskUpdateRequest,
+    metadata_to_apply: dict[str, Any] | None,
+    metadata_keys_to_remove: list[str] | None,
+) -> TaskItem | None:
+    return ctx.store.update(
+        task_id,
+        status=request.status,
+        owner=request.owner,
+        subject=request.subject,
+        description=request.description,
+        add_blocks=request.add_blocks,
+        add_blocked_by=request.add_blocked_by,
+        metadata=metadata_to_apply,
+        metadata_keys_to_remove=metadata_keys_to_remove,
+        execution_id=request.execution_id,
+        caller=caller,
+        force=request.force,
+    )
+
+
 def execute_task_update(
     *,
     task_id: str,
@@ -202,8 +351,8 @@ def execute_task_update(
         all_tasks=ctx.store.list_tasks(),
     )
 
-    transition_case: str | None = None
     metadata_keys_to_remove: list[str] | None = None
+    apply_result: TransitionApplyResult | None = None
     execution_decision = plan_terminal_writeback(
         existing=existing,
         event=TerminalWritebackEvent(
@@ -223,16 +372,12 @@ def execute_task_update(
         raise RuntimeError(
             f"terminal writeback rejected: {execution_decision.rejection_reason}"
         )
-    if execution_decision and execution_decision.accepted:
-        transition_case = execution_decision.case_name
-
     recovery_decision = plan_watchdog_failed_completion_recovery(
         existing=existing,
         caller=caller,
         requested_status=request.status,
     )
     if recovery_decision and recovery_decision.accepted:
-        transition_case = recovery_decision.case_name
         metadata_keys_to_remove = recovery_decision.metadata_keys_to_remove
         metadata = dict(plan.metadata_to_apply or {})
         metadata.update(recovery_decision.metadata_to_apply or {})
@@ -242,27 +387,28 @@ def execute_task_update(
             failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
+    generic_patch = _build_generic_task_patch(
+        request=request,
+        metadata_to_apply=plan.metadata_to_apply,
+        metadata_keys_to_remove=metadata_keys_to_remove,
+    )
+
     if request.status in (TaskStatus.completed, TaskStatus.failed):
-        decision = execution_decision or {
-            "case_name": transition_case or "terminal_writeback_without_execution_scope",
-            "accepted": True,
-        }
-        if hasattr(decision, "case_name"):
-            decision = {
-                "case_name": decision.case_name,
-                "accepted": decision.accepted,
-                "rejection_reason": decision.rejection_reason,
-            }
-        task = ctx.store.apply_transition_decision(
-            task_id,
-            decision=decision,
-            status=request.status,
+        apply_result = _apply_terminal_transition(
+            ctx=ctx,
+            task_id=task_id,
             caller=caller,
+            status=request.status,
             execution_id=request.execution_id,
-            metadata=plan.metadata_to_apply,
+            decision=_terminal_decision_for_apply(
+                execution_decision=execution_decision,
+                recovery_decision=recovery_decision,
+            ),
+            metadata_to_apply=plan.metadata_to_apply,
             metadata_keys_to_remove=metadata_keys_to_remove,
             force=request.force,
         )
+        task = apply_result.task if apply_result is not None else None
     elif request.status == TaskStatus.pending and existing.status != TaskStatus.pending:
         reopen_decision = plan_reopen_task(existing=existing, event=ReopenTaskEvent(caller=caller))
         if not reopen_decision.accepted:
@@ -273,50 +419,38 @@ def execute_task_update(
                 rejection_reason=reopen_decision.rejection_reason,
             )
             raise RuntimeError(f"reopen rejected: {reopen_decision.rejection_reason}")
-        task = ctx.store.apply_transition_decision(
-            task_id,
-            decision={"case_name": reopen_decision.case_name, "accepted": True},
-            status=TaskStatus.pending,
+        apply_result = _apply_reopen_transition(
+            ctx=ctx,
+            task_id=task_id,
             caller=caller,
             force=request.force,
+            decision=reopen_decision,
         )
-        if any(
-            value is not None
-            for value in (
-                request.owner,
-                request.subject,
-                request.description,
-                request.add_blocks,
-                request.add_blocked_by,
-                plan.metadata_to_apply,
-            )
-        ):
-            task = ctx.store.update(
-                task_id,
-                owner=request.owner,
-                subject=request.subject,
-                description=request.description,
-                add_blocks=request.add_blocks,
-                add_blocked_by=request.add_blocked_by,
-                metadata=plan.metadata_to_apply,
-                metadata_keys_to_remove=metadata_keys_to_remove,
+        task = apply_result.task if apply_result is not None else None
+        if not generic_patch.is_empty():
+            task = _apply_generic_patch(
+                ctx=ctx,
+                task_id=task_id,
+                patch=generic_patch,
                 caller=caller,
                 force=request.force,
             )
-    else:
-        task = ctx.store.update(
-            task_id,
-            status=request.status,
-            owner=request.owner,
-            subject=request.subject,
-            description=request.description,
-            add_blocks=request.add_blocks,
-            add_blocked_by=request.add_blocked_by,
-            metadata=plan.metadata_to_apply,
-            metadata_keys_to_remove=metadata_keys_to_remove,
-            execution_id=request.execution_id,
+    elif request.status is None:
+        task = _apply_generic_patch(
+            ctx=ctx,
+            task_id=task_id,
+            patch=generic_patch,
             caller=caller,
             force=request.force,
+        )
+    else:
+        task = _apply_generic_status_update(
+            ctx=ctx,
+            task_id=task_id,
+            caller=caller,
+            request=request,
+            metadata_to_apply=plan.metadata_to_apply,
+            metadata_keys_to_remove=metadata_keys_to_remove,
         )
 
     effects = execute_task_update_effects(
@@ -329,4 +463,4 @@ def execute_task_update(
         failed_targets_to_wake=plan.failed_targets_to_wake,
     )
 
-    return TaskUpdateResult(task=task, plan=plan, effects=effects, transition_case=transition_case)
+    return TaskUpdateResult(task=task, plan=plan, effects=effects, apply_result=apply_result)

@@ -328,6 +328,7 @@ def _fail_claimed_task(
         failure_metadata["stall_phase"] = stall_phase
     existing = store.get(task_id)
     task = None
+    apply_result = None
     if existing is not None:
         decision = plan_terminal_writeback(
             existing=existing,
@@ -349,7 +350,7 @@ def _fail_claimed_task(
             applied_case = "worker_runtime_failed_closed"
             if decision and decision.accepted:
                 applied_case = decision.case_name
-            task = store.accept_terminal_writeback(
+            apply_result = store.accept_terminal_writeback(
                 task_id,
                 status=TaskStatus.failed,
                 caller=agent_name,
@@ -358,6 +359,7 @@ def _fail_claimed_task(
                 case_name=applied_case,
             )
     failure_notice = None
+    task = apply_result.task if apply_result is not None else None
     if task is not None:
         failure_notice = notify_task_failure(team_name, task, agent_name)
     return {
@@ -451,7 +453,7 @@ def run_worker_iteration(
         }
 
     try:
-        claimed = store.apply_transition_decision(
+        claim_result = store.apply_transition_decision(
             task.id,
             decision={"case_name": claim_decision.case_name, "accepted": True},
             status=TaskStatus.in_progress,
@@ -465,7 +467,7 @@ def run_worker_iteration(
             "taskId": task.id,
         }
 
-    if claimed is None:
+    if claim_result is None:
         return {
             "status": "missing",
             "messages": message_count,
@@ -480,7 +482,7 @@ def run_worker_iteration(
         team_name=team_name,
         agent_name=agent_name,
         leader_name=leader_name,
-        task=claimed,
+        task=claim_result.task,
         startup_prompt=startup_prompt,
         workspace_dir=workspace_dir,
         workspace_branch=workspace_branch,
@@ -493,6 +495,7 @@ def run_worker_iteration(
         timeout_seconds=timeout_seconds,
     )
     env = os.environ.copy()
+    claimed = claim_result.task
     env["CLAWTEAM_TASK_ID"] = claimed.id
     env["CLAWTEAM_TASK_EXECUTION_ID"] = claimed.active_execution_id
     env["CLAWTEAM_TASK_EXECUTION_SEQ"] = str(claimed.execution_seq)
@@ -629,6 +632,7 @@ def run_worker_iteration(
         "taskId": claimed.id,
         "executionId": claimed.active_execution_id,
         "executionSeq": claimed.execution_seq,
+        "claimCase": claim_result.case_name,
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,

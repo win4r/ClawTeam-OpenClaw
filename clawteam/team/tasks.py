@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,47 @@ class TaskLockError(Exception):
 
 class TaskExecutionError(RuntimeError):
     """Raised when an execution-scoped writeback does not match the active execution."""
+
+
+
+
+@dataclass(frozen=True)
+class TransitionApplyResult:
+    """Result of applying a transition decision in the task store."""
+
+    task: TaskItem
+    accepted: bool
+    case_name: str
+    rejection_reason: str | None = None
+    execution_id: str | None = None
+    audit_recorded: bool = True
+
+
+@dataclass(frozen=True)
+class TaskPatch:
+    """Non-transition task field updates applied after policy decisions."""
+
+    owner: str | None = None
+    subject: str | None = None
+    description: str | None = None
+    add_blocks: list[str] | None = None
+    add_blocked_by: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    metadata_keys_to_remove: list[str] | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            value is not None
+            for value in (
+                self.owner,
+                self.subject,
+                self.description,
+                self.add_blocks,
+                self.add_blocked_by,
+                self.metadata,
+                self.metadata_keys_to_remove,
+            )
+        )
 
 
 def _tasks_root(team_name: str) -> Path:
@@ -148,15 +190,18 @@ class TaskStore:
         description: str | None = None,
         add_blocks: list[str] | None = None,
         add_blocked_by: list[str] | None = None,
-    ) -> TaskItem | None:
+    ) -> TransitionApplyResult | None:
+        case_name = str(decision.get("case_name") or "unknown_transition")
+        accepted = bool(decision.get("accepted", True))
+        rejection_reason = decision.get("rejection_reason")
         audit = {
-            "case_name": decision.get("case_name") or "unknown_transition",
-            "accepted": bool(decision.get("accepted", True)),
+            "case_name": case_name,
+            "accepted": accepted,
             "caller": caller,
             "execution_id": execution_id,
-            "rejection_reason": decision.get("rejection_reason"),
+            "rejection_reason": rejection_reason,
         }
-        return self.update(
+        task = self.update(
             task_id,
             status=status,
             owner=owner,
@@ -171,8 +216,18 @@ class TaskStore:
             force=force,
             transition_audit=audit,
         )
+        if task is None:
+            return None
+        return TransitionApplyResult(
+            task=task,
+            accepted=accepted,
+            case_name=case_name,
+            rejection_reason=rejection_reason,
+            execution_id=execution_id,
+            audit_recorded=True,
+        )
 
-    def claim_execution(self, task_id: str, *, caller: str, force: bool = False) -> TaskItem | None:
+    def claim_execution(self, task_id: str, *, caller: str, force: bool = False) -> TransitionApplyResult | None:
         return self.apply_transition_decision(
             task_id,
             decision={"case_name": "claim_execution", "accepted": True},
@@ -189,7 +244,7 @@ class TaskStore:
         caller: str,
         execution_id: str | None = None,
         rejection_reason: str | None = None,
-    ) -> TaskItem | None:
+    ) -> TransitionApplyResult | None:
         return self.apply_transition_decision(
             task_id,
             decision={
@@ -212,7 +267,7 @@ class TaskStore:
         metadata_keys_to_remove: list[str] | None = None,
         force: bool = False,
         case_name: str = "execution_scoped_terminal_writeback",
-    ) -> TaskItem | None:
+    ) -> TransitionApplyResult | None:
         return self.apply_transition_decision(
             task_id,
             decision={"case_name": case_name, "accepted": True},
@@ -224,11 +279,32 @@ class TaskStore:
             force=force,
         )
 
-    def reopen_task(self, task_id: str, *, caller: str, force: bool = False) -> TaskItem | None:
+    def reopen_task(self, task_id: str, *, caller: str, force: bool = False) -> TransitionApplyResult | None:
         return self.apply_transition_decision(
             task_id,
             decision={"case_name": "reopen_task", "accepted": True},
             status=TaskStatus.pending,
+            caller=caller,
+            force=force,
+        )
+
+    def apply_patch(
+        self,
+        task_id: str,
+        *,
+        patch: TaskPatch,
+        caller: str = "",
+        force: bool = False,
+    ) -> TaskItem | None:
+        return self.update(
+            task_id,
+            owner=patch.owner,
+            subject=patch.subject,
+            description=patch.description,
+            add_blocks=patch.add_blocks,
+            add_blocked_by=patch.add_blocked_by,
+            metadata=patch.metadata,
+            metadata_keys_to_remove=patch.metadata_keys_to_remove,
             caller=caller,
             force=force,
         )
