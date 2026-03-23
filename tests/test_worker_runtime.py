@@ -526,6 +526,66 @@ def test_run_worker_iteration_fails_closed_when_dispatch_raises(monkeypatch, tmp
     assert "stream_read_error" in updated.metadata["failure_evidence"]
 
 
+def test_run_worker_iteration_reports_already_terminal_for_duplicate_same_status_failure(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    def fake_run(command, cwd=None, env=None, session_key=None, total_timeout_seconds=None, progress_stall_timeout_seconds=None, progress_poll_interval_seconds=None):
+        TaskStore("demo").update(task.id, status=TaskStatus.failed, caller="qa1")
+        return _Completed(returncode=1, stdout="", stderr="502 Upstream request failed")
+
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "already_terminal"
+    assert result["taskId"] == task.id
+    assert result["rejectionReason"] == "duplicate_terminal_same_status"
+    assert result["terminalStatus"] == "failed"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status.value == "failed"
+    assert updated.metadata["transition_log"][-1]["accepted"] is False
+    assert updated.metadata["transition_log"][-1]["rejectionReason"] == "duplicate_terminal_same_status"
+
+
+def test_run_worker_iteration_reports_duplicate_terminal_for_conflicting_terminal(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    def fake_run(command, cwd=None, env=None, session_key=None, total_timeout_seconds=None, progress_stall_timeout_seconds=None, progress_poll_interval_seconds=None):
+        TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
+        return _Completed(returncode=1, stdout="", stderr="502 Upstream request failed")
+
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "duplicate_terminal"
+    assert result["taskId"] == task.id
+    assert result["rejectionReason"] == "duplicate_terminal_conflicting_status"
+    assert result["terminalStatus"] == "completed"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status.value == "completed"
+    assert updated.metadata["transition_log"][-1]["accepted"] is False
+    assert updated.metadata["transition_log"][-1]["rejectionReason"] == "duplicate_terminal_conflicting_status"
+
+
 def test_run_worker_iteration_fails_closed_when_agent_returns_success_without_terminal_task_update(monkeypatch, tmp_path):
     _seed_team(tmp_path, monkeypatch)
     monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")

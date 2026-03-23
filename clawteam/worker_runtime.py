@@ -11,6 +11,8 @@ from typing import Any
 
 from clawteam.delivery.failure_notifier import notify_task_failure
 from clawteam.task.transition import (
+    DUPLICATE_TERMINAL_CONFLICTING_STATUS,
+    DUPLICATE_TERMINAL_SAME_STATUS,
     TerminalWritebackEvent,
     plan_terminal_writeback,
 )
@@ -337,13 +339,32 @@ def _fail_claimed_task(
             ),
         )
         if decision and not decision.accepted:
-            store.record_transition_rejection(
+            rejection = store.record_transition_rejection(
                 task_id,
                 case_name=decision.case_name,
                 caller=agent_name,
                 execution_id=execution_id,
                 rejection_reason=decision.rejection_reason,
             )
+            task = rejection.task if rejection is not None else store.get(task_id)
+            if decision.rejection_reason == DUPLICATE_TERMINAL_SAME_STATUS:
+                return {
+                    "status": "already_terminal",
+                    "taskId": task_id,
+                    "reason": reason,
+                    "evidence": evidence,
+                    "rejectionReason": decision.rejection_reason,
+                    "terminalStatus": task.status.value if task is not None else "",
+                }
+            if decision.rejection_reason == DUPLICATE_TERMINAL_CONFLICTING_STATUS:
+                return {
+                    "status": "duplicate_terminal",
+                    "taskId": task_id,
+                    "reason": reason,
+                    "evidence": evidence,
+                    "rejectionReason": decision.rejection_reason,
+                    "terminalStatus": task.status.value if task is not None else "",
+                }
         else:
             applied_case = "worker_runtime_failed_closed"
             if decision and decision.accepted:
@@ -357,7 +378,7 @@ def _fail_claimed_task(
                 case_name=applied_case,
             )
     failure_notice = None
-    task = apply_result.task if apply_result is not None else None
+    task = apply_result.task if apply_result is not None else task
     if task is not None:
         failure_notice = notify_task_failure(team_name, task, agent_name)
     return {
