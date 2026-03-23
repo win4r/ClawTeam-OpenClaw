@@ -11,9 +11,7 @@ from typing import Any
 
 from clawteam.delivery.failure_notifier import notify_task_failure
 from clawteam.task.transition import (
-    ClaimExecutionEvent,
     TerminalWritebackEvent,
-    plan_claim_execution,
     plan_terminal_writeback,
 )
 from clawteam.team.manager import TeamManager
@@ -433,32 +431,8 @@ def run_worker_iteration(
             "taskId": task.id,
         }
 
-    claim_decision = plan_claim_execution(
-        existing=task,
-        event=ClaimExecutionEvent(caller=agent_name),
-    )
-    if not claim_decision.accepted:
-        store.record_transition_rejection(
-            task.id,
-            case_name=claim_decision.case_name,
-            caller=agent_name,
-            rejection_reason=claim_decision.rejection_reason,
-        )
-        return {
-            "status": "contended",
-            "messages": message_count,
-            "acked": acked_count,
-            "taskId": task.id,
-            "rejectionReason": claim_decision.rejection_reason,
-        }
-
     try:
-        claim_result = store.apply_transition_decision(
-            task.id,
-            decision={"case_name": claim_decision.case_name, "accepted": True},
-            status=TaskStatus.in_progress,
-            caller=agent_name,
-        )
+        claim_result = store.claim_execution(task.id, caller=agent_name)
     except TaskLockError:
         return {
             "status": "contended",
@@ -473,6 +447,15 @@ def run_worker_iteration(
             "messages": message_count,
             "acked": acked_count,
             "taskId": task.id,
+        }
+
+    if not claim_result.accepted:
+        return {
+            "status": "contended",
+            "messages": message_count,
+            "acked": acked_count,
+            "taskId": task.id,
+            "rejectionReason": claim_result.rejection_reason,
         }
 
     leader_name = TeamManager.get_leader_name(team_name) or "leader"

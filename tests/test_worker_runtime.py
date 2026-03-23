@@ -259,14 +259,59 @@ def test_run_worker_iteration_does_not_claim_pending_task_without_matching_wake(
     assert result["taskId"] == task.id
     assert called["ran"] is False
 
+
+
+def test_run_worker_iteration_reports_contended_when_claim_rejected_under_lock(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    mailbox = MailboxManager("demo")
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    called = {"ran": False, "raced": False}
+    original_claim = TaskStore.claim_execution
+
+    def racing_claim(self, task_id, *, caller, force=False):
+        if not called["raced"]:
+            called["raced"] = True
+            other_store = TaskStore("demo")
+            first = original_claim(other_store, task_id, caller=caller, force=force)
+            assert first is not None and first.accepted is True
+        return original_claim(self, task_id, caller=caller, force=force)
+
+    def fake_run(*args, **kwargs):
+        called["ran"] = True
+        return _Completed()
+
+    monkeypatch.setattr(TaskStore, "claim_execution", racing_claim)
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "contended"
+    assert result["acked"] == 1
+    assert result["taskId"] == task.id
+    assert result["rejectionReason"] == "claim_requires_pending_or_blocked_task"
+    assert called["ran"] is False
+    assert called["raced"] is True
+
+    updated = store.get(task.id)
+    assert updated is not None
+    assert updated.metadata["transition_log"][-1]["case"] == "claim_execution"
+    assert updated.metadata["transition_log"][-1]["accepted"] is False
+    assert updated.metadata["transition_log"][-1]["rejectionReason"] == "claim_requires_pending_or_blocked_task"
+
     updated = TaskStore("demo").get(task.id)
     assert updated is not None
-    assert updated.status.value == "pending"
-    assert updated.locked_by == ""
+    assert updated.status.value == "in_progress"
+    assert updated.locked_by == "qa1"
 
     remaining = mailbox.peek("qa1")
-    assert len(remaining) == 1
-    assert remaining[0].key == "note:1"
+    assert remaining == []
 
 
 def test_run_worker_iteration_keeps_pending_task_idle_until_explicit_wake(monkeypatch, tmp_path):
@@ -372,6 +417,81 @@ def test_task_store_reopen_clears_active_execution(monkeypatch, tmp_path):
     assert reopened.task.active_execution_owner == ""
     assert reopened.task.metadata["transition_log"][-1]["case"] == "reopen_task"
     assert reopened.task.metadata["transition_log"][-1]["accepted"] is True
+
+
+
+def test_task_store_claim_execution_rejects_in_progress_snapshot_under_lock(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+
+    first = store.claim_execution(task.id, caller="qa1")
+    second = store.claim_execution(task.id, caller="qa1")
+
+    assert first is not None and first.accepted is True
+    assert second is not None
+    assert second.accepted is False
+    assert second.case_name == "claim_execution"
+    assert second.rejection_reason == "claim_requires_pending_or_blocked_task"
+    assert second.task.metadata["transition_log"][-1]["accepted"] is False
+    assert second.task.metadata["transition_log"][-1]["rejectionReason"] == "claim_requires_pending_or_blocked_task"
+
+
+
+def test_task_store_rejects_duplicate_same_status_terminal_writeback(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+    execution_id = claimed.task.active_execution_id
+
+    first = store.accept_terminal_writeback(
+        task.id,
+        status=TaskStatus.completed,
+        caller="qa1",
+        execution_id=execution_id,
+    )
+    assert first is not None
+    assert first.case_name == "execution_scoped_terminal_writeback"
+
+    try:
+        store.accept_terminal_writeback(
+            task.id,
+            status=TaskStatus.completed,
+            caller="qa1",
+            execution_id=execution_id,
+        )
+        assert False, "expected duplicate same-status rejection"
+    except Exception as exc:
+        assert "duplicate_terminal_same_status" in str(exc)
+
+
+
+def test_task_store_rejects_duplicate_conflicting_status_terminal_writeback(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+    execution_id = claimed.task.active_execution_id
+
+    first = store.accept_terminal_writeback(
+        task.id,
+        status=TaskStatus.completed,
+        caller="qa1",
+        execution_id=execution_id,
+    )
+    assert first is not None
+
+    try:
+        store.accept_terminal_writeback(
+            task.id,
+            status=TaskStatus.failed,
+            caller="qa1",
+            execution_id=execution_id,
+        )
+        assert False, "expected duplicate conflicting-status rejection"
+    except Exception as exc:
+        assert "duplicate_terminal_conflicting_status" in str(exc)
 
 
 

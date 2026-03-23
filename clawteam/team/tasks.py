@@ -228,13 +228,62 @@ class TaskStore:
         )
 
     def claim_execution(self, task_id: str, *, caller: str, force: bool = False) -> TransitionApplyResult | None:
-        return self.apply_transition_decision(
-            task_id,
-            decision={"case_name": "claim_execution", "accepted": True},
-            status=TaskStatus.in_progress,
-            caller=caller,
-            force=force,
-        )
+        from clawteam.task.transition import ClaimExecutionEvent, plan_claim_execution
+
+        with self._write_lock():
+            task = self._get_unlocked(task_id)
+            if task is None:
+                return None
+
+            decision = plan_claim_execution(
+                existing=task,
+                event=ClaimExecutionEvent(caller=caller, force=force),
+            )
+            if not decision.accepted:
+                _append_transition_log(
+                    task,
+                    case_name=decision.case_name,
+                    accepted=False,
+                    caller=caller,
+                    rejection_reason=decision.rejection_reason,
+                )
+                task.updated_at = _now_iso()
+                self._save_unlocked(task)
+                return TransitionApplyResult(
+                    task=task,
+                    accepted=False,
+                    case_name=decision.case_name,
+                    rejection_reason=decision.rejection_reason,
+                    audit_recorded=True,
+                )
+
+            previous_status = task.status
+            previous_owner = task.locked_by
+            self._acquire_lock(task, caller, force)
+            if not task.started_at:
+                task.started_at = _now_iso()
+            if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+                next_seq, next_execution_id = _next_execution_id(task)
+                task.execution_seq = next_seq
+                task.active_execution_id = next_execution_id
+                task.active_execution_owner = task.locked_by or caller or task.owner
+            task.status = TaskStatus.in_progress
+            _append_transition_log(
+                task,
+                case_name=decision.case_name,
+                accepted=True,
+                caller=caller,
+                execution_id=task.active_execution_id,
+            )
+            task.updated_at = _now_iso()
+            self._save_unlocked(task)
+            return TransitionApplyResult(
+                task=task,
+                accepted=True,
+                case_name=decision.case_name,
+                execution_id=task.active_execution_id,
+                audit_recorded=True,
+            )
 
     def record_transition_rejection(
         self,
@@ -332,6 +381,15 @@ class TaskStore:
 
             if status in (TaskStatus.completed, TaskStatus.failed) and execution_id:
                 if not task.active_execution_id:
+                    if task.last_terminal_execution_id and execution_id == task.last_terminal_execution_id:
+                        duplicate_reason = (
+                            "duplicate_terminal_same_status"
+                            if task.last_terminal_status == status.value
+                            else "duplicate_terminal_conflicting_status"
+                        )
+                        raise TaskExecutionError(
+                            f"Task '{task.id}' already recorded terminal status '{task.last_terminal_status}' for execution '{execution_id}' ({duplicate_reason})."
+                        )
                     raise TaskExecutionError(
                         f"Task '{task.id}' has no active execution; got terminal writeback for '{execution_id}'."
                     )

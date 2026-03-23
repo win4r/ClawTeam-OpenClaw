@@ -27,6 +27,8 @@ WATCHDOG_RECOVERY_CASE = "recover_watchdog_failed_completion"
 EXECUTION_TERMINAL_CASE = "execution_scoped_terminal_writeback"
 CLAIM_EXECUTION_CASE = "claim_execution"
 REOPEN_TASK_CASE = "reopen_task"
+DUPLICATE_TERMINAL_SAME_STATUS = "duplicate_terminal_same_status"
+DUPLICATE_TERMINAL_CONFLICTING_STATUS = "duplicate_terminal_conflicting_status"
 WATCHDOG_RECOVERY_FAILURE_KEYS = [
     "failure_kind",
     "failure_root_cause",
@@ -217,6 +219,17 @@ def plan_execution_scoped_terminal_writeback(
     if not execution_id:
         return None
     if not existing.active_execution_id:
+        if existing.last_terminal_execution_id and execution_id == existing.last_terminal_execution_id:
+            duplicate_reason = (
+                DUPLICATE_TERMINAL_SAME_STATUS
+                if existing.last_terminal_status == requested_status.value
+                else DUPLICATE_TERMINAL_CONFLICTING_STATUS
+            )
+            return TaskTransitionDecision(
+                accepted=False,
+                case_name=EXECUTION_TERMINAL_CASE,
+                rejection_reason=duplicate_reason,
+            )
         return TaskTransitionDecision(
             accepted=False,
             case_name=EXECUTION_TERMINAL_CASE,

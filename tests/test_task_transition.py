@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from clawteam.task.transition import (
     CLAIM_EXECUTION_CASE,
+    DUPLICATE_TERMINAL_CONFLICTING_STATUS,
+    DUPLICATE_TERMINAL_SAME_STATUS,
     EXECUTION_TERMINAL_CASE,
     REOPEN_TASK_CASE,
     ClaimExecutionEvent,
@@ -250,6 +252,56 @@ def test_plan_terminal_writeback_rejects_stale_execution():
     assert decision.accepted is False
     assert decision.case_name == EXECUTION_TERMINAL_CASE
     assert decision.rejection_reason == "stale_execution"
+
+
+def test_plan_terminal_writeback_rejects_duplicate_same_status_after_terminal_recorded():
+    task = TaskItem(
+        id="task-1",
+        subject="impl",
+        status=TaskStatus.completed,
+        last_terminal_execution_id="task-1-exec-2",
+        last_terminal_status="completed",
+    )
+
+    decision = plan_terminal_writeback(
+        existing=task,
+        event=TerminalWritebackEvent(
+            caller="dev1",
+            status=TaskStatus.completed,
+            execution_id="task-1-exec-2",
+        ),
+    )
+
+    assert decision is not None
+    assert decision.accepted is False
+    assert decision.case_name == EXECUTION_TERMINAL_CASE
+    assert decision.rejection_reason == DUPLICATE_TERMINAL_SAME_STATUS
+
+
+
+def test_plan_terminal_writeback_rejects_duplicate_conflicting_status_after_terminal_recorded():
+    task = TaskItem(
+        id="task-1",
+        subject="impl",
+        status=TaskStatus.completed,
+        last_terminal_execution_id="task-1-exec-2",
+        last_terminal_status="completed",
+    )
+
+    decision = plan_terminal_writeback(
+        existing=task,
+        event=TerminalWritebackEvent(
+            caller="dev1",
+            status=TaskStatus.failed,
+            execution_id="task-1-exec-2",
+        ),
+    )
+
+    assert decision is not None
+    assert decision.accepted is False
+    assert decision.case_name == EXECUTION_TERMINAL_CASE
+    assert decision.rejection_reason == DUPLICATE_TERMINAL_CONFLICTING_STATUS
+
 
 
 def test_plan_reopen_task_accepts_failed_task():
