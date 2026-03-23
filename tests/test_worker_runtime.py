@@ -13,6 +13,8 @@ from clawteam.team.tasks import TaskStore
 from clawteam.worker_runtime import (
     build_openclaw_agent_command,
     build_worker_task_prompt,
+    clear_replaced_worker_unfinished_tasks,
+    detect_worker_replacement,
     run_worker_iteration,
 )
 
@@ -808,3 +810,39 @@ def test_subprocess_backend_wraps_openclaw_in_worker_runtime(monkeypatch, tmp_pa
     assert "spawned as subprocess" in message
     assert "worker run demo --agent qa1 --command openclaw" in captured["shell_cmd"]
     assert "--startup-prompt-file" in captured["shell_cmd"]
+
+
+def test_detect_worker_replacement_requires_pid_change(monkeypatch):
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {"pid": 123, "runtime_generation": "old-generation"},
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "new-generation")
+
+    assert detect_worker_replacement(team_name="demo", agent_name="qa1", parent_pid=123) is False
+    assert detect_worker_replacement(team_name="demo", agent_name="qa1", parent_pid=456) is True
+
+
+def test_clear_replaced_worker_unfinished_tasks_ignores_generation_mismatch_without_pid_change(
+    monkeypatch,
+    tmp_path,
+):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_record",
+        lambda *args, **kwargs: {"pid": 123, "runtime_generation": "old-generation"},
+    )
+    monkeypatch.setattr("clawteam.spawn.registry.current_runtime_generation", lambda: "new-generation")
+
+    cleared = clear_replaced_worker_unfinished_tasks(
+        team_name="demo",
+        agent_name="qa1",
+        parent_pid=123,
+    )
+
+    assert cleared == []
+    assert store.get(task.id) is not None
+    assert store.get(task.id).status == TaskStatus.pending

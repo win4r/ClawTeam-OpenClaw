@@ -552,3 +552,19 @@ def test_registry_generation_mismatch_fails_closed(monkeypatch, tmp_path):
 
     assert current_runtime_generation() != "old-generation"
     assert get_agent_runtime_state("demo", "worker1") == "stale"
+
+
+def test_current_runtime_generation_ignores_mtime_only_changes(tmp_path):
+    runtime_root = tmp_path / "clawteam"
+    runtime_root.mkdir()
+    module = runtime_root / "worker.py"
+    module.write_text("print('same runtime')\n", encoding="utf-8")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname='demo'\n", encoding="utf-8")
+
+    first = current_runtime_generation(runtime_root)
+    module.touch()
+    pyproject.touch()
+    second = current_runtime_generation(runtime_root)
+
+    assert first == second

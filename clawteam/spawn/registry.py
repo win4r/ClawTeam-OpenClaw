@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 from pathlib import Path
+from typing import Iterable
 
 from clawteam.team.models import get_data_dir
 
@@ -28,28 +29,44 @@ def _session_index_path() -> Path:
     return path
 
 
-def current_runtime_generation() -> str:
-    """Fingerprint the currently installed runtime semantics.
+def _runtime_generation_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
-    Uses repo-local source metadata so local code changes invalidate long-lived
-    workers even before a version bump.
-    """
-    root = Path(__file__).resolve().parents[1]
+
+def _runtime_generation_candidates(root: Path) -> list[Path]:
     candidates = sorted(root.rglob("*.py"))
     pyproject = root.parent / "pyproject.toml"
     if pyproject.exists():
         candidates.append(pyproject)
+    return candidates
 
+
+def _hash_runtime_candidates(candidates: Iterable[Path], *, root_parent: Path) -> str:
     digest = hashlib.sha256()
     for candidate in candidates:
         try:
-            stat = candidate.stat()
+            content = candidate.read_bytes()
         except OSError:
             continue
-        digest.update(str(candidate.relative_to(root.parent)).encode("utf-8", "ignore"))
-        digest.update(str(stat.st_size).encode("ascii"))
-        digest.update(str(stat.st_mtime_ns).encode("ascii"))
+        digest.update(str(candidate.relative_to(root_parent)).encode("utf-8", "ignore"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
     return digest.hexdigest()[:16]
+
+
+def current_runtime_generation(root: str | Path | None = None) -> str:
+    """Fingerprint the currently installed runtime semantics.
+
+    Uses source content rather than file metadata so semantically identical
+    installs produce the same generation even when copied into different paths
+    or when mtimes change during a fresh launch.
+    """
+    runtime_root = Path(root).expanduser().resolve() if root is not None else _runtime_generation_root()
+    return _hash_runtime_candidates(
+        _runtime_generation_candidates(runtime_root),
+        root_parent=runtime_root.parent,
+    )
 
 
 def register_agent(
@@ -141,7 +158,6 @@ def find_agent_by_session_key(session_key: str) -> dict | None:
 
 
 
-
 def get_agent_runtime_state(team_name: str, agent_name: str, data_dir: str | Path | None = None) -> str:
     """Return runtime state: alive, dead, stale, or missing."""
     info = get_agent_record(team_name, agent_name, data_dir)
@@ -174,7 +190,6 @@ def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
     if state == "missing":
         return None
     return state == "alive"
-
 
 
 

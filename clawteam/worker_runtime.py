@@ -148,13 +148,16 @@ def detect_worker_replacement(
     if not record:
         return False
 
-    recorded_generation = str(record.get("runtime_generation") or "").strip()
-    if recorded_generation and recorded_generation != current_runtime_generation():
-        return True
-
     recorded_pid = int(record.get("pid", 0) or 0)
     observed_parent = parent_pid if parent_pid is not None else os.getppid()
-    return recorded_pid > 0 and observed_parent > 0 and recorded_pid != observed_parent
+    if recorded_pid <= 0 or observed_parent <= 0 or recorded_pid == observed_parent:
+        return False
+
+    recorded_generation = str(record.get("runtime_generation") or "").strip()
+    if not recorded_generation:
+        return True
+
+    return recorded_generation != current_runtime_generation()
 
 
 def clear_replaced_worker_unfinished_tasks(
