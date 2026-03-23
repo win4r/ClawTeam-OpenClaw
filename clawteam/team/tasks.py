@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,60 @@ from typing import Any
 from clawteam.team.models import TaskItem, TaskStatus, get_data_dir
 
 
+UNFINISHED_TASK_STATUSES = {
+    TaskStatus.pending,
+    TaskStatus.in_progress,
+    TaskStatus.blocked,
+}
+
+
 class TaskLockError(Exception):
     """Raised when a task is locked by another agent."""
+
+
+class TaskExecutionError(RuntimeError):
+    """Raised when an execution-scoped writeback does not match the active execution."""
+
+
+
+
+@dataclass(frozen=True)
+class TransitionApplyResult:
+    """Result of applying a transition decision in the task store."""
+
+    task: TaskItem
+    accepted: bool
+    case_name: str
+    rejection_reason: str | None = None
+    execution_id: str | None = None
+    audit_recorded: bool = True
+
+
+@dataclass(frozen=True)
+class TaskPatch:
+    """Non-transition task field updates applied after policy decisions."""
+
+    owner: str | None = None
+    subject: str | None = None
+    description: str | None = None
+    add_blocks: list[str] | None = None
+    add_blocked_by: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    metadata_keys_to_remove: list[str] | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            value is not None
+            for value in (
+                self.owner,
+                self.subject,
+                self.description,
+                self.add_blocks,
+                self.add_blocked_by,
+                self.metadata,
+                self.metadata_keys_to_remove,
+            )
+        )
 
 
 def _tasks_root(team_name: str) -> Path:
@@ -34,6 +87,34 @@ def _tasks_lock_path(team_name: str) -> Path:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _next_execution_id(task: TaskItem) -> tuple[int, str]:
+    next_seq = max(int(task.execution_seq or 0), 0) + 1
+    return next_seq, f"{task.id}-exec-{next_seq}"
+
+
+def _append_transition_log(
+    task: TaskItem,
+    *,
+    case_name: str,
+    accepted: bool,
+    caller: str,
+    execution_id: str | None = None,
+    rejection_reason: str | None = None,
+) -> None:
+    entries = list(task.metadata.get("transition_log", []))
+    entries.append(
+        {
+            "at": _now_iso(),
+            "case": case_name,
+            "accepted": accepted,
+            "caller": caller,
+            "executionId": execution_id or "",
+            "rejectionReason": rejection_reason or "",
+        }
+    )
+    task.metadata["transition_log"] = entries[-20:]
 
 
 class TaskStore:
@@ -93,6 +174,190 @@ class TaskStore:
         except Exception:
             return None
 
+    def apply_transition_decision(
+        self,
+        task_id: str,
+        *,
+        decision: dict[str, Any],
+        caller: str,
+        status: TaskStatus | None = None,
+        force: bool = False,
+        execution_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
+        owner: str | None = None,
+        subject: str | None = None,
+        description: str | None = None,
+        add_blocks: list[str] | None = None,
+        add_blocked_by: list[str] | None = None,
+    ) -> TransitionApplyResult | None:
+        case_name = str(decision.get("case_name") or "unknown_transition")
+        accepted = bool(decision.get("accepted", True))
+        rejection_reason = decision.get("rejection_reason")
+        audit = {
+            "case_name": case_name,
+            "accepted": accepted,
+            "caller": caller,
+            "execution_id": execution_id,
+            "rejection_reason": rejection_reason,
+        }
+        task = self.update(
+            task_id,
+            status=status,
+            owner=owner,
+            subject=subject,
+            description=description,
+            add_blocks=add_blocks,
+            add_blocked_by=add_blocked_by,
+            metadata=metadata,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            execution_id=execution_id,
+            caller=caller,
+            force=force,
+            transition_audit=audit,
+        )
+        if task is None:
+            return None
+        return TransitionApplyResult(
+            task=task,
+            accepted=accepted,
+            case_name=case_name,
+            rejection_reason=rejection_reason,
+            execution_id=execution_id,
+            audit_recorded=True,
+        )
+
+    def claim_execution(self, task_id: str, *, caller: str, force: bool = False) -> TransitionApplyResult | None:
+        from clawteam.task.transition import ClaimExecutionEvent, plan_claim_execution
+
+        with self._write_lock():
+            task = self._get_unlocked(task_id)
+            if task is None:
+                return None
+
+            decision = plan_claim_execution(
+                existing=task,
+                event=ClaimExecutionEvent(caller=caller, force=force),
+            )
+            if not decision.accepted:
+                _append_transition_log(
+                    task,
+                    case_name=decision.case_name,
+                    accepted=False,
+                    caller=caller,
+                    rejection_reason=decision.rejection_reason,
+                )
+                task.updated_at = _now_iso()
+                self._save_unlocked(task)
+                return TransitionApplyResult(
+                    task=task,
+                    accepted=False,
+                    case_name=decision.case_name,
+                    rejection_reason=decision.rejection_reason,
+                    audit_recorded=True,
+                )
+
+            previous_status = task.status
+            previous_owner = task.locked_by
+            self._acquire_lock(task, caller, force)
+            if not task.started_at:
+                task.started_at = _now_iso()
+            if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+                next_seq, next_execution_id = _next_execution_id(task)
+                task.execution_seq = next_seq
+                task.active_execution_id = next_execution_id
+                task.active_execution_owner = task.locked_by or caller or task.owner
+            task.status = TaskStatus.in_progress
+            _append_transition_log(
+                task,
+                case_name=decision.case_name,
+                accepted=True,
+                caller=caller,
+                execution_id=task.active_execution_id,
+            )
+            task.updated_at = _now_iso()
+            self._save_unlocked(task)
+            return TransitionApplyResult(
+                task=task,
+                accepted=True,
+                case_name=decision.case_name,
+                execution_id=task.active_execution_id,
+                audit_recorded=True,
+            )
+
+    def record_transition_rejection(
+        self,
+        task_id: str,
+        *,
+        case_name: str,
+        caller: str,
+        execution_id: str | None = None,
+        rejection_reason: str | None = None,
+    ) -> TransitionApplyResult | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={
+                "case_name": case_name,
+                "accepted": False,
+                "rejection_reason": rejection_reason,
+            },
+            caller=caller,
+            execution_id=execution_id,
+        )
+
+    def accept_terminal_writeback(
+        self,
+        task_id: str,
+        *,
+        status: TaskStatus,
+        caller: str,
+        execution_id: str | None,
+        metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
+        force: bool = False,
+        case_name: str = "execution_scoped_terminal_writeback",
+    ) -> TransitionApplyResult | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={"case_name": case_name, "accepted": True},
+            status=status,
+            caller=caller,
+            execution_id=execution_id,
+            metadata=metadata,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            force=force,
+        )
+
+    def reopen_task(self, task_id: str, *, caller: str, force: bool = False) -> TransitionApplyResult | None:
+        return self.apply_transition_decision(
+            task_id,
+            decision={"case_name": "reopen_task", "accepted": True},
+            status=TaskStatus.pending,
+            caller=caller,
+            force=force,
+        )
+
+    def apply_patch(
+        self,
+        task_id: str,
+        *,
+        patch: TaskPatch,
+        caller: str = "",
+        force: bool = False,
+    ) -> TaskItem | None:
+        return self.update(
+            task_id,
+            owner=patch.owner,
+            subject=patch.subject,
+            description=patch.description,
+            add_blocks=patch.add_blocks,
+            add_blocked_by=patch.add_blocked_by,
+            metadata=patch.metadata,
+            metadata_keys_to_remove=patch.metadata_keys_to_remove,
+            caller=caller,
+            force=force,
+        )
+
     def update(
         self,
         task_id: str,
@@ -103,25 +368,63 @@ class TaskStore:
         add_blocks: list[str] | None = None,
         add_blocked_by: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        metadata_keys_to_remove: list[str] | None = None,
+        execution_id: str | None = None,
         caller: str = "",
         force: bool = False,
+        transition_audit: dict[str, Any] | None = None,
     ) -> TaskItem | None:
         with self._write_lock():
             task = self._get_unlocked(task_id)
             if not task:
                 return None
 
+            if status in (TaskStatus.completed, TaskStatus.failed) and execution_id:
+                if not task.active_execution_id:
+                    if task.last_terminal_execution_id and execution_id == task.last_terminal_execution_id:
+                        duplicate_reason = (
+                            "duplicate_terminal_same_status"
+                            if task.last_terminal_status == status.value
+                            else "duplicate_terminal_conflicting_status"
+                        )
+                        raise TaskExecutionError(
+                            f"Task '{task.id}' already recorded terminal status '{task.last_terminal_status}' for execution '{execution_id}' ({duplicate_reason})."
+                        )
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' has no active execution; got terminal writeback for '{execution_id}'."
+                    )
+                if execution_id != task.active_execution_id:
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' active execution is '{task.active_execution_id}', not '{execution_id}'."
+                    )
+                if task.active_execution_owner and caller and caller != task.active_execution_owner:
+                    raise TaskExecutionError(
+                        f"Task '{task.id}' active execution owner is '{task.active_execution_owner}', not '{caller}'."
+                    )
+
             # Lock logic when transitioning to in_progress
             if status == TaskStatus.in_progress:
+                previous_status = task.status
+                previous_owner = task.locked_by
                 self._acquire_lock(task, caller, force)
                 # Record when work actually started
                 if not task.started_at:
                     task.started_at = _now_iso()
+                if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+                    next_seq, execution_id = _next_execution_id(task)
+                    task.execution_seq = next_seq
+                    task.active_execution_id = execution_id
+                    task.active_execution_owner = task.locked_by or caller or task.owner
 
-            # Clear lock when transitioning to completed or pending
-            if status in (TaskStatus.completed, TaskStatus.pending):
+            # Clear lock when transitioning to completed, pending, or failed
+            if status in (TaskStatus.completed, TaskStatus.pending, TaskStatus.failed):
                 task.locked_by = ""
                 task.locked_at = ""
+                if status in (TaskStatus.completed, TaskStatus.failed) and task.active_execution_id:
+                    task.last_terminal_execution_id = task.active_execution_id
+                    task.last_terminal_status = status.value
+                task.active_execution_id = ""
+                task.active_execution_owner = ""
 
             # Compute duration when completing a task that has a start time
             if status == TaskStatus.completed and task.started_at:
@@ -148,12 +451,26 @@ class TaskStore:
                 for b in add_blocked_by:
                     if b not in task.blocked_by:
                         task.blocked_by.append(b)
+            if metadata_keys_to_remove:
+                for key in metadata_keys_to_remove:
+                    task.metadata.pop(key, None)
             if metadata:
                 task.metadata.update(metadata)
+            if transition_audit:
+                _append_transition_log(
+                    task,
+                    case_name=str(transition_audit.get("case_name") or "unknown_transition"),
+                    accepted=bool(transition_audit.get("accepted", True)),
+                    caller=str(transition_audit.get("caller") or caller),
+                    execution_id=transition_audit.get("execution_id"),
+                    rejection_reason=transition_audit.get("rejection_reason"),
+                )
             task.updated_at = _now_iso()
 
             if task.status == TaskStatus.completed:
                 self._resolve_dependents_unlocked(task_id)
+            elif task.status == TaskStatus.failed:
+                self._apply_failure_flow_unlocked(task)
 
             self._save_unlocked(task)
             return task
@@ -219,6 +536,50 @@ class TaskStore:
                 continue
         return tasks
 
+    def clear_unfinished_tasks_for_owner(self, owner: str) -> list[TaskItem]:
+        """Delete unfinished tasks owned by ``owner`` and unfinished dependents.
+
+        This is used when a worker runtime has been replaced and its old task
+        world must not leak into the new runtime. We clear the owner's own
+        unfinished tasks plus any unfinished tasks that still depend on them,
+        so the leader can re-dispatch a clean replacement chain.
+        """
+        if not owner:
+            return []
+
+        with self._write_lock():
+            tasks = self._list_tasks_unlocked()
+            unfinished = {
+                task.id: task
+                for task in tasks
+                if task.status in UNFINISHED_TASK_STATUSES
+            }
+            doomed = {
+                task.id
+                for task in unfinished.values()
+                if task.owner == owner
+            }
+            if not doomed:
+                return []
+
+            changed = True
+            while changed:
+                changed = False
+                for task in unfinished.values():
+                    if task.id in doomed:
+                        continue
+                    if any(dep in doomed for dep in task.blocked_by):
+                        doomed.add(task.id)
+                        changed = True
+
+            cleared: list[TaskItem] = []
+            for task in tasks:
+                if task.id not in doomed:
+                    continue
+                _task_path(self.team_name, task.id).unlink(missing_ok=True)
+                cleared.append(task)
+            return cleared
+
     def get_stats(self) -> dict[str, Any]:
         """Aggregate task timing stats for this team.
 
@@ -273,3 +634,25 @@ class TaskStore:
                     self._save_unlocked(task)
             except Exception:
                 continue
+
+    def _apply_failure_flow_unlocked(self, failed_task: TaskItem) -> None:
+        on_fail_targets = failed_task.metadata.get("on_fail", [])
+        if (
+            not on_fail_targets
+            or not failed_task.started_at
+            or failed_task.metadata.get("failure_kind") != "regular"
+        ):
+            return
+
+        for target_id in on_fail_targets:
+            target = self._get_unlocked(target_id)
+            if target is None:
+                continue
+
+            target.status = TaskStatus.pending
+            target.locked_by = ""
+            target.locked_at = ""
+            if failed_task.id not in target.blocked_by:
+                target.blocked_by.append(failed_task.id)
+            target.updated_at = _now_iso()
+            self._save_unlocked(target)

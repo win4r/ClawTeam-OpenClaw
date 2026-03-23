@@ -138,7 +138,27 @@ Each spawned agent gets:
 | `clawteam template show <name>` | Show template details |
 | `clawteam launch <template> [--team-name <name>] [--goal "<goal>"]` | Launch from template |
 
-**Built-in templates**: `hedge-fund`, `code-review`, `research-paper`
+**Built-in templates**: `hedge-fund`, `code-review`, `research-paper`, `five-step-delivery`
+
+### Default delivery workflow preference
+
+For normal software delivery work, prefer a reusable staged flow:
+
+1. Scope
+2. Setup
+3. Implement
+4. QA
+5. Review
+6. Deliver
+
+Rules:
+- Create tasks with explicit `Goal` / `Done when` / `Do not` / `Report` sections.
+- Prefer the smallest closed-loop workflow before expanding into more granular steps.
+- Do not skip QA.
+- Do not skip Review when code quality or delivery readiness matters.
+- Do not treat PR creation as merge-ready.
+- If a worker is blocked or dead, prefer release/respawn over leaving tasks stale.
+- Only mark work complete when the task's stated completion conditions are actually satisfied.
 
 ### Configuration
 

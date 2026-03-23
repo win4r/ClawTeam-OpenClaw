@@ -38,10 +38,12 @@ class TaskStatus(str, Enum):
     in_progress = "in_progress"
     completed = "completed"
     blocked = "blocked"
+    failed = "failed"
 
 
 class MessageType(str, Enum):
     message = "message"
+    ack = "ack"
     join_request = "join_request"
     join_approved = "join_approved"
     join_rejected = "join_rejected"
@@ -129,6 +131,11 @@ class TaskItem(BaseModel):
     blocks: list[str] = Field(default_factory=list)
     blocked_by: list[str] = Field(default_factory=list, alias="blockedBy")
     started_at: str = Field(default="", alias="startedAt")
+    execution_seq: int = Field(default=0, alias="executionSeq")
+    active_execution_id: str = Field(default="", alias="activeExecutionId")
+    active_execution_owner: str = Field(default="", alias="activeExecutionOwner")
+    last_terminal_execution_id: str = Field(default="", alias="lastTerminalExecutionId")
+    last_terminal_status: str = Field(default="", alias="lastTerminalStatus")
     created_at: str = Field(default_factory=_now_iso, alias="createdAt")
     updated_at: str = Field(default_factory=_now_iso, alias="updatedAt")
     metadata: dict[str, Any] = Field(default_factory=dict)

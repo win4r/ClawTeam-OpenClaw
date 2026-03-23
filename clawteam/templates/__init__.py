@@ -32,6 +32,11 @@ class TaskDef(BaseModel):
     subject: str
     description: str = ""
     owner: str = ""
+    stage: str = ""
+    blocked_by: list[str] = []
+    on_fail: list[str] = []
+    message_type: str = ""
+    required_sections: list[str] = []
 
 
 class TemplateDef(BaseModel):
@@ -39,9 +44,20 @@ class TemplateDef(BaseModel):
     description: str = ""
     command: list[str] = ["openclaw"]
     backend: str = "tmux"
+    topology_mode: str = "explicit"
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
+
+
+class TemplateInstantiationContext(BaseModel):
+    goal: str = ""
+    team_name: str = ""
+
+
+class InstantiatedTemplate(BaseModel):
+    template: TemplateDef
+    context: TemplateInstantiationContext
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +84,119 @@ def render_task(task: str, **variables: str) -> str:
     return task.format_map(_SafeDict(**variables))
 
 
+def instantiate_template(
+    tmpl: TemplateDef,
+    *,
+    goal: str = "",
+    team_name: str = "",
+) -> InstantiatedTemplate:
+    """Resolve template-authored placeholders into launch-ready data.
+
+    Parsing/loading returns the authored template definition unchanged.
+    Instantiation is the explicit boundary that produces concrete launch-time
+    agent prompts and persisted task records.
+    """
+
+    def _render(text: str, *, agent_name: str = "") -> str:
+        return render_task(
+            text,
+            goal=goal,
+            team_name=team_name,
+            agent_name=agent_name,
+        )
+
+    leader = tmpl.leader.model_copy(update={
+        "task": _render(tmpl.leader.task, agent_name=tmpl.leader.name),
+    })
+    agents = [
+        agent.model_copy(update={
+            "task": _render(agent.task, agent_name=agent.name),
+        })
+        for agent in tmpl.agents
+    ]
+    tasks = [
+        task.model_copy(update={
+            "subject": _render(task.subject, agent_name=task.owner),
+            "description": _render(task.description, agent_name=task.owner),
+        })
+        for task in tmpl.tasks
+    ]
+
+    instantiated = tmpl.model_copy(update={
+        "leader": leader,
+        "agents": agents,
+        "tasks": tasks,
+    })
+    return InstantiatedTemplate(
+        template=instantiated,
+        context=TemplateInstantiationContext(goal=goal, team_name=team_name),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
+
+def resolve_template_topology(tmpl: TemplateDef) -> TemplateDef:
+    """Resolve any template-level topology defaults before launch.
+
+    Currently supported:
+    - explicit: use blocked_by/on_fail exactly as authored
+    - delivery-default: require staged tasks and auto-fill standard delivery edges
+    """
+    if tmpl.topology_mode == "explicit":
+        return tmpl
+
+    if tmpl.topology_mode != "delivery-default":
+        raise ValueError(f"Unsupported template topology_mode: {tmpl.topology_mode}")
+
+    by_stage: dict[str, list[TaskDef]] = {}
+    for task in tmpl.tasks:
+        stage = task.stage.strip().lower()
+        if not stage:
+            raise ValueError(
+                f"Template '{tmpl.name}' uses topology_mode=delivery-default but task '{task.subject}' is missing stage"
+            )
+        by_stage.setdefault(stage, []).append(task)
+
+    required = ["scope", "setup", "implement", "qa", "review", "deliver"]
+    missing = [stage for stage in required if not by_stage.get(stage)]
+    if missing:
+        raise ValueError(
+            f"Template '{tmpl.name}' uses topology_mode=delivery-default but is missing required stages: {', '.join(missing)}"
+        )
+
+    scope_subjects = [task.subject for task in by_stage["scope"]]
+    setup_subjects = [task.subject for task in by_stage["setup"]]
+    implement_subjects = [task.subject for task in by_stage["implement"]]
+    qa_subjects = [task.subject for task in by_stage["qa"]]
+    review_subjects = [task.subject for task in by_stage["review"]]
+
+    resolved_tasks: list[TaskDef] = []
+    for task in tmpl.tasks:
+        stage = task.stage.strip().lower()
+        updates: dict[str, object] = {}
+        if stage == "setup" and not task.blocked_by:
+            updates["blocked_by"] = list(scope_subjects)
+        elif stage == "implement" and not task.blocked_by:
+            updates["blocked_by"] = list(setup_subjects)
+        elif stage == "qa":
+            if not task.blocked_by:
+                updates["blocked_by"] = list(implement_subjects)
+            if not task.on_fail:
+                updates["on_fail"] = list(implement_subjects)
+        elif stage == "review":
+            if not task.blocked_by:
+                updates["blocked_by"] = list(qa_subjects)
+            if not task.on_fail:
+                updates["on_fail"] = list(implement_subjects)
+        elif stage == "deliver" and not task.blocked_by:
+            updates["blocked_by"] = list(review_subjects)
+
+        resolved_tasks.append(task.model_copy(update=updates) if updates else task)
+
+    return tmpl.model_copy(update={"tasks": resolved_tasks})
+
 
 def _parse_toml(path: Path) -> TemplateDef:
     """Parse a TOML template file into a TemplateDef."""
@@ -89,15 +215,17 @@ def _parse_toml(path: Path) -> TemplateDef:
     # Parse tasks
     tasks = [TaskDef(**t) for t in tmpl.get("tasks", [])]
 
-    return TemplateDef(
+    parsed = TemplateDef(
         name=tmpl.get("name", path.stem),
         description=tmpl.get("description", ""),
         command=tmpl.get("command", ["openclaw"]),
         backend=tmpl.get("backend", "tmux"),
+        topology_mode=tmpl.get("topology_mode", "explicit"),
         leader=leader,
         agents=agents,
         tasks=tasks,
     )
+    return resolve_template_topology(parsed)
 
 
 def load_template(name: str) -> TemplateDef:

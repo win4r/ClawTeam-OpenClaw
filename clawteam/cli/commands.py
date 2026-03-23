@@ -9,11 +9,28 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import os
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from clawteam import __version__
+from clawteam.delivery.failure_notifier import notify_task_failure
+from clawteam.delivery.release_notifier import notify_task_release
+from clawteam.services import (
+    RuntimeOrchestrator,
+    TaskReleaseContext,
+    TaskReleaseRequest,
+    TaskTransitionValidationError,
+    TaskUpdateContext,
+    TaskUpdateRequest,
+    describe_release_action,
+    execute_task_release,
+    execute_task_update,
+    release_task_to_owner,
+    wake_tasks_to_pending,
+)
 
 app = typer.Typer(
     name="clawteam",
@@ -60,6 +77,18 @@ def main(
         import os
         os.environ["CLAWTEAM_DATA_DIR"] = data_dir
         _data_dir = data_dir
+    else:
+        try:
+            from clawteam.identity import resolve_runtime_data_dir
+
+            runtime_data_dir = resolve_runtime_data_dir()
+            if runtime_data_dir:
+                import os
+
+                os.environ.setdefault("CLAWTEAM_DATA_DIR", runtime_data_dir)
+                _data_dir = runtime_data_dir
+        except Exception:
+            pass
     if transport:
         import os
         os.environ["CLAWTEAM_TRANSPORT"] = transport
@@ -78,6 +107,49 @@ def _output(data: dict | list, human_fn=None):
         human_fn(data)
     else:
         print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _require_team_identity(team: str):
+    import os
+
+    from clawteam.identity import AgentIdentity
+
+    identity = AgentIdentity.from_env()
+    if not identity.team_name or identity.agent_name == "agent":
+        _output(
+            {
+                "error": (
+                    "Missing ClawTeam identity for this OpenClaw session. "
+                    "Spawn or resume the worker through clawteam so the session key maps to a team member."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    if identity.team_name != team:
+        _output(
+            {
+                "error": (
+                    f"Identity team mismatch: session belongs to '{identity.team_name}', "
+                    f"but command targeted '{team}'."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    if not identity.data_dir:
+        _output(
+            {
+                "error": (
+                    "Missing ClawTeam data_dir for this OpenClaw session. "
+                    "Respawn the worker through clawteam so the session key maps to the correct team storage."
+                )
+            },
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+    os.environ["CLAWTEAM_DATA_DIR"] = identity.data_dir
+    return identity
 
 
 # ============================================================================
@@ -384,12 +456,11 @@ def team_approve_join(
     assigned_name: Optional[str] = typer.Option(None, "--assigned-name", help="Override proposed name"),
 ):
     """Approve a join request (approveJoin)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import MessageType
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
 
     leader_inbox = TeamManager.get_leader_inbox(team) or identity.agent_name
@@ -452,12 +523,11 @@ def team_reject_join(
     reason: str = typer.Option("", "--reason", "-r", help="Rejection reason"),
 ):
     """Reject a join request (rejectJoin)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import MessageType
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
 
     leader_inbox = TeamManager.get_leader_inbox(team) or identity.agent_name
@@ -579,11 +649,11 @@ def inbox_send(
     from_agent: Optional[str] = typer.Option(None, "--from", "-f", help="Override sender name (default: from env identity)"),
 ):
     """Send a point-to-point message (write)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.models import MessageType
 
-    sender = from_agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    sender = from_agent or identity.agent_name
     mailbox = MailboxManager(team)
     mt = MessageType(msg_type)
     msg = mailbox.send(
@@ -606,11 +676,11 @@ def inbox_broadcast(
     from_agent: Optional[str] = typer.Option(None, "--from", "-f", help="Override sender name (default: from env identity)"),
 ):
     """Broadcast a message to all team members (broadcast)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.models import MessageType
 
-    sender = from_agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    sender = from_agent or identity.agent_name
     mailbox = MailboxManager(team)
     mt = MessageType(msg_type)
     messages = mailbox.broadcast(
@@ -628,16 +698,16 @@ def inbox_receive(
     team: str = typer.Argument(..., help="Team name"),
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
     limit: int = typer.Option(10, "--limit", "-l", help="Max messages to receive"),
+    ack: bool = typer.Option(False, "--ack", help="Send ack messages back to original senders for received messages"),
 ):
     """Receive and consume messages from inbox."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
-    messages = mailbox.receive(agent_name, limit=limit)
+    messages = mailbox.receive(agent_name, limit=limit, acknowledge=ack)
 
     data = [_dump(m) for m in messages]
 
@@ -661,11 +731,10 @@ def inbox_peek(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Peek at messages without consuming them."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
@@ -723,6 +792,7 @@ def inbox_watch(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
     poll_interval: float = typer.Option(1.0, "--poll-interval", "-p", help="Poll interval in seconds"),
     exec_cmd: Optional[str] = typer.Option(None, "--exec", "-e", help="Shell command to run for each new message (msg data in env vars)"),
+    ack: bool = typer.Option(False, "--ack", help="Send ack messages back to original senders for received messages"),
 ):
     """Watch inbox for new messages (blocking, Ctrl+C to stop).
 
@@ -730,12 +800,11 @@ def inbox_watch(
     via env vars: CLAWTEAM_MSG_FROM, CLAWTEAM_MSG_TO, CLAWTEAM_MSG_CONTENT,
     CLAWTEAM_MSG_TYPE, CLAWTEAM_MSG_TIMESTAMP, CLAWTEAM_MSG_JSON.
     """
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.watcher import InboxWatcher
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
     mailbox = MailboxManager(team)
 
@@ -751,6 +820,7 @@ def inbox_watch(
         poll_interval=poll_interval,
         json_output=_json_output,
         exec_cmd=exec_cmd,
+        acknowledge=ack,
     )
     watcher.watch()
 
@@ -771,6 +841,7 @@ def task_create(
     owner: Optional[str] = typer.Option(None, "--owner", "-o", help="Owner agent name"),
     blocks: Optional[str] = typer.Option(None, "--blocks", help="Comma-separated task IDs this blocks"),
     blocked_by: Optional[str] = typer.Option(None, "--blocked-by", help="Comma-separated task IDs this is blocked by"),
+    on_fail: Optional[str] = typer.Option(None, "--on-fail", help="Comma-separated task IDs to reopen when this task fails regularly after it has actually started"),
 ):
     """Create a new task (TaskCreate)."""
     from clawteam.team.tasks import TaskStore
@@ -778,6 +849,8 @@ def task_create(
     store = TaskStore(team)
     blocks_list = [b.strip() for b in blocks.split(",") if b.strip()] if blocks else []
     blocked_by_list = [b.strip() for b in blocked_by.split(",") if b.strip()] if blocked_by else []
+    on_fail_list = [b.strip() for b in on_fail.split(",") if b.strip()] if on_fail else []
+    metadata = {"on_fail": on_fail_list} if on_fail_list else None
 
     task = store.create(
         subject=subject,
@@ -785,6 +858,7 @@ def task_create(
         owner=owner or "",
         blocks=blocks_list,
         blocked_by=blocked_by_list,
+        metadata=metadata,
     )
 
     data = _dump(task)
@@ -826,6 +900,8 @@ def task_get(
             console.print(f"  Blocks: {', '.join(d['blocks'])}")
         if d.get('blockedBy'):
             console.print(f"  Blocked by: {', '.join(d['blockedBy'])}")
+        if d.get('metadata', {}).get('on_fail'):
+            console.print(f"  On fail: {', '.join(d['metadata']['on_fail'])}")
 
     _output(data, _human)
 
@@ -834,48 +910,191 @@ def task_get(
 def task_update(
     team: str = typer.Argument(..., help="Team name"),
     task_id: str = typer.Argument(..., help="Task ID"),
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="New status: pending, in_progress, completed, blocked"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="New status: pending, in_progress, completed, blocked, failed"),
     owner: Optional[str] = typer.Option(None, "--owner", "-o", help="New owner"),
     subject: Optional[str] = typer.Option(None, "--subject", help="New subject"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="New description"),
     add_blocks: Optional[str] = typer.Option(None, "--add-blocks", help="Comma-separated task IDs this blocks"),
     add_blocked_by: Optional[str] = typer.Option(None, "--add-blocked-by", help="Comma-separated task IDs blocking this"),
+    add_on_fail: Optional[str] = typer.Option(None, "--add-on-fail", help="Comma-separated task IDs to reopen when this task fails regularly after it has actually started"),
+    failure_kind: Optional[str] = typer.Option(None, "--failure-kind", help="Failure routing kind when status=failed: regular or complex"),
+    failure_note: Optional[str] = typer.Option(None, "--failure-note", help="Concrete failure summary/evidence when status=failed"),
+    failure_root_cause: Optional[str] = typer.Option(None, "--failure-root-cause", help="Root cause summary when status=failed"),
+    failure_evidence: Optional[str] = typer.Option(None, "--failure-evidence", help="Concrete evidence when status=failed"),
+    failure_recommended_next_owner: Optional[str] = typer.Option(None, "--failure-recommended-next-owner", help="Suggested next owner when status=failed"),
+    failure_recommended_action: Optional[str] = typer.Option(None, "--failure-recommended-action", help="Suggested next action when status=failed"),
+    wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
 ):
     """Update a task (TaskUpdate)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.models import TaskStatus
     from clawteam.team.tasks import TaskLockError, TaskStore
 
+    identity = _require_team_identity(team)
     store = TaskStore(team)
     ts = TaskStatus(status) if status else None
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
+    add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
 
-    caller = AgentIdentity.from_env().agent_name
+    caller = identity.agent_name
+    ctx = TaskUpdateContext(
+        store=store,
+        team=team,
+        runtime=RuntimeOrchestrator(team=team),
+        release_notifier=notify_task_release,
+        failure_notifier=notify_task_failure,
+    )
+    request = TaskUpdateRequest(
+        status=ts,
+        owner=owner,
+        subject=subject,
+        description=description,
+        add_blocks=blocks_list,
+        add_blocked_by=blocked_by_list,
+        add_on_fail=add_on_fail_list,
+        failure_kind=failure_kind,
+        failure_note=failure_note,
+        failure_root_cause=failure_root_cause,
+        failure_evidence=failure_evidence,
+        failure_recommended_next_owner=failure_recommended_next_owner,
+        failure_recommended_action=failure_recommended_action,
+        execution_id=os.environ.get("CLAWTEAM_TASK_EXECUTION_ID") or None,
+        wake_owner=wake_owner,
+        message=message or "",
+        force=force,
+    )
 
     try:
-        task = store.update(
-            task_id,
-            status=ts,
-            owner=owner,
-            subject=subject,
-            description=description,
-            add_blocks=blocks_list,
-            add_blocked_by=blocked_by_list,
+        result = execute_task_update(
+            task_id=task_id,
             caller=caller,
-            force=force,
+            request=request,
+            ctx=ctx,
         )
+    except KeyError:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    except TaskTransitionValidationError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
     except TaskLockError as e:
         _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
         raise typer.Exit(1)
-
-    if not task:
-        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+    except RuntimeError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
+    task = result.task
+    effects = result.effects
+
     data = _dump(task)
-    _output(data, lambda d: console.print(f"[green]OK[/green] Task {d['id']} updated"))
+    if effects.failure_notice is not None:
+        data.update(effects.failure_notice)
+    if effects.auto_releases:
+        data["autoReleasedTasks"] = effects.auto_releases
+    if effects.wake is None:
+        def _human(d):
+            console.print(f"[green]OK[/green] Task {d['id']} updated")
+            for release in d.get("autoReleasedTasks", []):
+                console.print(describe_release_action(release))
+
+        _output(data, _human)
+    else:
+        data.update(effects.wake)
+
+        def _human(d):
+            console.print(f"[green]OK[/green] Task {d['id']} updated")
+            console.print(f"  Owner alive before: {d['ownerAliveBefore']}")
+            if d.get("respawned"):
+                console.print(f"  Respawned: yes ({d['spawn'].get('backend', '')})")
+                if d["spawn"].get("cwd"):
+                    console.print(f"  Workspace: {d['spawn']['cwd']}")
+            else:
+                console.print("  Respawned: no")
+            if d.get("replacementRequired"):
+                console.print(
+                    f"  Replacement cleanup: cleared {len(d.get('clearedTaskIds', []))} unfinished task(s); "
+                    "leader must re-dispatch fresh tasks."
+                )
+            for release in d.get("autoReleasedTasks", []):
+                console.print(describe_release_action(release))
+
+        _output(data, _human)
+
+
+@task_app.command("release")
+def task_release(
+    team: str = typer.Argument(..., help="Team name"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+    message: str = typer.Option("", "--message", "-m", help="Optional release instruction to send to the owner"),
+    respawn: bool = typer.Option(True, "--respawn/--no-respawn", help="Respawn the owner automatically if their worker is dead"),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Fallback repo/workspace path when no registered workspace exists"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force override task lock while releasing"),
+):
+    """Release a task back to its owner, notify them, and auto-respawn if needed."""
+    from clawteam.team.tasks import TaskLockError, TaskStore
+
+    identity = _require_team_identity(team)
+    caller = identity.agent_name
+    store = TaskStore(team)
+    ctx = TaskReleaseContext(
+        team=team,
+        store=store,
+        runtime=RuntimeOrchestrator(team=team, repo=repo),
+        release_notifier=notify_task_release,
+        repo=repo,
+    )
+    request = TaskReleaseRequest(
+        message=message,
+        respawn=respawn,
+        force=force,
+    )
+
+    try:
+        result = execute_task_release(
+            task_id=task_id,
+            caller=caller,
+            request=request,
+            ctx=ctx,
+        )
+    except KeyError:
+        _output({"error": f"Task '{task_id}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    except ValueError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+    except TaskLockError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]Lock conflict: {d['error']}[/red]"))
+        raise typer.Exit(1)
+    except RuntimeError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    task = result.task
+    release = result.release
+
+    data = _dump(task)
+    data.update(release)
+
+    def _human(d):
+        console.print(f"[green]OK[/green] Task {d['id']} released to {d['owner']}")
+        console.print(f"  Status: {d['status']}")
+        console.print(f"  Owner alive before: {d['ownerAliveBefore']}")
+        if d.get("respawned"):
+            console.print(f"  Respawned: yes ({d['spawn'].get('backend', '')})")
+            if d["spawn"].get("cwd"):
+                console.print(f"  Workspace: {d['spawn']['cwd']}")
+        else:
+            console.print("  Respawned: no")
+        if d.get("replacementRequired"):
+            console.print(
+                f"  Replacement cleanup: cleared {len(d.get('clearedTaskIds', []))} unfinished task(s); "
+                "leader must re-dispatch fresh tasks."
+            )
+
+    _output(data, _human)
 
 
 @task_app.command("list")
@@ -976,11 +1195,11 @@ def cost_report(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Report token usage and cost for an agent."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.costs import CostStore
     from clawteam.team.manager import TeamManager
 
-    agent_name = agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
     store = CostStore(team)
     event = store.report(
         agent_name=agent_name,
@@ -1117,12 +1336,10 @@ def task_wait(
     if not agent_name:
         agent_name = TeamManager.get_leader_inbox(team)
     if not agent_name:
-        from clawteam.identity import AgentIdentity
-        identity = AgentIdentity.from_env()
+        identity = _require_team_identity(team)
         agent_name = TeamManager.resolve_inbox(team, identity.agent_name, identity.user)
     elif agent:
-        from clawteam.identity import AgentIdentity
-        identity = AgentIdentity.from_env()
+        identity = _require_team_identity(team)
         agent_name = TeamManager.resolve_inbox(team, agent_name, identity.user)
 
     mailbox = MailboxManager(team)
@@ -1264,10 +1481,10 @@ def session_save(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
 ):
     """Save agent session for later resume."""
-    from clawteam.identity import AgentIdentity
     from clawteam.spawn.sessions import SessionStore
 
-    agent_name = agent or AgentIdentity.from_env().agent_name
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
     store = SessionStore(team)
     session = store.save(
         agent_name=agent_name,
@@ -1395,11 +1612,10 @@ def plan_approve(
     feedback: str = typer.Option("", "--feedback", "-f", help="Optional feedback"),
 ):
     """Approve a submitted plan (approvePlan)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.plan import PlanManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     pm = PlanManager(team, mailbox)
     pm.approve_plan(leader_name=identity.agent_name, plan_id=plan_id, agent_name=agent, feedback=feedback)
@@ -1418,11 +1634,10 @@ def plan_reject(
     feedback: str = typer.Option("", "--feedback", "-f", help="Rejection feedback"),
 ):
     """Reject a submitted plan (rejectPlan)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.plan import PlanManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     pm = PlanManager(team, mailbox)
     pm.reject_plan(leader_name=identity.agent_name, plan_id=plan_id, agent_name=agent, feedback=feedback)
@@ -1469,11 +1684,10 @@ def lifecycle_approve_shutdown(
     agent: str = typer.Argument(..., help="Agent approving shutdown (self)"),
 ):
     """Approve a shutdown request (approveShutdown). Agent agrees to shut down."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     lm = LifecycleManager(team, mailbox)
     leader_name = identity.agent_name
@@ -1493,11 +1707,10 @@ def lifecycle_reject_shutdown(
     reason: str = typer.Option("", "--reason", "-r", help="Rejection reason"),
 ):
     """Reject a shutdown request (rejectShutdown)."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     mailbox = MailboxManager(team)
     lm = LifecycleManager(team, mailbox)
     lm.reject_shutdown(agent_name=agent, request_id=request_id, requester_name=identity.agent_name, reason=reason)
@@ -1515,12 +1728,11 @@ def lifecycle_idle(
     task_status: Optional[str] = typer.Option(None, "--task-status", help="Status of last task"),
 ):
     """Send idle notification to leader."""
-    from clawteam.identity import AgentIdentity
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
 
-    identity = AgentIdentity.from_env()
+    identity = _require_team_identity(team)
     team_name = team
     leader_name = TeamManager.get_leader_name(team_name)
     if not leader_name:
@@ -1750,6 +1962,95 @@ def spawn_agent(
 
 
 # ============================================================================
+# Worker Runtime Commands
+# ============================================================================
+
+worker_app = typer.Typer(help="Formal ClawTeam worker runtime")
+app.add_typer(worker_app, name="worker")
+
+
+@worker_app.command("run")
+def worker_run(
+    team: str = typer.Argument(..., help="Team name"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Worker agent name (default: resolved identity)"),
+    command: str = typer.Option("openclaw", "--command", help="Underlying agent CLI (currently openclaw)"),
+    command_arg: list[str] = typer.Option(None, "--command-arg", help="Extra args for the underlying agent CLI"),
+    startup_prompt_file: str = typer.Option("", "--startup-prompt-file", help="Path to startup prompt text to prepend on each dispatched task"),
+    poll_interval: float = typer.Option(2.0, "--poll-interval", help="Idle poll interval in seconds"),
+    timeout_seconds: int = typer.Option(900, "--timeout-seconds", help="Underlying agent turn timeout in seconds"),
+    once: bool = typer.Option(False, "--once", help="Run a single iteration and exit"),
+):
+    """Run the formal ClawTeam worker loop.
+
+    This is the real execution runtime for OpenClaw-backed workers:
+    receive/ack -> claim -> dispatch agent turn -> continue polling.
+    """
+    from clawteam.identity import AgentIdentity
+    from clawteam.worker_runtime import (
+        clear_replaced_worker_unfinished_tasks,
+        load_startup_prompt,
+        worker_loop,
+    )
+
+    identity = _require_team_identity(team)
+    agent_name = agent or identity.agent_name
+    if agent_name != identity.agent_name:
+        _output({"error": f"identity agent '{identity.agent_name}' does not match requested worker '{agent_name}'"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    os.environ.setdefault("CLAWTEAM_AGENT_NAME", identity.agent_name)
+    os.environ.setdefault("CLAWTEAM_AGENT_ID", identity.agent_id)
+    os.environ.setdefault("CLAWTEAM_AGENT_TYPE", identity.agent_type)
+    os.environ.setdefault("CLAWTEAM_TEAM_NAME", identity.team_name or team)
+    if identity.data_dir:
+        os.environ.setdefault("CLAWTEAM_DATA_DIR", identity.data_dir)
+
+    base_command = [command] + list(command_arg or [])
+    startup_prompt = load_startup_prompt(startup_prompt_file)
+    cleared_task_ids = clear_replaced_worker_unfinished_tasks(
+        team_name=team,
+        agent_name=agent_name,
+        data_dir=os.environ.get("CLAWTEAM_DATA_DIR") or None,
+    )
+    history = worker_loop(
+        team_name=team,
+        agent_name=agent_name,
+        startup_prompt=startup_prompt,
+        base_command=base_command,
+        timeout_seconds=timeout_seconds,
+        poll_interval=poll_interval,
+        cwd=os.environ.get("CLAWTEAM_WORKSPACE_DIR") or None,
+        once=once,
+    )
+    result = {
+        "iterations": history,
+        "count": len(history),
+        "replacementCleanup": {
+            "clearedTaskIds": cleared_task_ids,
+            "count": len(cleared_task_ids),
+        },
+    }
+
+    def _human(d):
+        last = d["iterations"][-1] if d["iterations"] else {}
+        console.print(f"[green]Worker runtime[/green] {agent_name} iteration(s): {d['count']}")
+        cleanup = d.get("replacementCleanup") or {}
+        if cleanup.get("count"):
+            console.print(
+                f"  Replacement cleanup: cleared {cleanup['count']} unfinished task(s): "
+                f"{', '.join(cleanup.get('clearedTaskIds', []))}"
+            )
+        if last:
+            console.print(f"  Last status: {last.get('status', '')}")
+            if last.get("taskId"):
+                console.print(f"  Task: {last['taskId']}")
+            if last.get("returncode") is not None:
+                console.print(f"  Agent return code: {last['returncode']}")
+
+    _output(result, _human)
+
+
+# ============================================================================
 # Identity Commands
 # ============================================================================
 
@@ -1769,6 +2070,7 @@ def identity_show():
         "user": identity.user,
         "agentType": identity.agent_type,
         "teamName": identity.team_name,
+        "dataDir": identity.data_dir,
         "isLeader": identity.is_leader,
         "planModeRequired": identity.plan_mode_required,
     }
@@ -1779,6 +2081,7 @@ def identity_show():
         console.print(f"User:       {d['user'] or '(none)'}")
         console.print(f"Agent Type: {d['agentType']}")
         console.print(f"Team:       {d['teamName'] or '(none)'}")
+        console.print(f"Data Dir:   {d['dataDir'] or '(none)'}")
         console.print(f"Is Leader:  {d['isLeader']}")
         console.print(f"Plan Mode:  {d['planModeRequired']}")
 
@@ -1791,29 +2094,37 @@ def identity_set(
     agent_name: Optional[str] = typer.Option(None, "--agent-name", help="Agent name"),
     agent_type: Optional[str] = typer.Option(None, "--agent-type", help="Agent type"),
     team: Optional[str] = typer.Option(None, "--team", help="Team name"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", help="ClawTeam data dir"),
+    shell: bool = typer.Option(False, "--shell", help="Print pure shell export lines only"),
 ):
     """Print shell export commands to set identity environment variables."""
+    import shlex
+
     lines = []
     if agent_id:
-        lines.append(f'export CLAWTEAM_AGENT_ID="{agent_id}"')
+        lines.append(f"export CLAWTEAM_AGENT_ID={shlex.quote(agent_id)}")
     if agent_name:
-        lines.append(f'export CLAWTEAM_AGENT_NAME="{agent_name}"')
+        lines.append(f"export CLAWTEAM_AGENT_NAME={shlex.quote(agent_name)}")
     if agent_type:
-        lines.append(f'export CLAWTEAM_AGENT_TYPE="{agent_type}"')
+        lines.append(f"export CLAWTEAM_AGENT_TYPE={shlex.quote(agent_type)}")
     if team:
-        lines.append(f'export CLAWTEAM_TEAM_NAME="{team}"')
+        lines.append(f"export CLAWTEAM_TEAM_NAME={shlex.quote(team)}")
+    if data_dir:
+        lines.append(f"export CLAWTEAM_DATA_DIR={shlex.quote(data_dir)}")
 
     if not lines:
-        console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team[/yellow]")
+        console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team, --data-dir[/yellow]")
         raise typer.Exit(1)
 
     output = "\n".join(lines)
     if _json_output:
         print(json.dumps({"exports": lines}))
+    elif shell:
+        print(output)
     else:
         console.print("Run the following to set your identity:\n")
         console.print(output)
-        console.print(f"\nOr use: eval $(clawteam identity set {' '.join(sys.argv[3:])})")
+        console.print(f"\nOr use: eval $(clawteam identity set --shell {' '.join(sys.argv[3:])})")
 
 
 # ============================================================================
@@ -2142,6 +2453,41 @@ def template_show(
 # Launch Command
 # ============================================================================
 
+def _bootstrap_entry_tasks(
+    *,
+    team_name: str,
+    store,
+    caller: str,
+    repo: str | None = None,
+) -> list[dict[str, object]]:
+    """Release root pending tasks so wake-gated workers can start the workflow."""
+    bootstrap_results: list[dict[str, object]] = []
+    for task in store.list_tasks():
+        if task.status.value != "pending" or task.blocked_by or not task.owner:
+            continue
+        release = release_task_to_owner(
+            team_name,
+            task,
+            caller=caller,
+            message=(
+                f"Bootstrap entry task {task.id}. This is a launch-time first-hop release; "
+                "start now and follow the workflow as declared."
+            ),
+            respawn=True,
+            repo=repo,
+            release_notifier=notify_task_release,
+        )
+        bootstrap_results.append(
+            {
+                "taskId": task.id,
+                "subject": task.subject,
+                "owner": task.owner,
+                "release": release,
+            }
+        )
+    return bootstrap_results
+
+
 @app.command("launch")
 def launch_team(
     template: str = typer.Argument(..., help="Template name (e.g., hedge-fund)"),
@@ -2159,7 +2505,7 @@ def launch_team(
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
-    from clawteam.templates import TemplateDef, load_template, render_task
+    from clawteam.templates import TemplateDef, instantiate_template, load_template
 
     # 1. Load template
     try:
@@ -2170,6 +2516,8 @@ def launch_team(
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
+    instantiated = instantiate_template(tmpl, goal=goal, team_name=t_name)
+    tmpl = instantiated.template
     be_name = backend or tmpl.backend
     cmd = command_override or tmpl.command
 
@@ -2202,12 +2550,34 @@ def launch_team(
 
     # 5. Create tasks
     ts = TaskStore(t_name)
+    created_task_ids: dict[str, str] = {}
     for task_def in tmpl.tasks:
-        ts.create(
+        missing_dependencies = [name for name in task_def.blocked_by if name not in created_task_ids]
+        if missing_dependencies:
+            console.print(
+                f"[red]Template task '{task_def.subject}' references unknown or not-yet-created blocked_by tasks: {', '.join(missing_dependencies)}[/red]"
+            )
+            raise typer.Exit(1)
+
+        missing_fail_targets = [name for name in task_def.on_fail if name not in created_task_ids]
+        if missing_fail_targets:
+            console.print(
+                f"[red]Template task '{task_def.subject}' references unknown or not-yet-created on_fail tasks: {', '.join(missing_fail_targets)}[/red]"
+            )
+            raise typer.Exit(1)
+
+        metadata = {}
+        if task_def.on_fail:
+            metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
+
+        task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
+            blocked_by=[created_task_ids[name] for name in task_def.blocked_by],
+            metadata=metadata,
         )
+        created_task_ids[task_def.subject] = task.id
 
     # 6. Get backend
     try:
@@ -2233,14 +2603,6 @@ def launch_team(
         a_id = agent_ids[agent.name]
         a_cmd = agent.command or cmd
 
-        # Variable substitution
-        rendered = render_task(
-            agent.task,
-            goal=goal,
-            team_name=t_name,
-            agent_name=agent.name,
-        )
-
         # Workspace
         cwd = None
         ws_branch = ""
@@ -2258,7 +2620,7 @@ def launch_team(
             agent_type=agent.type,
             team_name=t_name,
             leader_name=tmpl.leader.name,
-            task=rendered,
+            task=agent.task,
             user=_os.environ.get("CLAWTEAM_USER", ""),
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
@@ -2301,6 +2663,17 @@ def launch_team(
             table.add_row(s["name"], s["type"], s["id"])
         console.print(table)
         console.print()
+        bootstrap = _data.get("bootstrap") or []
+        if bootstrap:
+            console.print("[bold]Bootstrap:[/bold]")
+            for item in bootstrap:
+                release = item.get("release") or {}
+                owner = item.get("owner", "")
+                task_id = item.get("taskId", "")
+                respawned = " respawned" if release.get("respawned") else ""
+                sent = " wake-sent" if release.get("messageSent") else " wake-skipped"
+                console.print(f"  {task_id} -> {owner}:{sent}{respawned}")
+            console.print()
         if be_name == "tmux":
             console.print(f"[bold]Attach:[/bold] tmux attach -t clawteam-{t_name}")
         console.print(f"[bold]Board:[/bold]  clawteam board show {t_name}")

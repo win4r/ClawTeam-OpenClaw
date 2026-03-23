@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -36,7 +38,7 @@ class TmuxBackend(SpawnBackend):
         cwd: str | None = None,
         skip_permissions: bool = False,
     ) -> str:
-        if not shutil.which("tmux"):
+        if not _tmux_binary():
             return "Error: tmux not installed"
 
         session_name = f"clawteam-{team_name}"
@@ -57,6 +59,11 @@ class TmuxBackend(SpawnBackend):
         transport = os.environ.get("CLAWTEAM_TRANSPORT", "")
         if transport:
             env_vars["CLAWTEAM_TRANSPORT"] = transport
+        from clawteam.team.models import get_data_dir
+
+        data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "") or str(get_data_dir())
+        if data_dir:
+            env_vars["CLAWTEAM_DATA_DIR"] = data_dir
         if cwd:
             env_vars["CLAWTEAM_WORKSPACE_DIR"] = cwd
         if env:
@@ -67,9 +74,16 @@ class TmuxBackend(SpawnBackend):
 
         normalized_command = normalize_spawn_command(command)
 
+        from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
+
         command_error = validate_spawn_command(normalized_command, path=env_vars["PATH"], cwd=cwd)
         if command_error:
             return command_error
+
+        existing_state = get_agent_runtime_state(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        if existing_state != "missing":
+            terminate_agent(team_name, agent_name, env_vars.get("CLAWTEAM_DATA_DIR", ""))
+        _kill_duplicate_tmux_windows(session_name, agent_name)
 
         export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in env_vars.items())
 
@@ -81,20 +95,29 @@ class TmuxBackend(SpawnBackend):
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
-        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
+        session_key = ""
+        prompt_file = ""
+        # Formal OpenClaw worker runtime: run clawteam worker loop, not raw tui.
         if _is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
-            if final_command[0].endswith("openclaw") and len(final_command) == 1:
-                final_command = [final_command[0], "tui", "--session", session_key]
-                if prompt:
-                    final_command.extend(["--message", prompt])
-            elif "tui" in final_command:
-                final_command.extend(["--session", session_key])
-                if prompt:
-                    final_command.extend(["--message", prompt])
-            elif "agent" in final_command:
-                if prompt:
-                    final_command.extend(["--message", prompt])
+            if prompt:
+                prompt_path = Path(tempfile.gettempdir()) / f"clawteam-worker-{team_name}-{agent_name}.prompt.txt"
+                prompt_path.write_text(prompt, encoding="utf-8")
+                prompt_file = str(prompt_path)
+            final_command = [
+                clawteam_bin,
+                "worker",
+                "run",
+                team_name,
+                "--agent",
+                agent_name,
+                "--command",
+                normalized_command[0],
+            ]
+            for arg in normalized_command[1:]:
+                final_command.extend(["--command-arg", arg])
+            if prompt_file:
+                final_command.extend(["--startup-prompt-file", prompt_file])
 
         if _is_nanobot_command(normalized_command):
             if cwd and not _command_has_workspace_arg(normalized_command):
@@ -156,6 +179,18 @@ class TmuxBackend(SpawnBackend):
             return (
                 f"Error: agent command '{normalized_command[0]}' exited immediately after launch. "
                 "Verify the CLI works standalone before using it with clawteam spawn."
+            )
+        duplicates = _list_matching_tmux_windows(session_name, agent_name)
+        if len(duplicates) != 1:
+            for duplicate_target in duplicates[1:]:
+                subprocess.run(
+                    ["tmux", "kill-window", "-t", duplicate_target],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            return (
+                f"Error: expected exactly one runtime window for agent '{agent_name}' in team '{team_name}' "
+                f"after launch, found {len(duplicates)}."
             )
 
         _confirm_workspace_trust_if_prompted(target, normalized_command)
@@ -235,6 +270,10 @@ class TmuxBackend(SpawnBackend):
             tmux_target=target,
             pid=pane_pid,
             command=list(normalized_command),
+            session_key=session_key,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            data_dir=env_vars.get("CLAWTEAM_DATA_DIR", ""),
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"
@@ -316,6 +355,47 @@ class TmuxBackend(SpawnBackend):
         session = TmuxBackend.session_name(team_name)
         subprocess.run(["tmux", "attach-session", "-t", session])
         return result
+
+
+def _tmux_binary() -> str:
+    return shutil.which("tmux") or ""
+
+
+def _list_matching_tmux_windows(session_name: str, agent_name: str) -> list[str]:
+    result = subprocess.run(
+        ["tmux", "list-windows", "-t", session_name, "-F", "#{window_index} #{window_name}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    matches: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        window_index, window_name = parts
+        if window_name == agent_name:
+            matches.append(f"{session_name}:{window_index}")
+    return matches
+
+
+def _kill_duplicate_tmux_windows(session_name: str, agent_name: str) -> None:
+    matches = _list_matching_tmux_windows(session_name, agent_name)
+    if len(matches) <= 1:
+        return
+
+    def sort_key(target: str) -> tuple[int, str]:
+        match = re.search(r":(\d+)$", target)
+        return (int(match.group(1)) if match else 10**9, target)
+
+    for duplicate_target in sorted(matches, key=sort_key)[1:]:
+        subprocess.run(
+            ["tmux", "kill-window", "-t", duplicate_target],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
 
 def _is_claude_command(command: list[str]) -> bool:

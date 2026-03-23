@@ -121,6 +121,7 @@ class TestEnums:
         assert TaskStatus.blocked.value == "blocked"
         assert TaskStatus.in_progress.value == "in_progress"
         assert TaskStatus.completed.value == "completed"
+        assert TaskStatus.failed.value == "failed"
 
     def test_member_status_values(self):
         assert MemberStatus.active.value == "active"

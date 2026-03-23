@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from typing import Callable
 
 from clawteam.team.models import MessageType, TeamMessage, get_data_dir
 from clawteam.transport.base import Transport
@@ -152,10 +153,104 @@ class MailboxManager:
                 messages.append(msg)
         return messages
 
-    def receive(self, agent_name: str, limit: int = 10) -> list[TeamMessage]:
-        """Receive and delete messages from an agent's inbox (FIFO)."""
+    def _ack_message(
+        self,
+        *,
+        agent_name: str,
+        msg: TeamMessage,
+        acknowledge_status: str | None = None,
+    ) -> None:
+        if msg.type == MessageType.ack or not msg.from_agent or not msg.request_id:
+            return
+        ack_status = acknowledge_status or "acknowledged"
+        self.send(
+            from_agent=agent_name,
+            to=msg.from_agent,
+            msg_type=MessageType.ack,
+            request_id=msg.request_id,
+            content=f"Ack: received message {msg.request_id}",
+            key=msg.key,
+            last_task=msg.last_task,
+            status=ack_status,
+        )
+
+    def receive(
+        self,
+        agent_name: str,
+        limit: int = 10,
+        acknowledge: bool = False,
+        acknowledge_status: str | None = None,
+    ) -> list[TeamMessage]:
+        """Receive and delete messages from an agent's inbox (FIFO).
+
+        When acknowledge=True, send an explicit ack back to the original sender for
+        each received message that has both a sender and request_id.
+        """
         raw = self._transport.fetch(agent_name, limit=limit, consume=True)
-        return [TeamMessage.model_validate(json.loads(r)) for r in raw]
+        messages = [TeamMessage.model_validate(json.loads(r)) for r in raw]
+        if acknowledge:
+            for msg in messages:
+                self._ack_message(
+                    agent_name=agent_name,
+                    msg=msg,
+                    acknowledge_status=acknowledge_status,
+                )
+        return messages
+
+    def receive_matching(
+        self,
+        agent_name: str,
+        predicate: Callable[[TeamMessage], bool],
+        *,
+        limit: int = 50,
+        acknowledge: bool = False,
+        acknowledge_status: str | None = None,
+    ) -> list[TeamMessage]:
+        """Consume only messages matching a predicate, preserving others in inbox order.
+
+        This is currently supported for the default file-backed transport used by the
+        worker runtime. Other transports fall back to broad receive semantics.
+        """
+        from clawteam.transport.file import FileTransport, _inbox_dir
+
+        if not isinstance(self._transport, FileTransport):
+            messages = self.receive(
+                agent_name,
+                limit=limit,
+                acknowledge=acknowledge,
+                acknowledge_status=acknowledge_status,
+            )
+            return [msg for msg in messages if predicate(msg)]
+
+        inbox = _inbox_dir(self.team_name, agent_name)
+        matched: list[TeamMessage] = []
+        for path in sorted(inbox.glob("msg-*.json"))[:limit]:
+            try:
+                raw = path.read_bytes()
+                msg = TeamMessage.model_validate(json.loads(raw))
+            except Exception:
+                continue
+            if not predicate(msg):
+                continue
+            consumed = path.with_suffix(".consumed")
+            try:
+                path.rename(consumed)
+            except OSError:
+                continue
+            try:
+                live_msg = TeamMessage.model_validate(json.loads(consumed.read_bytes()))
+            except Exception:
+                consumed.unlink(missing_ok=True)
+                continue
+            consumed.unlink(missing_ok=True)
+            matched.append(live_msg)
+            if acknowledge:
+                self._ack_message(
+                    agent_name=agent_name,
+                    msg=live_msg,
+                    acknowledge_status=acknowledge_status,
+                )
+        return matched
 
     def peek(self, agent_name: str) -> list[TeamMessage]:
         """Return pending messages without consuming them."""

@@ -245,6 +245,7 @@ function SummaryCards({ summary }) {
     { key: 'in_progress', label: 'In Progress', color: 'var(--blue)' },
     { key: 'completed', label: 'Completed', color: 'var(--green)' },
     { key: 'blocked', label: 'Blocked', color: 'var(--red)' },
+    { key: 'failed', label: 'Failed', color: 'var(--purple)' },
   ];
   return (
     <div style={S.summaryGrid}>
@@ -328,6 +329,9 @@ function TaskCard({ task, status }) {
       {status === 'blocked' && task.blockedBy && task.blockedBy.length > 0 && (
         <div style={S.taskBlocked}>blocked by: {task.blockedBy.join(', ')}</div>
       )}
+      {status === 'failed' && (task.metadata?.failure_note || task.metadata?.failure_root_cause) && (
+        <div style={S.taskBlocked}>reason: {task.metadata?.failure_note || task.metadata?.failure_root_cause}</div>
+      )}
     </div>
   );
 }
@@ -338,6 +342,7 @@ function Kanban({ tasks }) {
     { key: 'in_progress', label: 'In Progress', color: 'var(--blue)' },
     { key: 'completed', label: 'Completed', color: 'var(--green)' },
     { key: 'blocked', label: 'Blocked', color: 'var(--red)' },
+    { key: 'failed', label: 'Failed', color: 'var(--purple)' },
   ];
   return (
     <div style={S.kanban}>

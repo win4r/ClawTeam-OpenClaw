@@ -47,10 +47,11 @@ class BoardCollector:
             "in_progress": [],
             "completed": [],
             "blocked": [],
+            "failed": [],
         }
         for t in all_tasks:
             td = json.loads(t.model_dump_json(by_alias=True, exclude_none=True))
-            grouped[t.status.value].append(td)
+            grouped.setdefault(t.status.value, []).append(td)
 
         summary = {
             s: len(grouped[s]) for s in grouped
