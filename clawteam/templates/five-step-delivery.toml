@@ -423,7 +423,7 @@ subject = "Review code quality, maintainability, and delivery readiness"
 owner = "review1"
 stage = "review"
 message_type = "REVIEW_RESULT"
-required_sections = ["decision", "summary", "required_fixes", "evidence", "validation", "next_action"]
+required_sections = ["decision", "summary", "architecture_review", "required_fixes", "evidence", "validation", "next_action"]
 blocked_by = ["Run main-flow QA on the real change", "Run edge-case and regression QA on the real change"]
 on_fail = ["Implement backend/data changes with real validation", "Implement frontend/UI changes with real validation"]
 description = """Goal:
@@ -435,9 +435,10 @@ Context:
 Done when:
 1. 已检查关键改动文件和核心 diff
 2. 已判断改动是否与目标一致
-3. 已给出必须修复项和可选建议
-4. 已明确结论：可交付 / 需回退 Implement
-5. 已给出进入 Deliver 的依据或阻塞原因
+3. 已完成架构审查：说明改动属于哪一层（workflow / task / execution / runtime），并检查状态边界、并发一致性、失败恢复与兼容性风险
+4. 已给出必须修复项和可选建议
+5. 已明确结论：可交付 / 需回退 Implement
+6. 已给出进入 Deliver 的依据或阻塞原因
 
 Do not:
 - 不要把 code review 退化成重复 QA
@@ -449,6 +450,8 @@ Report as exact block:
 REVIEW_RESULT
 decision: <approve|return_to_implement>
 summary: <short result>
+architecture_review:
+- <layer ownership, state/concurrency/recovery/compatibility findings, or none>
 required_fixes:
 - <must-fix item or none>
 evidence:

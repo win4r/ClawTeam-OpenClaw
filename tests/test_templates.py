@@ -199,6 +199,7 @@ class TestLoadBuiltinTemplate:
         assert by_subject["Review code quality, maintainability, and delivery readiness"].required_sections == [
             "decision",
             "summary",
+            "architecture_review",
             "required_fixes",
             "evidence",
             "validation",
