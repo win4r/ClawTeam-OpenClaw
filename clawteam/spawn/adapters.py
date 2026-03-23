@@ -73,7 +73,10 @@ class NativeCliAdapter:
             if interactive and is_claude_command(normalized_command):
                 post_launch_prompt = prompt
             elif is_codex_command(normalized_command):
-                final_command.append(prompt)
+                if interactive and not _is_codex_noninteractive_command(normalized_command):
+                    post_launch_prompt = prompt
+                else:
+                    final_command.append(prompt)
             else:
                 final_command.extend(["-p", prompt])
 
@@ -99,6 +102,30 @@ def is_claude_command(command: list[str]) -> bool:
 def is_codex_command(command: list[str]) -> bool:
     """Check if the command is a Codex CLI invocation."""
     return command_basename(command) in ("codex", "codex-cli")
+
+
+def _is_codex_noninteractive_command(command: list[str]) -> bool:
+    """Return True when Codex is invoked in a non-interactive subcommand mode."""
+    if len(command) < 2:
+        return False
+    return command[1] in {
+        "exec",
+        "e",
+        "review",
+        "resume",
+        "fork",
+        "cloud",
+        "mcp",
+        "mcp-server",
+        "app-server",
+        "completion",
+        "sandbox",
+        "debug",
+        "apply",
+        "login",
+        "logout",
+        "features",
+    }
 
 
 def is_nanobot_command(command: list[str]) -> bool:

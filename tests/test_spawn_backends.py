@@ -10,6 +10,7 @@ from clawteam.spawn.subprocess_backend import SubprocessBackend
 from clawteam.spawn.tmux_backend import (
     TmuxBackend,
     _confirm_workspace_trust_if_prompted,
+    _dismiss_codex_update_prompt_if_present,
     _inject_prompt_via_buffer,
     _wait_for_cli_ready,
 )
@@ -122,6 +123,7 @@ def test_tmux_backend_exports_spawn_path_for_agent_commands(monkeypatch, tmp_pat
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", "/tmp/clawteam-data")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "demo-project")
+    monkeypatch.setenv("PROGRAMFILES(X86)", "should-not-be-exported")
     clawteam_bin = tmp_path / "venv" / "bin" / "clawteam"
     clawteam_bin.parent.mkdir(parents=True)
     clawteam_bin.write_text("#!/bin/sh\n")
@@ -176,6 +178,7 @@ def test_tmux_backend_exports_spawn_path_for_agent_commands(monkeypatch, tmp_pat
     assert f"export CLAWTEAM_BIN={clawteam_bin}" in full_cmd
     assert "export CLAWTEAM_DATA_DIR=/tmp/clawteam-data" in full_cmd
     assert "export GOOGLE_CLOUD_PROJECT=demo-project" in full_cmd
+    assert "PROGRAMFILES(X86)" not in full_cmd
     assert f"{clawteam_bin} lifecycle on-exit --team demo-team --agent worker1" in full_cmd
 
 
@@ -437,6 +440,122 @@ def test_tmux_backend_confirms_codex_workspace_trust_prompt(monkeypatch):
     confirmed = _confirm_workspace_trust_if_prompted("demo:agent", ["codex"])
 
     assert confirmed is True
+    assert ["tmux", "send-keys", "-t", "demo:agent", "Enter"] in run_calls
+
+
+def test_tmux_backend_waits_for_pane_before_declaring_failure(monkeypatch, tmp_path):
+    from clawteam.config import ClawTeamConfig
+
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    clawteam_bin = tmp_path / "venv" / "bin" / "clawteam"
+    clawteam_bin.parent.mkdir(parents=True)
+    clawteam_bin.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(sys, "argv", [str(clawteam_bin)])
+
+    run_calls: list[list[str]] = []
+    pane_calls = 0
+
+    class Result:
+        def __init__(self, returncode: int = 0, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(args, **kwargs):
+        nonlocal pane_calls
+        run_calls.append(args)
+        if args[:3] == ["tmux", "has-session", "-t"]:
+            return Result(returncode=1)
+        if args[:3] == ["tmux", "new-session", "-d"]:
+            return Result(returncode=0)
+        if args[:3] == ["tmux", "list-panes", "-t"]:
+            pane_calls += 1
+            if pane_calls < 3:
+                return Result(returncode=0, stdout="")
+            return Result(returncode=0, stdout="9876\n")
+        return Result(returncode=0)
+
+    def fake_which(name, path=None):
+        if name == "tmux":
+            return "/usr/bin/tmux"
+        if name == "claude":
+            return "/usr/bin/claude"
+        return None
+
+    monkeypatch.setattr("clawteam.config.load_config", lambda: ClawTeamConfig())
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.shutil.which", fake_which)
+    monkeypatch.setattr("clawteam.spawn.command_validation.shutil.which", fake_which)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.time.sleep", lambda *_: None)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.time.monotonic", iter(range(100)).__next__)
+    monkeypatch.setattr(
+        "clawteam.spawn.tmux_backend._confirm_workspace_trust_if_prompted",
+        lambda *_, **__: False,
+    )
+    monkeypatch.setattr(
+        "clawteam.spawn.tmux_backend._wait_for_cli_ready",
+        lambda *_, **__: True,
+    )
+    monkeypatch.setattr("clawteam.spawn.tmux_backend._inject_prompt_via_buffer", lambda *_, **__: None)
+    monkeypatch.setattr("clawteam.spawn.registry.register_agent", lambda **_: None)
+
+    backend = TmuxBackend()
+    result = backend.spawn(
+        command=["claude"],
+        agent_name="worker1",
+        agent_id="agent-1",
+        agent_type="general-purpose",
+        team_name="demo-team",
+        prompt="do work",
+        cwd="/tmp/demo",
+        skip_permissions=True,
+    )
+
+    assert "spawned" in result
+    assert pane_calls >= 3
+    assert any(call[:3] == ["tmux", "list-panes", "-t"] for call in run_calls)
+
+
+def test_dismiss_codex_update_prompt_sends_enter(monkeypatch):
+    run_calls: list[list[str]] = []
+    capture_count = 0
+
+    class Result:
+        def __init__(self, returncode: int = 0, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(args, **kwargs):
+        nonlocal capture_count
+        run_calls.append(args)
+        if args[:4] == ["tmux", "capture-pane", "-p", "-t"]:
+            capture_count += 1
+            if capture_count == 1:
+                return Result(
+                    stdout=(
+                        "✨ Update available! 0.113.0 -> 0.116.0\n"
+                        "1 Update now\n"
+                        "2 Skip\n"
+                        "3 Skip until next version\n"
+                        "Press enter to continue\n"
+                    )
+                )
+            return Result(stdout=">_ OpenAI Codex (v0.113.0)\n")
+        return Result()
+
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.time.sleep", lambda *_: None)
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.time.monotonic", iter(range(100)).__next__)
+
+    dismissed = _dismiss_codex_update_prompt_if_present(
+        "demo:agent",
+        ["codex"],
+        timeout_seconds=2.0,
+        poll_interval_seconds=0.1,
+    )
+
+    assert dismissed is True
     assert ["tmux", "send-keys", "-t", "demo:agent", "Enter"] in run_calls
 
 

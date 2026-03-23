@@ -98,3 +98,17 @@ class TestPrepareCommandPrompt:
         )
         assert result.post_launch_prompt is None
         assert "-p" in result.final_command
+
+    def test_codex_interactive_gets_post_launch_prompt(self):
+        result = self.adapter.prepare_command(
+            ["codex"], prompt="hello", interactive=True,
+        )
+        assert result.post_launch_prompt == "hello"
+        assert "hello" not in result.final_command
+
+    def test_codex_exec_remains_noninteractive(self):
+        result = self.adapter.prepare_command(
+            ["codex", "exec"], prompt="hello", interactive=True,
+        )
+        assert result.post_launch_prompt is None
+        assert "hello" in result.final_command

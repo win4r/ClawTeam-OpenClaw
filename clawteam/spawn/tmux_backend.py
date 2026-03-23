@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -22,6 +23,8 @@ from clawteam.spawn.adapters import (
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.command_validation import validate_spawn_command
+
+_SHELL_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 class TmuxBackend(SpawnBackend):
@@ -53,6 +56,11 @@ class TmuxBackend(SpawnBackend):
         session_name = f"clawteam-{team_name}"
         clawteam_bin = resolve_clawteam_executable()
         env_vars = os.environ.copy()
+        # Interactive CLIs like Codex refuse to start when TERM=dumb is inherited
+        # from a non-interactive shell. tmux provides a real terminal, so we
+        # normalize TERM to a sensible value before exporting it into the pane.
+        if env_vars.get("TERM", "").lower() == "dumb":
+            env_vars["TERM"] = "xterm-256color"
         env_vars.update({
             "CLAWTEAM_AGENT_ID": agent_id,
             "CLAWTEAM_AGENT_NAME": agent_name,
@@ -87,7 +95,12 @@ class TmuxBackend(SpawnBackend):
         if command_error:
             return command_error
 
-        export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in env_vars.items())
+        # tmux launches the command through a shell, so only shell-safe
+        # environment names can be exported. The current host environment on
+        # WSL includes names like `PROGRAMFILES(X86)`, which would abort the
+        # shell before the pane becomes observable.
+        export_vars = {k: v for k, v in env_vars.items() if _SHELL_ENV_KEY_RE.fullmatch(k)}
+        export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in export_vars.items())
 
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
         # Append on-exit hook: runs immediately when agent process exits
@@ -130,27 +143,34 @@ class TmuxBackend(SpawnBackend):
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
 
-        # Detect commands that die before the session becomes observable.
-        time.sleep(0.3)
-        pane_check = subprocess.run(
-            ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
-            capture_output=True,
-            text=True,
-        )
-        if pane_check.returncode != 0 or not pane_check.stdout.strip():
-            return (
-                f"Error: agent command '{normalized_command[0]}' exited immediately after launch. "
-                "Verify the CLI works standalone before using it with clawteam spawn."
-            )
-
         from clawteam.config import load_config
 
         cfg = load_config()
+        pane_ready_timeout = min(cfg.spawn_ready_timeout, max(4.0, cfg.spawn_prompt_delay + 2.0))
+        if not _wait_for_tmux_pane(
+            target,
+            timeout_seconds=pane_ready_timeout,
+            poll_interval_seconds=0.2,
+        ):
+            return (
+                f"Error: tmux pane for '{normalized_command[0]}' did not become visible "
+                f"within {pane_ready_timeout:.1f}s. Verify the CLI works standalone before "
+                "using it with clawteam spawn."
+            )
+
         _confirm_workspace_trust_if_prompted(
             target,
             normalized_command,
             timeout_seconds=cfg.spawn_ready_timeout,
         )
+
+        if post_launch_prompt and is_codex_command(normalized_command):
+            _dismiss_codex_update_prompt_if_present(
+                target,
+                normalized_command,
+                timeout_seconds=pane_ready_timeout,
+                poll_interval_seconds=0.2,
+            )
 
         if post_launch_prompt:
             _wait_for_cli_ready(
@@ -324,6 +344,26 @@ def _confirm_workspace_trust_if_prompted(
     return False
 
 
+def _wait_for_tmux_pane(
+    target: str,
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.2,
+) -> bool:
+    """Poll tmux until the target pane exists and is observable."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        pane = subprocess.run(
+            ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
+            capture_output=True,
+            text=True,
+        )
+        if pane.returncode == 0 and pane.stdout.strip():
+            return True
+        time.sleep(poll_interval_seconds)
+
+    return False
+
+
 def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bool:
     """Return True when the tmux pane is showing a trust confirmation dialog."""
     if not pane_text:
@@ -342,6 +382,53 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
 
     if is_gemini_command(command):
         return "trust folder" in pane_text or "trust parent folder" in pane_text
+
+    return False
+
+
+def _looks_like_codex_update_prompt(pane_text: str) -> bool:
+    """Return True when Codex is showing the update gate before the main TUI."""
+    if not pane_text:
+        return False
+
+    return (
+        "update available" in pane_text
+        and "press enter to continue" in pane_text
+        and ("update now" in pane_text or "skip until next version" in pane_text)
+    )
+
+
+def _dismiss_codex_update_prompt_if_present(
+    target: str,
+    command: list[str],
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.2,
+) -> bool:
+    """Dismiss the Codex update gate if it is blocking the interactive UI."""
+    if not is_codex_command(command):
+        return False
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        pane = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", target],
+            capture_output=True,
+            text=True,
+        )
+        pane_text = pane.stdout.lower() if pane.returncode == 0 else ""
+        if _looks_like_codex_update_prompt(pane_text):
+            subprocess.run(
+                ["tmux", "send-keys", "-t", target, "Enter"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            time.sleep(0.5)
+            return True
+
+        if pane_text and "openai codex" in pane_text:
+            return False
+
+        time.sleep(poll_interval_seconds)
 
     return False
 
