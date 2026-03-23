@@ -105,6 +105,36 @@ def test_runtime_orchestrator_release_to_owner_respawns_missing_owner(monkeypatc
     assert any("Start immediately" in (msg.content or "") for msg in messages)
 
 
+def test_runtime_orchestrator_respawn_reuses_pinned_clawteam_bin(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+    pinned = tmp_path / ".venv" / "bin" / "clawteam"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("CLAWTEAM_BIN", str(pinned))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+    workspace = tmp_path / "qa1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "qa1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", lambda *_: "missing")
+
+    orchestrator = RuntimeOrchestrator(team="demo", repo=str(tmp_path))
+    release = orchestrator.release_to_owner(task, caller="leader", message="Start immediately", respawn=True)
+
+    assert release["respawned"] is True
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["env"]["CLAWTEAM_BIN"] == str(pinned)
+
+
 def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])

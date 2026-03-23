@@ -150,6 +150,7 @@ class SubprocessBackend(SpawnBackend):
             agent_type=agent_type,
             data_dir=spawn_env.get("CLAWTEAM_DATA_DIR", ""),
             worker_instance_id=worker_instance_id,
+            clawteam_bin=spawn_env.get("CLAWTEAM_BIN", ""),
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"
