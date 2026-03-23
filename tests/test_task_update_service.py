@@ -81,6 +81,66 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
     assert notices == [{"team": "demo", "task": qa.id, "caller": "qa1", "kind": "complex"}]
 
 
+def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Implement fix", owner="dev1")
+    task = store.update(
+        task.id,
+        status=TaskStatus.failed,
+        caller="dev1",
+        metadata={
+            "failure_kind": "complex",
+            "failure_root_cause": "worker agent turn stalled without terminal task update",
+            "failure_evidence": "watchdog",
+            "session_key": "clawteam-demo-dev1",
+            "stall_phase": "post_exit_without_terminal_task_update",
+            "watchdog_decision_at": task.updated_at,
+        },
+    )
+
+    result = execute_task_update(
+        task_id=task.id,
+        caller="dev1",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    assert result.task.status == TaskStatus.completed
+    assert result.task.metadata["recovered_from_watchdog_failure"] is True
+    assert result.task.metadata["watchdog_recovered_by"] == "dev1"
+    assert "failure_root_cause" not in result.task.metadata
+    assert "failure_evidence" not in result.task.metadata
+
+
+
 def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
 

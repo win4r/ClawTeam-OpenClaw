@@ -156,6 +156,18 @@ class TaskStore:
                     if b not in task.blocked_by:
                         task.blocked_by.append(b)
             if metadata:
+                if status == TaskStatus.completed and metadata.get("recovered_from_watchdog_failure"):
+                    for key in [
+                        "failure_kind",
+                        "failure_root_cause",
+                        "failure_evidence",
+                        "failure_note",
+                        "failure_recommended_next_owner",
+                        "failure_recommended_action",
+                        "stall_phase",
+                        "session_key",
+                    ]:
+                        task.metadata.pop(key, None)
                 task.metadata.update(metadata)
             task.updated_at = _now_iso()
 

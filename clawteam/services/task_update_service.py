@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable
 
 from clawteam.services.task_service import wake_tasks_to_pending
@@ -23,6 +24,47 @@ TaskUpdateValidationError = TaskTransitionValidationError
 TaskUpdatePlan = TaskTransitionPlan
 merge_update_metadata = merge_transition_metadata
 plan_task_update_followups = plan_task_transition_followups
+
+
+WATCHDOG_FAILURE_ROOT_CAUSE = "worker agent turn stalled without terminal task update"
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_watchdog_recoverable_completion(
+    *,
+    existing: TaskItem,
+    caller: str,
+    requested_status: TaskStatus | None,
+) -> bool:
+    if requested_status != TaskStatus.completed:
+        return False
+    if existing.status != TaskStatus.failed:
+        return False
+    if existing.owner and caller != existing.owner:
+        return False
+
+    metadata = existing.metadata or {}
+    if metadata.get("failure_root_cause") != WATCHDOG_FAILURE_ROOT_CAUSE:
+        return False
+
+    session_key = str(metadata.get("session_key") or "").strip()
+    if session_key and not session_key.endswith(f"-{caller}"):
+        return False
+
+    watchdog_at = _parse_iso_timestamp(metadata.get("watchdog_decision_at"))
+    updated_at = _parse_iso_timestamp(existing.updated_at)
+    if watchdog_at and updated_at and updated_at < watchdog_at:
+        return False
+
+    return True
 
 
 def plan_task_update(
@@ -194,6 +236,23 @@ def execute_task_update(
         request=transition_request,
         all_tasks=ctx.store.list_tasks(),
     )
+
+    if _is_watchdog_recoverable_completion(
+        existing=existing,
+        caller=caller,
+        requested_status=request.status,
+    ):
+        metadata = dict(plan.metadata_to_apply or {})
+        metadata["recovered_from_watchdog_failure"] = True
+        metadata["watchdog_recovered_at"] = datetime.now().astimezone().isoformat()
+        metadata["watchdog_recovered_by"] = caller
+        if existing.metadata.get("watchdog_decision_at"):
+            metadata["watchdog_original_decision_at"] = existing.metadata.get("watchdog_decision_at")
+        plan = TaskUpdatePlan(
+            metadata_to_apply=metadata,
+            dependent_ids_to_wake=plan.dependent_ids_to_wake,
+            failed_targets_to_wake=plan.failed_targets_to_wake,
+        )
 
     task = ctx.store.update(
         task_id,
