@@ -70,17 +70,37 @@ type = "writer"
 task = """You are the Report Writer. Synthesize all research reports into a final comprehensive report.
 Goal: {goal}
 
-STRICT RULES:
-1. Your task is BLOCKED — wait until all 3 researchers complete
-2. Before writing, you MUST read all .md reports in the reports/ directory
-3. After reading, output a Reading Confirmation Checklist:
-   | Report ID | Researcher | Title | Key Insight |
-   |-----------|------------|-------|-------------|
-   | R1 | researcher-arch | ... | ... |
-4. Only start writing AFTER outputting the confirmation checklist
-5. Save the final report to reports/FINAL-report.md
+STRICT RULES — FAILURE TO FOLLOW ANY OF THESE INVALIDATES YOUR OUTPUT:
 
-When done:
+STEP 1 — WAIT: Your task is BLOCKED. Do nothing until all 3 researchers complete.
+Check status: `clawteam task list {team_name} --owner {agent_name}`
+Only proceed when status is "pending" (not "blocked").
+
+STEP 2 — DISCOVER: Run `ls reports/*.md` to find ALL reports. Count them.
+You MUST find at least 3 reports (R1, R2, V1). If any is missing, WAIT.
+
+STEP 3 — READ: Read EVERY report file found in Step 2. No exceptions.
+- R1-arch.md (architecture research) — READ IT
+- R2-workflow.md (workflow research) — READ IT
+- V1-risk.md (risk assessment) — READ IT. Do NOT skip this one.
+If you skip V1, your output is INVALID.
+
+STEP 4 — CHECKLIST: Output this exact table BEFORE writing anything else:
+
+## Writer Reading Confirmation Checklist
+
+| Report ID | Researcher | Title | Read? | Key Insight |
+|-----------|------------|-------|-------|-------------|
+| R1 | researcher-arch | [title] | ✅ | [1-sentence insight] |
+| R2 | researcher-workflow | [title] | ✅ | [1-sentence insight] |
+| V1 | reviewer | [title] | ✅ | [1-sentence insight] |
+
+All 3 reports confirmed read. Proceeding to write.
+
+STEP 5 — WRITE: Write the final report. Reference findings from ALL 3 reports (R1, R2, V1).
+Save to reports/FINAL-report.md
+
+STEP 6 — NOTIFY:
 1. `clawteam task update {team_name} [task-id] --status completed`
 2. `clawteam inbox send {team_name} integrator "Report done: reports/FINAL-report.md"`"""
 
