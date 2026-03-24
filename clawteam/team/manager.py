@@ -25,24 +25,34 @@ def _config_path(team_name: str) -> Path:
 
 
 def _load_config(team_name: str) -> TeamConfig | None:
+    """Load team config with file lock to prevent race conditions."""
+    from filelock import FileLock
+
     path = _config_path(team_name)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return TeamConfig.model_validate(data)
-    except (json.JSONDecodeError, Exception):
-        return None
+    lock_path = path.with_suffix(".lock")
+
+    with FileLock(str(lock_path)):
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return TeamConfig.model_validate(data)
+        except (json.JSONDecodeError, Exception):
+            return None
 
 
 def _save_config(config: TeamConfig) -> None:
+    """Save team config with file lock to prevent race conditions."""
+    from filelock import FileLock
+
     path = _config_path(config.name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(
-        config.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
-    )
-    tmp.rename(path)
+    lock_path = path.with_suffix(".lock")
+
+    with FileLock(str(lock_path)):
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(config.model_dump_json(indent=2, by_alias=True), encoding="utf-8")
+        tmp.replace(path)
 
 
 class TeamManager:
@@ -110,12 +120,14 @@ class TeamManager:
             if d.is_dir() and (d / "config.json").exists():
                 config = _load_config(d.name)
                 if config:
-                    teams.append({
-                        "name": config.name,
-                        "description": config.description,
-                        "leadAgentId": config.lead_agent_id,
-                        "memberCount": len(config.members),
-                    })
+                    teams.append(
+                        {
+                            "name": config.name,
+                            "description": config.description,
+                            "leadAgentId": config.lead_agent_id,
+                            "memberCount": len(config.members),
+                        }
+                    )
         return teams
 
     @staticmethod
@@ -130,6 +142,8 @@ class TeamManager:
         agent_type: str = "general-purpose",
         user: str = "",
     ) -> TeamMember:
+        from clawteam.logging import log_member
+
         config = _load_config(team_name)
         if not config:
             raise ValueError(f"Team '{team_name}' not found")
@@ -144,6 +158,11 @@ class TeamManager:
         )
         config.members.append(member)
         _save_config(config)
+        log_member(
+            team_name=team_name,
+            action="added",
+            member_name=member_name,
+        )
         inbox_name = f"{user}_{member_name}" if user else member_name
         inbox = _team_dir(team_name) / "inboxes" / inbox_name
         inbox.mkdir(parents=True, exist_ok=True)
@@ -151,6 +170,8 @@ class TeamManager:
 
     @staticmethod
     def remove_member(team_name: str, member_name: str) -> bool:
+        from clawteam.logging import log_member
+
         config = _load_config(team_name)
         if not config:
             return False
@@ -158,6 +179,11 @@ class TeamManager:
         config.members = [m for m in config.members if m.name != member_name]
         if len(config.members) < before:
             _save_config(config)
+            log_member(
+                team_name=team_name,
+                action="removed",
+                member_name=member_name,
+            )
             return True
         return False
 
@@ -176,6 +202,7 @@ class TeamManager:
         # Best-effort cleanup of git workspaces before removing dirs
         try:
             from clawteam.workspace import get_workspace_manager
+
             ws_mgr = get_workspace_manager()
             if ws_mgr:
                 ws_mgr.cleanup_team(team_name)

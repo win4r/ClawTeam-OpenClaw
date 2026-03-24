@@ -65,6 +65,7 @@ class TaskStore:
         blocks: list[str] | None = None,
         blocked_by: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        output_file: str = "",
     ) -> TaskItem:
         task = TaskItem(
             subject=subject,
@@ -73,6 +74,7 @@ class TaskStore:
             blocks=blocks or [],
             blocked_by=blocked_by or [],
             metadata=metadata or {},
+            output_file=output_file,
         )
         if task.blocked_by:
             task.status = TaskStatus.blocked
@@ -133,6 +135,29 @@ class TaskStore:
                 except (ValueError, TypeError):
                     pass  # malformed timestamp, skip
 
+            # Verified Completion: check output_file exists and is non-empty
+            if status == TaskStatus.completed and task.output_file:
+                import time as _time
+                from pathlib import Path as _Path
+
+                out = _Path(task.output_file).expanduser()
+
+                # First check
+                file_ok = out.exists() and out.stat().st_size > 0
+
+                # If not found, wait 3 seconds and retry (disk write buffer)
+                if not file_ok:
+                    _time.sleep(3)
+                    file_ok = out.exists() and out.stat().st_size > 0
+
+                if not file_ok:
+                    task.status = TaskStatus.failed
+                    task.failure_reason = "output_file_missing_or_empty"
+                    task.updated_at = _now_iso()
+                    self._notify_dependents_of_failure_unlocked(task_id, task.failure_reason)
+                    self._save_unlocked(task)
+                    return task
+
             if status is not None:
                 task.status = status
             if owner is not None:
@@ -162,9 +187,41 @@ class TaskStore:
                 # Record failure reason and notify dependents (方案 B: keep blocked, add warning)
                 if failure_reason:
                     task.failure_reason = failure_reason
-                self._notify_dependents_of_failure_unlocked(task_id, task.failure_reason or "前置任務失敗")
+                self._notify_dependents_of_failure_unlocked(
+                    task_id, task.failure_reason or "前置任務失敗"
+                )
 
             self._save_unlocked(task)
+
+            # Log task status changes
+            from clawteam.logging import log_task
+
+            if status == TaskStatus.completed:
+                log_task(
+                    team_name=self.team_name,
+                    action="completed",
+                    task_id=task.id,
+                    subject=task.subject,
+                    agent=task.owner,
+                )
+            elif status == TaskStatus.failed:
+                log_task(
+                    team_name=self.team_name,
+                    action="failed",
+                    task_id=task.id,
+                    subject=task.subject,
+                    agent=task.owner,
+                    error=task.failure_reason,
+                )
+            elif status == TaskStatus.in_progress:
+                log_task(
+                    team_name=self.team_name,
+                    action="started",
+                    task_id=task.id,
+                    subject=task.subject,
+                    agent=caller,
+                )
+
             return task
 
     def _acquire_lock(self, task: TaskItem, caller: str, force: bool) -> None:
@@ -172,6 +229,7 @@ class TaskStore:
         if task.locked_by and task.locked_by != caller and not force:
             # Check if lock holder is still alive via spawn registry
             from clawteam.spawn.registry import is_agent_alive
+
             alive = is_agent_alive(self.team_name, task.locked_by)
             if alive is not False:
                 # Lock holder is alive or unknown — refuse
@@ -237,9 +295,7 @@ class TaskStore:
         tasks = self.list_tasks()
         completed = [t for t in tasks if t.status == TaskStatus.completed]
         durations = [
-            t.metadata["duration_seconds"]
-            for t in completed
-            if "duration_seconds" in t.metadata
+            t.metadata["duration_seconds"] for t in completed if "duration_seconds" in t.metadata
         ]
         avg_duration = sum(durations) / len(durations) if durations else 0.0
         return {
@@ -352,10 +408,12 @@ class TaskStore:
                 # Notify dependents
                 self._notify_dependents_of_failure_unlocked(task.id, reason)
 
-                failed_tasks.append({
-                    "task_id": task.id,
-                    "subject": task.subject,
-                    "reason": reason,
-                })
+                failed_tasks.append(
+                    {
+                        "task_id": task.id,
+                        "subject": task.subject,
+                        "reason": reason,
+                    }
+                )
 
         return failed_tasks

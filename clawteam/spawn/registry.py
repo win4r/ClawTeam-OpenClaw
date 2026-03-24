@@ -22,6 +22,8 @@ def register_agent(
     command: list[str] | None = None,
 ) -> None:
     """Record spawn info for an agent (atomic write)."""
+    from clawteam.logging import log_spawn
+
     path = _registry_path(team_name)
     registry = _load(path)
     registry[agent_name] = {
@@ -31,6 +33,12 @@ def register_agent(
         "command": command or [],
     }
     _save(path, registry)
+    log_spawn(
+        team_name=team_name,
+        agent_name=agent_name,
+        status="success",
+        message=f"Registered in {backend} backend | pid={pid} | target={tmux_target}",
+    )
 
 
 def get_registry(team_name: str) -> dict[str, dict]:
@@ -104,6 +112,7 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         import os
+
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
@@ -113,25 +122,41 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
+def _lock_path(path: Path) -> Path:
+    """Return the lock file path for a given registry file."""
+    return path.with_suffix(".lock")
+
+
 def _load(path: Path) -> dict:
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    """Load registry with file lock to prevent race conditions."""
+    from filelock import FileLock
+
+    lock_path = _lock_path(path)
+    with FileLock(str(lock_path)):
+        if path.exists():
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return {}
+        return {}
 
 
 def _save(path: Path, data: dict) -> None:
+    """Save registry with file lock to prevent race conditions."""
+    from filelock import FileLock
     import tempfile
+
+    lock_path = _lock_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        import os
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        Path(tmp).replace(path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+
+    with FileLock(str(lock_path)):
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            import os
+
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+            Path(tmp).replace(path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise

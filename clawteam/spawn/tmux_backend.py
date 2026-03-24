@@ -119,12 +119,37 @@ class TmuxBackend(SpawnBackend):
         else:
             full_cmd = f"{unset_clause}{export_str}; {cmd_str}; {exit_hook}"
 
-        # Check if tmux session exists
+        # ── Zombie Socket Hunter ──
+        # If has-session returns True but list-sessions fails, we have a zombie socket.
+        # Clean it up so tmux can start fresh.
         check = subprocess.run(
             ["tmux", "has-session", "-t", session_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        if check.returncode == 0:
+            verify = subprocess.run(
+                ["tmux", "list-sessions", "-t", session_name, "-F", "#{session_name}"],
+                capture_output=True, text=True,
+            )
+            if verify.returncode != 0:
+                # Zombie socket detected — kill server and remove stale socket
+                subprocess.run(
+                    ["tmux", "kill-server"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                # Remove stale socket files
+                import glob as _glob
+                for sock in _glob.glob("/tmp/tmux-*/default"):
+                    try:
+                        os.unlink(sock)
+                    except OSError:
+                        pass
+                # Re-check after cleanup
+                check = subprocess.run(
+                    ["tmux", "has-session", "-t", session_name],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
 
         target = f"{session_name}:{agent_name}"
 
@@ -136,7 +161,7 @@ class TmuxBackend(SpawnBackend):
             )
         else:
             launch = subprocess.run(
-                ["tmux", "new-window", "-t", session_name, "-n", agent_name, full_cmd],
+                ["tmux", "new-window", "-d", "-t", session_name, "-n", agent_name, full_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -157,6 +182,22 @@ class TmuxBackend(SpawnBackend):
                 f"Error: agent command '{normalized_command[0]}' exited immediately after launch. "
                 "Verify the CLI works standalone before using it with clawteam spawn."
             )
+
+        # ── Pipe-Pane Logging ──
+        # Capture all pane output to a log file for debugging.
+        from pathlib import Path as _Path
+        log_dir = _Path.home() / ".clawteam" / "logs" / team_name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{agent_name}.log"
+        subprocess.run(
+            ["tmux", "pipe-pane", "-t", target, "-o", f"cat >> {log_file}"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        # Set remain-on-exit so window stays visible after agent crashes
+        subprocess.run(
+            ["tmux", "set-option", "-t", target, "remain-on-exit", "on"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
 
         _confirm_workspace_trust_if_prompted(target, normalized_command)
 
