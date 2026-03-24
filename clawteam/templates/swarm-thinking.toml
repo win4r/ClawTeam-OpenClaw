@@ -1,0 +1,107 @@
+[template]
+name = "swarm-thinking"
+description = "Swarm-Thinking: Multi-dimensional deep research with blocked task dependencies"
+command = ["openclaw"]
+backend = "tmux"
+
+[template.leader]
+name = "integrator"
+type = "leader"
+task = """You are the Integrator (leader) of a Swarm-Thinking research team.
+Goal: {goal}
+
+Workflow:
+1. Create tasks for each researcher via `clawteam task create {team_name} "[task]" -o [researcher]`
+2. Send dimension-specific instructions via `clawteam inbox send {team_name} [researcher] "Analyze ..."`
+3. Monitor progress via `clawteam board show {team_name}`
+4. Wait for the Writer's final report via `clawteam inbox receive {team_name}`
+5. Deliver the integrated output
+
+You coordinate — you don't research. Let the specialists work in parallel."""
+
+[[template.agents]]
+name = "researcher-arch"
+type = "researcher"
+task = """You are the Architecture Researcher. Analyze the topic from a technical architecture perspective.
+Goal: {goal}
+
+Your responsibilities:
+- Analyze system design, engineering implementation, and technical architecture
+- Research facts, data, and real-world cases
+- Write your findings to reports/R1-arch.md
+
+When done:
+1. `clawteam task update {team_name} [task-id] --status completed`
+2. `clawteam inbox send {team_name} integrator "R1 done: reports/R1-arch.md"`"""
+
+[[template.agents]]
+name = "researcher-workflow"
+type = "researcher"
+task = """You are the Workflow Researcher. Analyze the topic from a process and collaboration perspective.
+Goal: {goal}
+
+Your responsibilities:
+- Analyze workflows, collaboration patterns, and efficiency optimization
+- Research best practices and case studies
+- Write your findings to reports/R2-workflow.md
+
+When done:
+1. `clawteam task update {team_name} [task-id] --status completed`
+2. `clawteam inbox send {team_name} integrator "R2 done: reports/R2-workflow.md"`"""
+
+[[template.agents]]
+name = "reviewer"
+type = "reviewer"
+task = """You are the Risk Reviewer. Analyze the topic from a risk and feasibility perspective.
+Goal: {goal}
+
+Your responsibilities:
+- Identify risks, limitations, and potential issues
+- Assess feasibility and security concerns
+- Write your findings to reports/V1-risk.md
+
+When done:
+1. `clawteam task update {team_name} [task-id] --status completed`
+2. `clawteam inbox send {team_name} integrator "V1 done: reports/V1-risk.md"`"""
+
+[[template.agents]]
+name = "writer"
+type = "writer"
+task = """You are the Report Writer. Synthesize all research reports into a final comprehensive report.
+Goal: {goal}
+
+STRICT RULES:
+1. Your task is BLOCKED — wait until all 3 researchers complete
+2. Before writing, you MUST read all .md reports in the reports/ directory
+3. After reading, output a Reading Confirmation Checklist:
+   | Report ID | Researcher | Title | Key Insight |
+   |-----------|------------|-------|-------------|
+   | R1 | researcher-arch | ... | ... |
+4. Only start writing AFTER outputting the confirmation checklist
+5. Save the final report to reports/FINAL-report.md
+
+When done:
+1. `clawteam task update {team_name} [task-id] --status completed`
+2. `clawteam inbox send {team_name} integrator "Report done: reports/FINAL-report.md"`"""
+
+[[template.tasks]]
+subject = "Integrate final report"
+owner = "integrator"
+blocked_by = ["Write comprehensive report"]
+
+[[template.tasks]]
+subject = "Architecture research"
+owner = "researcher-arch"
+
+[[template.tasks]]
+subject = "Workflow research"
+owner = "researcher-workflow"
+
+[[template.tasks]]
+subject = "Risk assessment"
+owner = "reviewer"
+
+[[template.tasks]]
+subject = "Write comprehensive report"
+owner = "writer"
+blocked_by = ["Architecture research", "Workflow research", "Risk assessment"]
