@@ -141,6 +141,7 @@ class BoardRenderer:
             ("IN PROGRESS", "in_progress", "cyan"),
             ("COMPLETED", "completed", "green"),
             ("BLOCKED", "blocked", "red"),
+            ("FAILED", "failed", "bold red"),
         ]
 
         panels = []

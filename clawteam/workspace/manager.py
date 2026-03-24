@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _workspaces_root() -> Path:
     from clawteam.team.models import get_data_dir
+
     p = get_data_dir() / "workspaces"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -25,22 +26,34 @@ def _registry_path(team_name: str) -> Path:
 
 
 def _load_registry(team_name: str, repo_root: str) -> WorkspaceRegistry:
+    """Load registry with file lock to prevent race conditions."""
+    from filelock import FileLock
+
     path = _registry_path(team_name)
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return WorkspaceRegistry.model_validate(data)
-        except Exception:
-            pass
-    return WorkspaceRegistry(team_name=team_name, repo_root=repo_root)
+    lock_path = path.with_suffix(".lock")
+
+    with FileLock(str(lock_path)):
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return WorkspaceRegistry.model_validate(data)
+            except Exception:
+                pass
+        return WorkspaceRegistry(team_name=team_name, repo_root=repo_root)
 
 
 def _save_registry(registry: WorkspaceRegistry) -> None:
+    """Save registry with file lock to prevent race conditions."""
+    from filelock import FileLock
+
     path = _registry_path(registry.team_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(registry.model_dump_json(indent=2), encoding="utf-8")
-    tmp.rename(path)
+    lock_path = path.with_suffix(".lock")
+
+    with FileLock(str(lock_path)):
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(registry.model_dump_json(indent=2), encoding="utf-8")
+        tmp.replace(path)
 
 
 class WorkspaceManager:
@@ -61,6 +74,8 @@ class WorkspaceManager:
         agent_name: str,
         agent_id: str,
     ) -> WorkspaceInfo:
+        from clawteam.logging import log_workspace
+
         branch = f"clawteam/{team_name}/{agent_name}"
         wt_path = _workspaces_root() / team_name / agent_name
 
@@ -76,7 +91,10 @@ class WorkspaceManager:
                 pass
 
         git.create_worktree(
-            self.repo_root, wt_path, branch, base_ref=self.base_branch,
+            self.repo_root,
+            wt_path,
+            branch,
+            base_ref=self.base_branch,
         )
 
         info = WorkspaceInfo(
@@ -92,11 +110,16 @@ class WorkspaceManager:
 
         registry = _load_registry(team_name, str(self.repo_root))
         # Remove stale entry for the same agent, if any
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
+        registry.workspaces = [w for w in registry.workspaces if w.agent_name != agent_name]
         registry.workspaces.append(info)
         _save_registry(registry)
+
+        log_workspace(
+            team_name=team_name,
+            action="created",
+            agent_name=agent_name,
+            path=str(wt_path),
+        )
 
         return info
 
@@ -127,6 +150,8 @@ class WorkspaceManager:
         agent_name: str,
         auto_checkpoint: bool = True,
     ) -> bool:
+        from clawteam.logging import log_workspace
+
         info = self._find(team_name, agent_name)
         if info is None:
             return False
@@ -147,10 +172,15 @@ class WorkspaceManager:
             logger.warning("branch delete failed: %s", e)
 
         registry = _load_registry(team_name, str(self.repo_root))
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
+        registry.workspaces = [w for w in registry.workspaces if w.agent_name != agent_name]
         _save_registry(registry)
+
+        log_workspace(
+            team_name=team_name,
+            action="cleaned",
+            agent_name=agent_name,
+            path=info.worktree_path,
+        )
         return True
 
     def cleanup_team(self, team_name: str) -> int:
@@ -182,7 +212,9 @@ class WorkspaceManager:
 
         target = target_branch or info.base_branch
         success, output = git.merge_branch(
-            self.repo_root, info.branch_name, target,
+            self.repo_root,
+            info.branch_name,
+            target,
         )
 
         if success and cleanup_after:
