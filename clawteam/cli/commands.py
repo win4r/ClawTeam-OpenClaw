@@ -2200,14 +2200,30 @@ def launch_team(
             user=_os.environ.get("CLAWTEAM_USER", ""),
         )
 
-    # 5. Create tasks
+    # 5. Create tasks (two-pass: create first, then resolve blocked_by)
     ts = TaskStore(t_name)
+    task_ids: dict[str, str] = {}  # subject -> task_id
+
+    # Pass 1: create all tasks, collect IDs
     for task_def in tmpl.tasks:
-        ts.create(
+        task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
         )
+        task_ids[task_def.subject] = task.id
+
+    # Pass 2: resolve blocked_by references and update
+    for task_def in tmpl.tasks:
+        if task_def.blocked_by:
+            resolved: list[str] = []
+            for ref in task_def.blocked_by:
+                if ref in task_ids:
+                    resolved.append(task_ids[ref])
+                else:
+                    console.print(f"[yellow]Warning: blocked_by reference '{ref}' not found for task '{task_def.subject}'[/yellow]")
+            if resolved:
+                ts.update(task_ids[task_def.subject], add_blocked_by=resolved)
 
     # 6. Get backend
     try:

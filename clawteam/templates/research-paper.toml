@@ -78,6 +78,7 @@ Then: `clawteam task update {team_name} [task-id] --status completed`"""
 [[template.tasks]]
 subject = "Coordinate research and write final paper"
 owner = "principal-investigator"
+blocked_by = ["Literature survey and related work", "Methodology design and description", "Results analysis and discussion"]
 
 [[template.tasks]]
 subject = "Literature survey and related work"
