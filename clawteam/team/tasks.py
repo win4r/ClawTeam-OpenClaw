@@ -102,6 +102,7 @@ class TaskStore:
         description: str | None = None,
         add_blocks: list[str] | None = None,
         add_blocked_by: list[str] | None = None,
+        failure_reason: str | None = None,
         metadata: dict[str, Any] | None = None,
         caller: str = "",
         force: bool = False,
@@ -157,6 +158,11 @@ class TaskStore:
 
             if task.status == TaskStatus.completed:
                 self._resolve_dependents_unlocked(task_id)
+            elif task.status == TaskStatus.failed:
+                # Record failure reason and notify dependents (方案 B: keep blocked, add warning)
+                if failure_reason:
+                    task.failure_reason = failure_reason
+                self._notify_dependents_of_failure_unlocked(task_id, task.failure_reason or "前置任務失敗")
 
             self._save_unlocked(task)
             return task
@@ -242,6 +248,7 @@ class TaskStore:
             "in_progress": sum(1 for t in tasks if t.status == TaskStatus.in_progress),
             "pending": sum(1 for t in tasks if t.status == TaskStatus.pending),
             "blocked": sum(1 for t in tasks if t.status == TaskStatus.blocked),
+            "failed": sum(1 for t in tasks if t.status == TaskStatus.failed),
             "timed_completed": len(durations),
             "avg_duration_seconds": round(avg_duration, 2),
         }
@@ -276,3 +283,79 @@ class TaskStore:
                     self._save_unlocked(task)
             except Exception:
                 continue
+
+    def _notify_dependents_of_failure_unlocked(self, failed_task_id: str, reason: str) -> None:
+        """When a task fails, record failure reason on dependent tasks (方案 B).
+
+        Dependent tasks remain blocked but get the failure reason recorded
+        in metadata, waiting for Integrator to handle.
+        """
+        root = _tasks_root(self.team_name)
+        for f in root.glob("task-*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                task = TaskItem.model_validate(data)
+                if failed_task_id in task.blocked_by:
+                    # Keep task blocked, but record the failure warning
+                    task.metadata["blocked_by_failed"] = task.metadata.get("blocked_by_failed", [])
+                    if failed_task_id not in task.metadata["blocked_by_failed"]:
+                        task.metadata["blocked_by_failed"].append(failed_task_id)
+                    task.metadata["failure_warning"] = (
+                        f"前置任務 {failed_task_id} 失敗：{reason}。"
+                        f"請 Integrator 決定是否重試或跳過。"
+                    )
+                    task.updated_at = _now_iso()
+                    self._save_unlocked(task)
+            except Exception:
+                continue
+
+    def check_timeouts(self, timeout_seconds: int = 300) -> list[dict[str, str]]:
+        """Scan in_progress tasks and mark as failed if agent is dead and timed out.
+
+        Returns list of {task_id, subject, reason} for tasks marked as failed.
+        """
+        from clawteam.spawn.registry import is_agent_alive
+        from datetime import datetime, timezone
+
+        failed_tasks = []
+        with self._write_lock():
+            for task in self._list_tasks_unlocked():
+                if task.status != TaskStatus.in_progress:
+                    continue
+                if not task.locked_by:
+                    continue
+
+                # Check if agent is alive
+                alive = is_agent_alive(self.team_name, task.locked_by)
+                if alive is not False:
+                    continue
+
+                # Agent is dead — check timeout
+                if task.started_at:
+                    try:
+                        start = datetime.fromisoformat(task.started_at)
+                        elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+                        if elapsed < timeout_seconds:
+                            continue  # Not timed out yet
+                    except (ValueError, TypeError):
+                        pass
+
+                # Mark as failed
+                reason = f"Agent '{task.locked_by}' 已離線，超過 {timeout_seconds} 秒無回應"
+                task.status = TaskStatus.failed
+                task.failure_reason = reason
+                task.locked_by = ""
+                task.locked_at = ""
+                task.updated_at = _now_iso()
+                self._save_unlocked(task)
+
+                # Notify dependents
+                self._notify_dependents_of_failure_unlocked(task.id, reason)
+
+                failed_tasks.append({
+                    "task_id": task.id,
+                    "subject": task.subject,
+                    "reason": reason,
+                })
+
+        return failed_tasks

@@ -905,9 +905,13 @@ def task_list(
         table.add_column("Owner")
         table.add_column("Lock", style="yellow")
         table.add_column("Blocked By", style="dim")
+        table.add_column("Failure Reason", style="red")
         for t in items:
             st = t.get("status", "")
-            style = {"pending": "white", "in_progress": "yellow", "completed": "green", "blocked": "red"}.get(st, "")
+            style = {"pending": "white", "in_progress": "yellow", "completed": "green", "blocked": "red", "failed": "bold red"}.get(st, "")
+            failure = t.get("failureReason", "")
+            warning = t.get("metadata", {}).get("failure_warning", "")
+            failure_display = failure or warning
             table.add_row(
                 t["id"],
                 t["subject"],
@@ -915,6 +919,7 @@ def task_list(
                 t.get("owner") or "",
                 t.get("lockedBy") or "",
                 ", ".join(t.get("blockedBy", [])),
+                failure_display[:50] + "..." if len(failure_display) > 50 else failure_display,
             )
         console.print(table)
 
@@ -940,6 +945,8 @@ def task_stats(
         table.add_row("In progress", str(d["in_progress"]))
         table.add_row("Pending", str(d["pending"]))
         table.add_row("Blocked", str(d["blocked"]))
+        if d.get("failed", 0) > 0:
+            table.add_row("Failed", f"[bold red]{d['failed']}[/bold red]")
         table.add_row("With timing data", str(d["timed_completed"]))
         avg = d["avg_duration_seconds"]
         if avg > 0:
@@ -955,6 +962,79 @@ def task_stats(
         console.print(table)
 
     _output(stats, _human)
+
+
+@task_app.command("check-timeouts")
+def task_check_timeouts(
+    team: str = typer.Argument(..., help="Team name"),
+    timeout: int = typer.Option(300, "--timeout", "-t", help="Timeout in seconds (default: 300)"),
+):
+    """Scan in_progress tasks and mark as failed if agent is dead and timed out."""
+    from clawteam.team.tasks import TaskStore
+
+    store = TaskStore(team)
+    failed = store.check_timeouts(timeout_seconds=timeout)
+
+    def _human(d):
+        if not d:
+            console.print("[green]No timed-out tasks found[/green]")
+            return
+        table = Table(title=f"Timed-out Tasks ({len(d)} failed)")
+        table.add_column("Task ID", style="red")
+        table.add_column("Subject")
+        table.add_column("Reason")
+        for item in d:
+            table.add_row(item["task_id"], item["subject"], item["reason"])
+        console.print(table)
+
+    _output(failed, _human)
+
+
+@task_app.command("insert")
+def task_insert(
+    team: str = typer.Argument(..., help="Team name"),
+    subject: str = typer.Argument(..., help="New task subject"),
+    before: str = typer.Option(..., "--before", "-b", help="Target task ID — new task inserted before this"),
+    owner: str = typer.Option("", "--owner", "-o", help="Owner agent name"),
+    description: str = typer.Option("", "--description", "-d", help="Task description"),
+):
+    """Insert a new task before an existing task in the dependency chain.
+
+    The new task inherits the target's blocked_by, and the target's blocked_by
+    is updated to depend on the new task.
+    """
+    from clawteam.team.tasks import TaskStore
+
+    store = TaskStore(team)
+    target = store.get(before)
+    if not target:
+        console.print(f"[red]Target task '{before}' not found[/red]")
+        raise typer.Exit(1)
+
+    # Create new task inheriting target's blocked_by
+    new_task = store.create(
+        subject=subject,
+        description=description,
+        owner=owner,
+        blocked_by=list(target.blocked_by),
+    )
+
+    # Update target: clear its blocked_by, depend on new task
+    store.update(before, add_blocked_by=[new_task.id])
+
+    # If target was pending and now has blocked_by, set to blocked
+    if target.status.value == "pending" and new_task.id:
+        from clawteam.team.models import TaskStatus
+        store.update(before, status=TaskStatus.blocked)
+
+    out = {"id": new_task.id, "subject": subject, "before": before, "inherited_blocked_by": list(target.blocked_by)}
+
+    def _human(d):
+        console.print(f"[green]Task inserted:[/green] {d['id']} '{d['subject']}'")
+        console.print(f"  Before: {d['before']}")
+        console.print(f"  Inherited blocked_by: {d['inherited_blocked_by']}")
+
+    _output(out, _human)
 
 
 # ============================================================================
