@@ -142,6 +142,7 @@ def _propagate_resolved_scope_to_targets(
         patched_description = inject_resolved_scope_context(
             description=getattr(target, "description", "") or "",
             normalized=scope_payload,
+            scope_audit_warnings=scope_warnings,
         )
         store.update(
             target_id,

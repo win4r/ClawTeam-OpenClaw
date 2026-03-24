@@ -1217,6 +1217,11 @@ Polish the member list UI using the existing tests are representative assumption
         "unknowns_promoted_to_scope",
         "assumptions_promoted_to_scope",
     ]
+    assert "### Scope Audit Warnings" in refreshed_setup.description
+    assert "[unknowns_promoted_to_scope]" in refreshed_setup.description
+    assert "final prod env" in refreshed_setup.description
+    assert "[assumptions_promoted_to_scope]" in refreshed_setup.description
+    assert "existing tests are representative" in refreshed_setup.description
 
 
 def test_execute_task_update_preserves_empty_scope_audit_warnings_as_empty_list(monkeypatch, tmp_path):

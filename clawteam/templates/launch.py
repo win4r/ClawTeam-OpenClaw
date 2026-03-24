@@ -250,18 +250,47 @@ def _coerce_normalized_launch_brief(value: NormalizedLaunchBrief | dict[str, obj
     return NormalizedLaunchBrief.model_validate(value)
 
 
-def render_resolved_scope_context(normalized: NormalizedLaunchBrief | dict[str, object]) -> str:
+def render_resolved_scope_context(
+    normalized: NormalizedLaunchBrief | dict[str, object],
+    *,
+    scope_audit_warnings: list[dict[str, object]] | list[ScopeAuditWarning] | None = None,
+) -> str:
     normalized = _coerce_normalized_launch_brief(normalized)
     sections = normalized.sections
 
     def _bullet_lines(values: list[str]) -> str:
         return "\n".join(f"- {value}" for value in values) if values else "- none"
 
+    def _render_scope_warnings(
+        warnings: list[dict[str, object]] | list[ScopeAuditWarning] | None,
+    ) -> str:
+        if not warnings:
+            return "- none"
+        rendered: list[str] = []
+        for warning in warnings:
+            if isinstance(warning, ScopeAuditWarning):
+                code = warning.code
+                message = warning.message
+                details = warning.details
+            elif isinstance(warning, dict):
+                code = str(warning.get("code") or "warning")
+                message = str(warning.get("message") or code)
+                raw_details = warning.get("details")
+                details = [str(item) for item in raw_details] if isinstance(raw_details, list) else []
+            else:
+                continue
+            line = f"- [{code}] {message}"
+            if details:
+                line += f" Details: {', '.join(details)}"
+            rendered.append(line)
+        return "\n".join(rendered) if rendered else "- none"
+
     return "\n\n".join(
         [
             "## Resolved Scope Context",
             f"### Source Request\n{sections.source_request or '- none'}",
             f"### Scoped Brief\n{sections.scoped_brief or '- none'}",
+            f"### Scope Audit Warnings\n{_render_scope_warnings(scope_audit_warnings)}",
             f"### Unknowns\n{_bullet_lines(sections.unknowns)}",
             f"### Leader Assumptions\n{_bullet_lines(sections.leader_assumptions)}",
             f"### Out of Scope\n{_bullet_lines(sections.out_of_scope)}",
@@ -269,7 +298,12 @@ def render_resolved_scope_context(normalized: NormalizedLaunchBrief | dict[str, 
     )
 
 
-def inject_resolved_scope_context(*, description: str, normalized: NormalizedLaunchBrief | dict[str, object]) -> str:
+def inject_resolved_scope_context(
+    *,
+    description: str,
+    normalized: NormalizedLaunchBrief | dict[str, object],
+    scope_audit_warnings: list[dict[str, object]] | list[ScopeAuditWarning] | None = None,
+) -> str:
     normalized = _coerce_normalized_launch_brief(normalized)
     text = (description or "").strip()
     marker = "## Resolved Scope Context"
@@ -277,7 +311,7 @@ def inject_resolved_scope_context(*, description: str, normalized: NormalizedLau
     if text.startswith(marker) and task_brief_marker in text:
         _, _, remainder = text.partition(task_brief_marker)
         text = remainder.strip()
-    scope_block = render_resolved_scope_context(normalized)
+    scope_block = render_resolved_scope_context(normalized, scope_audit_warnings=scope_audit_warnings)
     if not text:
         return scope_block
     return f"{scope_block}\n\n## Task Brief\n{text}"

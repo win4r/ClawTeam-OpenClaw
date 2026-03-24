@@ -21,7 +21,9 @@ from clawteam.templates import (
     find_scope_audit_warnings,
     find_scope_inventions,
     find_scope_tightening,
+    inject_resolved_scope_context,
     list_templates,
+    render_resolved_scope_context,
     load_template,
     normalize_launch_brief,
     parse_launch_brief,
@@ -328,6 +330,73 @@ Polish the member list UI using the existing tests are representative assumption
             },
         )
         assert "## Brief Format\nprose_fallback" in prepared.rendered_description
+
+    def test_render_resolved_scope_context_includes_visible_scope_audit_warnings(self):
+        normalized = normalize_launch_brief(
+            source_request="Polish the member list UI.",
+            leader_brief="""## Source Request
+Polish the member list UI.
+
+## Scoped Brief
+Polish the member list UI using the existing tests are representative assumption while final prod env remains required for rollout.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+""",
+        )
+        warnings = find_scope_audit_warnings(
+            source_request="Polish the member list UI.",
+            normalized=normalized,
+        )
+
+        rendered = render_resolved_scope_context(normalized, scope_audit_warnings=warnings)
+
+        assert "### Scope Audit Warnings" in rendered
+        assert "[unknowns_promoted_to_scope]" in rendered
+        assert "final prod env" in rendered
+        assert "[assumptions_promoted_to_scope]" in rendered
+        assert "existing tests are representative" in rendered
+
+    def test_inject_resolved_scope_context_keeps_task_brief_and_shows_scope_audit_warnings(self):
+        normalized = normalize_launch_brief(
+            source_request="Polish the member list UI.",
+            leader_brief="""## Source Request
+Polish the member list UI.
+
+## Scoped Brief
+Polish the member list UI using the existing tests are representative assumption while final prod env remains required for rollout.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+""",
+        )
+        warnings = find_scope_audit_warnings(
+            source_request="Polish the member list UI.",
+            normalized=normalized,
+        )
+
+        injected = inject_resolved_scope_context(
+            description="Implement the downstream work exactly as scoped.",
+            normalized=normalized,
+            scope_audit_warnings=warnings,
+        )
+
+        assert "### Scope Audit Warnings" in injected
+        assert "[unknowns_promoted_to_scope]" in injected
+        assert "## Task Brief" in injected
+        assert injected.endswith("Implement the downstream work exactly as scoped.")
 
     def test_build_launch_task_input_keeps_description_and_metadata_same_source(self):
         task_input = build_launch_task_input(
