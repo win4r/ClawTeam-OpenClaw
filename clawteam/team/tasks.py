@@ -148,6 +148,9 @@ class TaskStore:
                 for b in add_blocked_by:
                     if b not in task.blocked_by:
                         task.blocked_by.append(b)
+                # Auto-set status to blocked if task has dependencies and is still pending
+                if task.blocked_by and task.status == TaskStatus.pending:
+                    task.status = TaskStatus.blocked
             if metadata:
                 task.metadata.update(metadata)
             task.updated_at = _now_iso()
