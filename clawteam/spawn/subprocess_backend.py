@@ -64,11 +64,14 @@ class SubprocessBackend(SpawnBackend):
 
         normalized_command = normalize_spawn_command(command)
 
-        from clawteam.spawn.registry import get_agent_runtime_state, terminate_agent
+        from clawteam.spawn.registry import get_agent_runtime_state, new_worker_instance_id, terminate_agent
 
         existing_state = get_agent_runtime_state(team_name, agent_name, spawn_env.get("CLAWTEAM_DATA_DIR", ""))
         if existing_state != "missing":
             terminate_agent(team_name, agent_name, spawn_env.get("CLAWTEAM_DATA_DIR", ""))
+
+        worker_instance_id = new_worker_instance_id(agent_name)
+        spawn_env["CLAWTEAM_WORKER_INSTANCE_ID"] = worker_instance_id
 
         command_error = validate_spawn_command(normalized_command, path=spawn_env["PATH"], cwd=cwd)
         if command_error:
@@ -105,6 +108,7 @@ class SubprocessBackend(SpawnBackend):
             ]
             for arg in normalized_command[1:]:
                 final_command.extend(["--command-arg", arg])
+            final_command.extend(["--worker-instance-id", worker_instance_id])
             if prompt_file:
                 final_command.extend(["--startup-prompt-file", prompt_file])
         elif prompt:
@@ -145,6 +149,8 @@ class SubprocessBackend(SpawnBackend):
             agent_id=agent_id,
             agent_type=agent_type,
             data_dir=spawn_env.get("CLAWTEAM_DATA_DIR", ""),
+            worker_instance_id=worker_instance_id,
+            clawteam_bin=spawn_env.get("CLAWTEAM_BIN", ""),
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"

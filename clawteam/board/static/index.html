@@ -82,7 +82,7 @@ const S = {
 
   // Summary cards
   summaryGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: 12, marginBottom: 24,
   },
   summaryCard: {
@@ -212,11 +212,30 @@ const S = {
     fontSize: 13, fontWeight: 500, color: 'var(--text)',
     marginTop: 2, lineHeight: 1.4,
   },
+  taskMetaRow: {
+    display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6,
+  },
   taskOwner: {
-    fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4,
+    fontSize: 11, color: 'var(--text-tertiary)',
+  },
+  taskPill: (tone = 'neutral') => {
+    const tones = {
+      neutral: { background: 'var(--surface3)', color: 'var(--text-tertiary)' },
+      blue: { background: 'rgba(10,132,255,0.16)', color: 'var(--blue)' },
+      red: { background: 'rgba(255,69,58,0.16)', color: 'var(--red)' },
+      purple: { background: 'rgba(191,90,242,0.16)', color: 'var(--purple)' },
+    };
+    const palette = tones[tone] || tones.neutral;
+    return {
+      display: 'inline-flex', alignItems: 'center',
+      fontSize: 11, fontFamily: 'SF Mono, Menlo, monospace',
+      padding: '2px 6px', borderRadius: 999,
+      background: palette.background,
+      color: palette.color,
+    };
   },
   taskBlocked: {
-    fontSize: 11, color: 'var(--red)', marginTop: 2,
+    fontSize: 11, color: 'var(--red)', marginTop: 6, lineHeight: 1.4,
   },
   emptyCol: {
     padding: 24, textAlign: 'center',
@@ -319,18 +338,41 @@ function Messages({ messages }) {
 }
 
 function TaskCard({ task, status }) {
+  const transitions = task.metadata?.transition_log || [];
+  const latestTransition = transitions[transitions.length - 1];
+  const failureReason = task.metadata?.failure_note
+    || task.metadata?.failure_root_cause
+    || latestTransition?.rejectionReason
+    || '';
+
   return (
     <div style={S.taskCard}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'}
       onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}>
       <div style={S.taskId}>#{(task.id || '').slice(0, 8)}</div>
       <div style={S.taskSubject}>{task.subject || ''}</div>
-      <div style={S.taskOwner}>{task.owner || '-'}</div>
+      <div style={S.taskMetaRow}>
+        <span style={S.taskOwner}>{task.owner || '-'}</span>
+        {task.activeExecutionId && (
+          <span style={S.taskPill('blue')}>exec {task.activeExecutionId}</span>
+        )}
+        {!task.activeExecutionId && task.lastTerminalExecutionId && (
+          <span style={S.taskPill('neutral')}>last {task.lastTerminalExecutionId}</span>
+        )}
+      </div>
       {status === 'blocked' && task.blockedBy && task.blockedBy.length > 0 && (
         <div style={S.taskBlocked}>blocked by: {task.blockedBy.join(', ')}</div>
       )}
-      {status === 'failed' && (task.metadata?.failure_note || task.metadata?.failure_root_cause) && (
-        <div style={S.taskBlocked}>reason: {task.metadata?.failure_note || task.metadata?.failure_root_cause}</div>
+      {status === 'failed' && failureReason && (
+        <div style={S.taskBlocked}>reason: {failureReason}</div>
+      )}
+      {status === 'failed' && task.metadata?.failure_kind && (
+        <div style={{...S.taskMetaRow, marginTop: 4}}>
+          <span style={S.taskPill('purple')}>{task.metadata.failure_kind}</span>
+          {latestTransition?.rejectionReason && (
+            <span style={S.taskPill('red')}>{latestTransition.rejectionReason}</span>
+          )}
+        </div>
       )}
     </div>
   );

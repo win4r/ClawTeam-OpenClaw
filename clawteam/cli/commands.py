@@ -18,6 +18,7 @@ from rich.table import Table
 from clawteam import __version__
 from clawteam.delivery.failure_notifier import notify_task_failure
 from clawteam.delivery.release_notifier import notify_task_release
+from clawteam.templates import render_task
 from clawteam.services import (
     RuntimeOrchestrator,
     TaskReleaseContext,
@@ -1976,6 +1977,7 @@ def worker_run(
     command: str = typer.Option("openclaw", "--command", help="Underlying agent CLI (currently openclaw)"),
     command_arg: list[str] = typer.Option(None, "--command-arg", help="Extra args for the underlying agent CLI"),
     startup_prompt_file: str = typer.Option("", "--startup-prompt-file", help="Path to startup prompt text to prepend on each dispatched task"),
+    worker_instance_id: str = typer.Option("", "--worker-instance-id", help="Explicit worker instance id injected by the spawner"),
     poll_interval: float = typer.Option(2.0, "--poll-interval", help="Idle poll interval in seconds"),
     timeout_seconds: int = typer.Option(900, "--timeout-seconds", help="Underlying agent turn timeout in seconds"),
     once: bool = typer.Option(False, "--once", help="Run a single iteration and exit"),
@@ -2004,6 +2006,8 @@ def worker_run(
     os.environ.setdefault("CLAWTEAM_TEAM_NAME", identity.team_name or team)
     if identity.data_dir:
         os.environ.setdefault("CLAWTEAM_DATA_DIR", identity.data_dir)
+    if worker_instance_id:
+        os.environ["CLAWTEAM_WORKER_INSTANCE_ID"] = worker_instance_id
 
     base_command = [command] + list(command_arg or [])
     startup_prompt = load_startup_prompt(startup_prompt_file)
@@ -2011,6 +2015,7 @@ def worker_run(
         team_name=team,
         agent_name=agent_name,
         data_dir=os.environ.get("CLAWTEAM_DATA_DIR") or None,
+        worker_instance_id=os.environ.get("CLAWTEAM_WORKER_INSTANCE_ID") or None,
     )
     history = worker_loop(
         team_name=team,
@@ -2473,7 +2478,7 @@ def _bootstrap_entry_tasks(
                 f"Bootstrap entry task {task.id}. This is a launch-time first-hop release; "
                 "start now and follow the workflow as declared."
             ),
-            respawn=True,
+            respawn=False,
             repo=repo,
             release_notifier=notify_task_release,
         )
@@ -2570,9 +2575,16 @@ def launch_team(
         if task_def.on_fail:
             metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
 
+        rendered_description = render_task(
+            task_def.description,
+            goal=goal,
+            team_name=t_name,
+            agent_name=task_def.owner,
+        )
+
         task = ts.create(
             subject=task_def.subject,
-            description=task_def.description,
+            description=rendered_description,
             owner=task_def.owner,
             blocked_by=[created_task_ids[name] for name in task_def.blocked_by],
             metadata=metadata,
@@ -2644,13 +2656,22 @@ def launch_team(
         )
         spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
 
-    # 9. Output summary
+    # 9. Bootstrap entry tasks so wake-gated workers can start the flow
+    bootstrap = _bootstrap_entry_tasks(
+        team_name=t_name,
+        store=ts,
+        caller=tmpl.leader.name,
+        repo=repo,
+    )
+
+    # 10. Output summary
     out = {
         "status": "launched",
         "team": t_name,
         "template": tmpl.name,
         "backend": be_name,
         "agents": [{"name": s["name"], "id": s["id"], "type": s["type"]} for s in spawned],
+        "bootstrap": bootstrap,
     }
 
     def _human(_data):

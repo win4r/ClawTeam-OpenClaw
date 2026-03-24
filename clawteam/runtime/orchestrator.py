@@ -165,6 +165,7 @@ def _spawn_existing_agent(
     from clawteam.config import get_effective
     from clawteam.spawn import get_backend
     from clawteam.spawn.prompt import build_agent_prompt
+    from clawteam.spawn.registry import get_agent_record
     from clawteam.spawn.sessions import SessionStore
     from clawteam.team.manager import TeamManager
 
@@ -178,6 +179,12 @@ def _spawn_existing_agent(
     workspace = _load_workspace_info(team_name, agent_name)
     cwd = workspace.worktree_path if workspace else (str(Path(repo).resolve()) if repo else None)
     workspace_branch = workspace.branch_name if workspace else ""
+
+    pinned_env: dict[str, str] = {}
+    existing_record = get_agent_record(team_name, agent_name)
+    pinned_bin = str((existing_record or {}).get("clawteam_bin") or os.environ.get("CLAWTEAM_BIN") or "").strip()
+    if pinned_bin:
+        pinned_env["CLAWTEAM_BIN"] = pinned_bin
 
     prompt = build_agent_prompt(
         agent_name=agent_name,
@@ -206,6 +213,7 @@ def _spawn_existing_agent(
         agent_type=agent_type,
         team_name=team_name,
         prompt=prompt,
+        env=pinned_env or None,
         cwd=cwd,
         skip_permissions=skip_permissions,
     )

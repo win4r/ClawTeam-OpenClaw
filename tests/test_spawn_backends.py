@@ -6,7 +6,7 @@ import sys
 
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.subprocess_backend import SubprocessBackend
-from clawteam.spawn.registry import current_runtime_generation, get_agent_runtime_state
+from clawteam.spawn.registry import current_runtime_generation, get_agent_runtime_state, register_agent
 from clawteam.spawn.tmux_backend import (
     TmuxBackend,
     _confirm_workspace_trust_if_prompted,
@@ -58,6 +58,7 @@ def test_subprocess_backend_prepends_current_clawteam_bin_to_path(monkeypatch, t
     env = captured["env"]
     assert env["PATH"].startswith(f"{clawteam_bin.parent}:")
     assert env["CLAWTEAM_BIN"] == str(clawteam_bin)
+    assert env["CLAWTEAM_WORKER_INSTANCE_ID"].startswith("worker1-")
 
 
 def test_kill_duplicate_tmux_windows_keeps_lowest_index(monkeypatch):
@@ -468,6 +469,17 @@ def test_subprocess_backend_normalizes_nanobot_and_uses_message_flag(monkeypatch
     assert "nanobot agent -w /tmp/demo -m 'do work'" in captured["cmd"]
 
 
+def test_resolve_clawteam_executable_prefers_pinned_env(monkeypatch, tmp_path):
+    pinned = tmp_path / "custom" / "bin" / "clawteam"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("CLAWTEAM_BIN", str(pinned))
+    monkeypatch.setattr(sys, "argv", ["python"])
+    monkeypatch.setattr("clawteam.spawn.cli_env.shutil.which", lambda name: "/usr/bin/clawteam")
+
+    assert resolve_clawteam_executable() == str(pinned.resolve())
+
+
 def test_resolve_clawteam_executable_ignores_unrelated_argv0(monkeypatch, tmp_path):
     unrelated = tmp_path / "not-clawteam-review"
     unrelated.write_text("#!/bin/sh\n")
@@ -552,3 +564,39 @@ def test_registry_generation_mismatch_fails_closed(monkeypatch, tmp_path):
 
     assert current_runtime_generation() != "old-generation"
     assert get_agent_runtime_state("demo", "worker1") == "stale"
+
+
+def test_current_runtime_generation_ignores_mtime_only_changes(tmp_path):
+    runtime_root = tmp_path / "clawteam"
+    runtime_root.mkdir()
+    module = runtime_root / "worker.py"
+    module.write_text("print('same runtime')\n", encoding="utf-8")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname='demo'\n", encoding="utf-8")
+
+    first = current_runtime_generation(runtime_root)
+    module.touch()
+    pyproject.touch()
+    second = current_runtime_generation(runtime_root)
+
+    assert first == second
+
+
+def test_register_agent_persists_worker_instance_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="subprocess",
+        pid=12345,
+        worker_instance_id="worker1-instance",
+    )
+
+    record = get_agent_runtime_state("demo", "worker1")
+    assert record in {"alive", "dead", "stale"}
+
+    from clawteam.spawn.registry import get_agent_record
+
+    assert get_agent_record("demo", "worker1")["worker_instance_id"] == "worker1-instance"
