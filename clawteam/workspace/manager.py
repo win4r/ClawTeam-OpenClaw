@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,20 @@ _IGNORED_DIR_NAMES = {
     "tmp",
     "vendor",
 }
+
+_SENSITIVE_FILE_NAMES = {
+    ".env",
+    ".env.local",
+    ".npmrc",
+    "credentials.json",
+}
+
+_SENSITIVE_FILE_SUFFIXES = (
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+)
 
 
 def _workspaces_root() -> Path:
@@ -257,17 +272,26 @@ class WorkspaceManager:
         if not source_root.exists() or not source_root.is_dir():
             return
 
-        for source_path in source_root.rglob("*"):
-            relative = source_path.relative_to(source_root)
-            if any(part in _IGNORED_DIR_NAMES for part in relative.parts):
-                continue
-            if source_path.name.endswith(('.pyc', '.pyo', '.so', '.o')):
-                continue
-            target_path = target_root / relative
-            if source_path.is_dir():
-                target_path.mkdir(parents=True, exist_ok=True)
-                continue
-            if target_path.exists():
-                continue
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_path, target_path)
+        for dirpath, dirnames, filenames in os.walk(source_root):
+            dirnames[:] = [d for d in dirnames if d not in _IGNORED_DIR_NAMES]
+            current_dir = Path(dirpath)
+            relative_dir = current_dir.relative_to(source_root)
+            target_dir = target_root / relative_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            for filename in filenames:
+                if filename in _SENSITIVE_FILE_NAMES or filename.endswith(_SENSITIVE_FILE_SUFFIXES):
+                    continue
+                if filename.endswith((".pyc", ".pyo", ".so", ".o")):
+                    continue
+
+                source_path = current_dir / filename
+                relative = source_path.relative_to(source_root)
+                target_path = target_root / relative
+                if target_path.exists():
+                    continue
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(source_path, target_path)
+                except (OSError, PermissionError) as exc:
+                    logger.warning("workspace overlay skipped %s: %s", source_path, exc)

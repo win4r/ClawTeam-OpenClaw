@@ -28,6 +28,7 @@ def test_workspace_overlay_skips_large_ignored_dirs(monkeypatch, tmp_path):
     (subproject / "node_modules" / "leftpad" / "index.js").write_text("module.exports = 1\n", encoding="utf-8")
     (subproject / "scripts").mkdir(parents=True)
     (subproject / "scripts" / "collect_team_context.ts").write_text("ok\n", encoding="utf-8")
+    (subproject / ".env").write_text("SECRET=1\n", encoding="utf-8")
 
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr("clawteam.workspace.git.repo_root", lambda path: repo_root)
@@ -40,3 +41,4 @@ def test_workspace_overlay_skips_large_ignored_dirs(monkeypatch, tmp_path):
     worktree_root = Path(info.worktree_path) / "projects" / "openclaw-bet"
     assert (worktree_root / "scripts" / "collect_team_context.ts").exists()
     assert not (worktree_root / "node_modules" / "leftpad" / "index.js").exists()
+    assert not (worktree_root / ".env").exists()

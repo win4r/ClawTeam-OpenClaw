@@ -533,25 +533,6 @@ def _workspace_cwd_from_info(repo: str | None, ws_info) -> str:
 
 
 @team_app.command("status")
-def _workspace_cwd_from_info(repo: str | None, ws_info) -> str:
-    from pathlib import Path as _Path
-
-    cwd = ws_info.worktree_path
-    subpath = getattr(ws_info, "repo_subpath", "") or ""
-    if subpath:
-        return str((_Path(ws_info.worktree_path) / subpath).resolve())
-    if repo:
-        requested_repo = _Path(repo).expanduser().resolve()
-        repo_root = _Path(ws_info.repo_root).resolve()
-        try:
-            relative_repo = requested_repo.relative_to(repo_root)
-        except ValueError:
-            relative_repo = None
-        if relative_repo and str(relative_repo) != ".":
-            return str((_Path(ws_info.worktree_path) / relative_repo).resolve())
-    return cwd
-
-
 def team_status(
     team: str = typer.Argument(..., help="Team name"),
 ):
@@ -1601,13 +1582,10 @@ def lifecycle_on_exit(
 
     This is called automatically as a post-exit hook when an agent process terminates.
     """
-<<<<<<< HEAD
-    from clawteam.spawn.sessions import SessionStore
-=======
     import subprocess
 
     from clawteam.spawn.registry import get_agent_info
->>>>>>> 37a0987 (fix: support monorepo subproject workspaces)
+    from clawteam.spawn.sessions import SessionStore
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import TaskStatus
