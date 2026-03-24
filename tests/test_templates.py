@@ -18,6 +18,7 @@ from clawteam.templates import (
     _SafeDict,
     build_launch_task_input,
     execute_template_launch,
+    find_scope_audit_warnings,
     find_scope_inventions,
     find_scope_tightening,
     list_templates,
@@ -259,6 +260,38 @@ Deliver the smallest safe change.
         )
 
         assert tightenings == []
+
+    def test_find_scope_audit_warnings_flags_unknowns_and_assumptions_promoted_into_scope(self):
+        normalized = normalize_launch_brief(
+            source_request="Polish the member list UI.",
+            leader_brief="""## Source Request
+Polish the member list UI.
+
+## Scoped Brief
+Polish the member list UI using the existing tests are representative assumption while final prod env remains required for rollout.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+""",
+        )
+
+        warnings = find_scope_audit_warnings(
+            source_request="Polish the member list UI.",
+            normalized=normalized,
+        )
+
+        assert [warning.code for warning in warnings] == [
+            "unknowns_promoted_to_scope",
+            "assumptions_promoted_to_scope",
+        ]
+        assert warnings[0].details == ["final prod env"]
+        assert warnings[1].details == ["existing tests are representative"]
 
     def test_prepare_task_launch_brief_is_single_entrypoint(self):
         prepared = prepare_task_launch_brief(
