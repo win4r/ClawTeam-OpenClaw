@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -36,6 +35,38 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _acquire_file_lock(lock_file) -> None:
+    """Acquire an exclusive lock on the shared task lock file."""
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def _release_file_lock(lock_file) -> None:
+    """Release an exclusive lock acquired by ``_acquire_file_lock``."""
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 class TaskStore:
     """File-based task store with dependency tracking.
 
@@ -50,12 +81,12 @@ class TaskStore:
     def _write_lock(self):
         lock_path = _tasks_lock_path(self.team_name)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        with lock_path.open("a+b") as lock_file:
+            _acquire_file_lock(lock_file)
             try:
                 yield
             finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                _release_file_lock(lock_file)
 
     def create(
         self,

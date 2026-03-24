@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from clawteam.team.models import TeamConfig, TeamMember, get_data_dir
@@ -24,6 +27,52 @@ def _config_path(team_name: str) -> Path:
     return _team_dir(team_name) / "config.json"
 
 
+def _team_lock_path(team_name: str) -> Path:
+    return _team_dir(team_name) / ".team.lock"
+
+
+def _acquire_file_lock(lock_file) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def _release_file_lock(lock_file) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _team_write_lock(team_name: str):
+    lock_path = _team_lock_path(team_name)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        _acquire_file_lock(lock_file)
+        try:
+            yield
+        finally:
+            _release_file_lock(lock_file)
+
+
 def _load_config(team_name: str) -> TeamConfig | None:
     path = _config_path(team_name)
     if not path.exists():
@@ -38,11 +87,18 @@ def _load_config(team_name: str) -> TeamConfig | None:
 def _save_config(config: TeamConfig) -> None:
     path = _config_path(config.name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(
-        config.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix="config-",
+        suffix=".tmp",
     )
-    tmp.rename(path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(config.model_dump_json(indent=2, by_alias=True))
+        Path(tmp_name).replace(path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 class TeamManager:
@@ -75,22 +131,24 @@ class TeamManager:
         description: str = "",
         user: str = "",
     ) -> TeamConfig:
-        if _config_path(name).exists():
-            raise ValueError(f"Team '{name}' already exists")
+        with _team_write_lock(name):
+            if _config_path(name).exists():
+                raise ValueError(f"Team '{name}' already exists")
 
-        leader = TeamMember(
-            name=leader_name,
-            user=user,
-            agent_id=leader_id,
-            agent_type="leader",
-        )
-        config = TeamConfig(
-            name=name,
-            description=description,
-            lead_agent_id=leader_id,
-            members=[leader],
-        )
-        _save_config(config)
+            leader = TeamMember(
+                name=leader_name,
+                user=user,
+                agent_id=leader_id,
+                agent_type="leader",
+            )
+            config = TeamConfig(
+                name=name,
+                description=description,
+                lead_agent_id=leader_id,
+                members=[leader],
+            )
+            _save_config(config)
+
         # Create inboxes dir and leader inbox
         inbox_name = f"{user}_{leader_name}" if user else leader_name
         inbox = _team_dir(name) / "inboxes" / inbox_name
@@ -130,20 +188,22 @@ class TeamManager:
         agent_type: str = "general-purpose",
         user: str = "",
     ) -> TeamMember:
-        config = _load_config(team_name)
-        if not config:
-            raise ValueError(f"Team '{team_name}' not found")
-        for m in config.members:
-            if m.name == member_name and m.user == user:
-                raise ValueError(f"Agent '{member_name}' (user={user or '(none)'}) already in team")
-        member = TeamMember(
-            name=member_name,
-            user=user,
-            agent_id=agent_id,
-            agent_type=agent_type,
-        )
-        config.members.append(member)
-        _save_config(config)
+        with _team_write_lock(team_name):
+            config = _load_config(team_name)
+            if not config:
+                raise ValueError(f"Team '{team_name}' not found")
+            for m in config.members:
+                if m.name == member_name and m.user == user:
+                    raise ValueError(f"Agent '{member_name}' (user={user or '(none)'}) already in team")
+            member = TeamMember(
+                name=member_name,
+                user=user,
+                agent_id=agent_id,
+                agent_type=agent_type,
+            )
+            config.members.append(member)
+            _save_config(config)
+
         inbox_name = f"{user}_{member_name}" if user else member_name
         inbox = _team_dir(team_name) / "inboxes" / inbox_name
         inbox.mkdir(parents=True, exist_ok=True)
@@ -151,15 +211,16 @@ class TeamManager:
 
     @staticmethod
     def remove_member(team_name: str, member_name: str) -> bool:
-        config = _load_config(team_name)
-        if not config:
+        with _team_write_lock(team_name):
+            config = _load_config(team_name)
+            if not config:
+                return False
+            before = len(config.members)
+            config.members = [m for m in config.members if m.name != member_name]
+            if len(config.members) < before:
+                _save_config(config)
+                return True
             return False
-        before = len(config.members)
-        config.members = [m for m in config.members if m.name != member_name]
-        if len(config.members) < before:
-            _save_config(config)
-            return True
-        return False
 
     @staticmethod
     def get_leader_name(team_name: str) -> str | None:

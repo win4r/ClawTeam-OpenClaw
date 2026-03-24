@@ -7,6 +7,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+
+def _default_backend() -> str:
+    """Use subprocess defaults on Windows where tmux is uncommon."""
+    return "subprocess" if sys.platform.startswith("win") else "tmux"
+
 # TOML support: built-in on 3.11+, conditional dependency on 3.10
 if sys.version_info >= (3, 11):
     import tomllib
@@ -38,7 +43,7 @@ class TemplateDef(BaseModel):
     name: str
     description: str = ""
     command: list[str] = ["openclaw"]
-    backend: str = "tmux"
+    backend: str = _default_backend()
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
@@ -93,7 +98,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         name=tmpl.get("name", path.stem),
         description=tmpl.get("description", ""),
         command=tmpl.get("command", ["openclaw"]),
-        backend=tmpl.get("backend", "tmux"),
+        backend=tmpl.get("backend", _default_backend()),
         leader=leader,
         agents=agents,
         tasks=tasks,
