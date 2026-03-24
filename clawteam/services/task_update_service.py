@@ -8,6 +8,7 @@ from typing import Any, Callable
 from clawteam.services.task_service import wake_tasks_to_pending
 from clawteam.templates import (
     ScopeTaskValidationError,
+    find_scope_audit_warnings,
     inject_resolved_scope_context,
     validate_scope_task_completion,
 )
@@ -128,6 +129,7 @@ def _propagate_resolved_scope_to_targets(
     store: TaskStore,
     target_ids: list[str],
     scope_payload: dict[str, Any],
+    scope_warnings: list[dict[str, Any]] | None = None,
 ) -> None:
     for target_id in target_ids:
         target = store.get(target_id)
@@ -135,6 +137,8 @@ def _propagate_resolved_scope_to_targets(
             continue
         patched_metadata = dict(getattr(target, "metadata", {}) or {})
         patched_metadata["resolved_scope"] = scope_payload
+        if scope_warnings is not None:
+            patched_metadata["scope_audit_warnings"] = scope_warnings
         patched_description = inject_resolved_scope_context(
             description=getattr(target, "description", "") or "",
             normalized=scope_payload,
@@ -158,11 +162,13 @@ def execute_task_update_effects(
 ) -> TaskUpdateEffects:
     """Execute post-update side effects after the task store mutation succeeds."""
     scope_payload = _scope_payload(task)
+    scope_warnings = task.metadata.get("scope_audit_warnings") if isinstance(task.metadata, dict) else None
     if scope_payload and dependent_ids_to_wake:
         _propagate_resolved_scope_to_targets(
             store=ctx.store,
             target_ids=dependent_ids_to_wake,
             scope_payload=scope_payload,
+            scope_warnings=scope_warnings if isinstance(scope_warnings, list) else None,
         )
 
     wake = None
@@ -414,9 +420,14 @@ def execute_task_update(
             )
         except ScopeTaskValidationError as e:
             raise TaskTransitionValidationError(str(e)) from e
+        scope_warnings = find_scope_audit_warnings(
+            source_request=source_request,
+            normalized=validated_scope,
+        )
         metadata = dict(plan.metadata_to_apply or {})
         metadata["launch_brief"] = validated_scope.model_dump(mode="json")
         metadata["resolved_scope"] = validated_scope.model_dump(mode="json")
+        metadata["scope_audit_warnings"] = [warning.model_dump(mode="json") for warning in scope_warnings]
         plan = TaskUpdatePlan(
             metadata_to_apply=metadata,
             dependent_ids_to_wake=plan.dependent_ids_to_wake,

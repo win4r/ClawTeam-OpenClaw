@@ -71,6 +71,12 @@ class TaskLaunchBriefView(BaseModel):
     out_of_scope: list[str] = Field(default_factory=list)
 
 
+class ScopeAuditWarning(BaseModel):
+    code: str
+    message: str
+    details: list[str] = Field(default_factory=list)
+
+
 _NO_INVENTION_ENTITY_PATTERNS: dict[str, tuple[str, ...]] = {
     "endpoint": (r"\bendpoint(?:s)?\b", r"\broute(?:s)?\b"),
     "api": (r"\bapi(?:s)?\b",),
@@ -156,6 +162,57 @@ def find_scope_tightening(*, source_request: str, scoped_brief: str) -> list[str
     if not hard_requirement_labels or not acceptance_labels:
         return []
     return hard_requirement_labels + acceptance_labels
+
+
+def find_scope_audit_warnings(*, source_request: str, normalized: NormalizedLaunchBrief) -> list[ScopeAuditWarning]:
+    warnings: list[ScopeAuditWarning] = []
+    scoped_brief = normalized.sections.scoped_brief
+
+    invented_entities = find_scope_inventions(source_request=source_request, scoped_brief=scoped_brief)
+    if invented_entities:
+        warnings.append(
+            ScopeAuditWarning(
+                code="scope_entities_added",
+                message="Scoped Brief references risky scope entities that do not appear in Source Request.",
+                details=invented_entities,
+            )
+        )
+
+    tightened_requirements = find_scope_tightening(source_request=source_request, scoped_brief=scoped_brief)
+    if tightened_requirements:
+        warnings.append(
+            ScopeAuditWarning(
+                code="acceptance_tightening",
+                message="Scoped Brief appears to introduce stricter acceptance language than Source Request.",
+                details=tightened_requirements,
+            )
+        )
+
+    relocated_unknowns = [
+        item for item in normalized.sections.unknowns if item and item.lower() in scoped_brief.lower()
+    ]
+    if relocated_unknowns:
+        warnings.append(
+            ScopeAuditWarning(
+                code="unknowns_promoted_to_scope",
+                message="Items listed as Unknowns also appear as committed scope language in Scoped Brief.",
+                details=relocated_unknowns,
+            )
+        )
+
+    relocated_assumptions = [
+        item for item in normalized.sections.leader_assumptions if item and item.lower() in scoped_brief.lower()
+    ]
+    if relocated_assumptions:
+        warnings.append(
+            ScopeAuditWarning(
+                code="assumptions_promoted_to_scope",
+                message="Items listed as Leader Assumptions also appear as committed scope language in Scoped Brief.",
+                details=relocated_assumptions,
+            )
+        )
+
+    return warnings
 
 
 def validate_scope_task_completion(*, source_request: str, leader_brief: str) -> NormalizedLaunchBrief:
