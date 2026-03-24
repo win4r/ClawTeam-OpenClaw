@@ -1700,6 +1700,116 @@ lifecycle_app = typer.Typer(help="Agent lifecycle commands (shutdown protocol)")
 app.add_typer(lifecycle_app, name="lifecycle")
 
 
+# ============================================================================
+# Agent Commands
+# ============================================================================
+
+agent_app = typer.Typer(help="Agent management commands")
+app.add_typer(agent_app, name="agent")
+
+
+@agent_app.command("status")
+def agent_status(
+    team: str = typer.Option(..., "--team", "-t", help="Team name"),
+    agent_name: str = typer.Argument(..., help="Agent name to check"),
+    json: bool = typer.Option(False, "--json", "-j", help="JSON output"),
+):
+    """Check if an agent is alive and what task it's working on."""
+    import subprocess
+    from clawteam.spawn.registry import get_registry, is_agent_alive
+    from clawteam.team.tasks import TaskStore
+
+    # 1. Check spawn registry
+    registry = get_registry(team)
+    agent_info = registry.get(agent_name)
+
+    # 2. Check if agent is alive via registry + tmux
+    tmux_alive = is_agent_alive(team, agent_name)
+
+    # 3. Check task lock (which task is this agent working on?)
+    task_store = TaskStore(team)
+    tasks = task_store.list_tasks()
+    task_lock = None
+    for task in tasks:
+        if task.owner == agent_name and task.status == "in_progress":
+            task_lock = task.id
+            break
+
+    # 4. Build result
+    result = {
+        "agent_name": agent_name,
+        "team": team,
+        "status": "alive" if tmux_alive else "dead",
+        "task_lock": task_lock,
+        "in_registry": agent_info is not None,
+    }
+
+    def _human(d):
+        console.print(f"Agent: [cyan]{d['agent_name']}[/cyan]")
+        console.print(f"Team: {d['team']}")
+        console.print(
+            f"Status: [green]alive[/green]"
+            if d["status"] == "alive"
+            else f"Status: [red]dead[/red]"
+        )
+        console.print(f"Task: {d['task_lock'] or 'none'}")
+        console.print(f"In Registry: {d['in_registry']}")
+
+    _output(result, _human)
+
+
+@agent_app.command("list")
+def agent_list(
+    team: str = typer.Option(..., "--team", "-t", help="Team name"),
+):
+    """List all agents in a team with their status."""
+    from clawteam.spawn.registry import get_registry, is_agent_alive
+    from clawteam.team.tasks import TaskStore
+
+    # Get all agents from registry
+    registry = get_registry(team)
+    agent_names = list(registry.keys())
+
+    # Get all tasks
+    task_store = TaskStore(team)
+    tasks = task_store.list_tasks()
+
+    # Build task map (owner -> task_id)
+    task_map = {}
+    for task in tasks:
+        if task.status == "in_progress":
+            task_map[task.owner] = task.id
+
+    # Build results
+    results = []
+    for agent_name in agent_names:
+        tmux_alive = is_agent_alive(team, agent_name)
+        results.append(
+            {
+                "agent_name": agent_name,
+                "team": team,
+                "status": "alive" if tmux_alive else "dead",
+                "task_lock": task_map.get(agent_name),
+            }
+        )
+
+    def _human(d):
+        table = Table(title=f"Agents in {team}")
+        table.add_column("Agent", style="cyan")
+        table.add_column("Status")
+        table.add_column("Task")
+        for agent in d:
+            status_style = "green" if agent["status"] == "alive" else "red"
+            table.add_row(
+                agent["agent_name"],
+                f"[{status_style}]{agent['status']}[/{status_style}]",
+                agent["task_lock"] or "-",
+            )
+        console.print(table)
+
+    _output(results, _human)
+
+
 @lifecycle_app.command("request-shutdown")
 def lifecycle_request_shutdown(
     team: str = typer.Argument(..., help="Team name"),
@@ -1811,10 +1921,15 @@ def lifecycle_on_exit(
     team: str = typer.Option(..., "--team", "-t", help="Team name"),
     agent: str = typer.Option(..., "--agent", "-n", help="Agent name"),
 ):
-    """Handle agent process exit: reset in_progress tasks to pending, notify leader.
+    """Handle agent process exit: check output files, mark completed/failed, notify leader.
 
     This is called automatically as a post-exit hook when an agent process terminates.
+    It checks for output_file existence to determine if the task completed successfully
+    or failed.
     """
+    from pathlib import Path
+
+    from clawteam.logging import log_task
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import TaskStatus
@@ -1823,37 +1938,75 @@ def lifecycle_on_exit(
     store = TaskStore(team)
     tasks = store.list_tasks()
 
-    # Find this agent's in_progress tasks and reset them
-    abandoned = [t for t in tasks if t.owner == agent and t.status == TaskStatus.in_progress]
+    in_progress_tasks = [
+        t for t in tasks if t.owner == agent and t.status == TaskStatus.in_progress
+    ]
 
-    if not abandoned:
-        # Agent exited cleanly (all tasks already completed or pending)
+    if not in_progress_tasks:
         return
 
-    for t in abandoned:
-        store.update(t.id, status=TaskStatus.pending)
+    completed = []
+    failed = []
+    pending = []
 
-    # Notify leader
+    for t in in_progress_tasks:
+        if t.output_file:
+            output_path = Path(t.output_file).expanduser()
+            if output_path.exists() and output_path.stat().st_size > 0:
+                store.update(t.id, status=TaskStatus.completed)
+                completed.append(t)
+            else:
+                store.update(
+                    t.id,
+                    status=TaskStatus.failed,
+                    failure_reason="output_file_missing_or_empty",
+                )
+                failed.append(t)
+        else:
+            store.update(t.id, status=TaskStatus.pending)
+            pending.append(t)
+
     leader_name = TeamManager.get_leader_name(team)
     if leader_name:
         mailbox = MailboxManager(team)
-        task_subjects = ", ".join(t.subject for t in abandoned)
-        mailbox.send(
-            from_agent=agent,
-            to=leader_name,
-            content=f"Agent '{agent}' exited unexpectedly. "
-            f"Reset {len(abandoned)} task(s) to pending: {task_subjects}",
-        )
+        msg_parts = []
+        if completed:
+            subjects = ", ".join(t.subject for t in completed)
+            msg_parts.append(f"Completed: {subjects}")
+        if failed:
+            subjects = ", ".join(t.subject for t in failed)
+            msg_parts.append(f"Failed: {subjects}")
+        if pending:
+            subjects = ", ".join(t.subject for t in pending)
+            msg_parts.append(f"Reset to pending: {subjects}")
+
+        if msg_parts:
+            mailbox.send(
+                from_agent=agent,
+                to=leader_name,
+                content=f"Agent '{agent}' exited. " + ". ".join(msg_parts),
+            )
+
+    log_task(
+        team_name=team,
+        action="agent_exited",
+        task_id="",
+        subject=f"Agent {agent} exit: {len(completed)} done, {len(failed)} failed, {len(pending)} pending",
+    )
 
     _output(
         {
             "status": "agent_exited",
             "agent": agent,
-            "abandoned_tasks": [{"id": t.id, "subject": t.subject} for t in abandoned],
+            "completed": [{"id": t.id, "subject": t.subject} for t in completed],
+            "failed": [{"id": t.id, "subject": t.subject} for t in failed],
+            "pending": [{"id": t.id, "subject": t.subject} for t in pending],
         },
         lambda d: console.print(
             f"[yellow]Agent '{agent}' exited.[/yellow] "
-            f"Reset {len(d['abandoned_tasks'])} task(s) to pending."
+            f"Completed: {len(d['completed'])}, "
+            f"Failed: {len(d['failed'])}, "
+            f"Pending: {len(d['pending'])}"
         ),
     )
 
@@ -1955,13 +2108,27 @@ def spawn_agent(
 
     # Build prompt: identity + task + clawteam coordination guide
     prompt = None
+    task_id = ""
     if task:
         import os as _os
 
         from clawteam.spawn.prompt import build_agent_prompt
         from clawteam.team.manager import TeamManager
+        from clawteam.team.models import TaskStatus
+        from clawteam.team.tasks import TaskStore
 
         leader_name = TeamManager.get_leader_name(_team) or "leader"
+
+        store = TaskStore(_team)
+        subject = task[:100] if len(task) > 100 else task
+        task_obj = store.create(
+            subject=subject,
+            description=task,
+            owner=_name,
+        )
+        store.update(task_obj.id, status=TaskStatus.in_progress)
+        task_id = task_obj.id
+
         prompt = build_agent_prompt(
             agent_name=_name,
             agent_id=_id,
@@ -1973,6 +2140,7 @@ def spawn_agent(
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{_team}",
+            task_id=task_id,
         )
 
     # Session resume: inject --resume flag for claude commands
