@@ -192,3 +192,76 @@ def test_inbox_watcher_runtime_mode_routes_messages():
     watcher._handle_message(message)
 
     assert [msg.content for msg in router.messages] == ["hello"]
+
+
+def test_inbox_watcher_json_mode_keeps_runtime_warning_off_stdout(capsys):
+    class DummyMailbox:
+        def receive(self, *_args, **_kwargs):
+            return []
+
+    class FailingRouter:
+        def route_message(self, _msg, now=None):
+            raise RuntimeError("route boom")
+
+    message = TeamMessage(type=MessageType.message, from_agent="leader", to="worker", content="hello")
+    watcher = InboxWatcher(
+        team_name="demo",
+        agent_name="worker",
+        mailbox=DummyMailbox(),
+        json_output=True,
+        runtime_router=FailingRouter(),
+    )
+
+    watcher._handle_message(message)
+    captured = capsys.readouterr()
+
+    assert captured.out.strip() == message.model_dump_json(by_alias=True, exclude_none=True)
+    assert captured.err.strip() == "[warn] runtime routing failed: route boom"
+
+
+def test_inbox_watcher_json_mode_flush_warning_goes_to_stderr(capsys):
+    class DummyMailbox:
+        def receive(self, *_args, **_kwargs):
+            return []
+
+    class FailingRouter:
+        def flush_due(self, now=None):
+            raise RuntimeError("flush boom")
+
+    watcher = InboxWatcher(
+        team_name="demo",
+        agent_name="worker",
+        mailbox=DummyMailbox(),
+        json_output=True,
+        runtime_router=FailingRouter(),
+    )
+
+    watcher._flush_runtime_routes()
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err.strip() == "[warn] runtime flush failed: flush boom"
+
+
+def test_inbox_watcher_default_mode_keeps_runtime_warning_readable_on_stdout(capsys):
+    class DummyMailbox:
+        def receive(self, *_args, **_kwargs):
+            return []
+
+    class FailingRouter:
+        def route_message(self, _msg, now=None):
+            raise RuntimeError("route boom")
+
+    message = TeamMessage(type=MessageType.message, from_agent="leader", to="worker", content="hello")
+    watcher = InboxWatcher(
+        team_name="demo",
+        agent_name="worker",
+        mailbox=DummyMailbox(),
+        runtime_router=FailingRouter(),
+    )
+
+    watcher._handle_message(message)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert "[warn] runtime routing failed: route boom" in captured.out

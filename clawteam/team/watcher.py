@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import subprocess
+import sys
 import time
 
 from clawteam.team.mailbox import MailboxManager
@@ -66,7 +67,7 @@ class InboxWatcher:
             try:
                 self.runtime_router.route_message(msg)
             except Exception as exc:
-                print(f"[warn] runtime routing failed: {exc}", flush=True)
+                self._warn(f"[warn] runtime routing failed: {exc}")
         if self.exec_cmd:
             self._run_callback(msg)
 
@@ -74,7 +75,7 @@ class InboxWatcher:
         try:
             self.runtime_router.flush_due()
         except Exception as exc:
-            print(f"[warn] runtime flush failed: {exc}", flush=True)
+            self._warn(f"[warn] runtime flush failed: {exc}")
 
     def _output(self, msg: TeamMessage) -> None:
         if self.json_output:
@@ -85,6 +86,10 @@ class InboxWatcher:
                 f"to={msg.to}: {msg.content}",
                 flush=True,
             )
+
+    def _warn(self, message: str) -> None:
+        stream = sys.stderr if self.json_output else None
+        print(message, file=stream, flush=True)
 
     def _run_callback(self, msg: TeamMessage) -> None:
         """Execute the --exec command with message data as env vars."""
