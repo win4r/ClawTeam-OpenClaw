@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from clawteam.team.models import MessageType, TeamMessage
 from clawteam.team.router import RuntimeRouter
