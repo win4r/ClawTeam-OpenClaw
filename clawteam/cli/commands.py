@@ -1548,14 +1548,20 @@ def lifecycle_on_exit(
     team: str = typer.Option(..., "--team", "-t", help="Team name"),
     agent: str = typer.Option(..., "--agent", "-n", help="Agent name"),
 ):
-    """Handle agent process exit: reset in_progress tasks to pending, notify leader.
+    """Handle agent process exit: clean up session and reset in_progress tasks.
 
     This is called automatically as a post-exit hook when an agent process terminates.
     """
+    from clawteam.spawn.sessions import SessionStore
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import TaskStatus
     from clawteam.team.tasks import TaskStore
+
+    # Always clean up the agent's session file, regardless of task status.
+    # Without this, session files accumulate indefinitely under
+    # ~/.clawteam/sessions/{team}/ after every agent exit.
+    SessionStore(team).clear(agent)
 
     store = TaskStore(team)
     tasks = store.list_tasks()
@@ -1567,7 +1573,6 @@ def lifecycle_on_exit(
     ]
 
     if not abandoned:
-        # Agent exited cleanly (all tasks already completed or pending)
         return
 
     for t in abandoned:
