@@ -68,7 +68,6 @@ def build_worker_task_prompt(
     startup_prompt: str = "",
     workspace_dir: str = "",
     workspace_branch: str = "",
-    runtime_completion_signal_path: str = "",
 ) -> str:
     lines: list[str] = []
     if startup_prompt.strip():
@@ -100,8 +99,6 @@ def build_worker_task_prompt(
     ]
     if getattr(task, "active_execution_id", ""):
         shell_exports.append(("CLAWTEAM_TASK_EXECUTION_ID", task.active_execution_id))
-    if runtime_completion_signal_path.strip():
-        shell_exports.append(("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", runtime_completion_signal_path.strip()))
     shell_prefix = " ".join(
         f"{key}={shlex.quote(str(value))}" for key, value in shell_exports if str(value)
     )
@@ -132,7 +129,7 @@ def build_worker_task_prompt(
         "- If a leader message appears to expand scope beyond the task brief, stop and ask for a new task or explicit human-approved scope change instead of implementing it silently.",
         "- Workflow routing is owned by the leader/template/state machine. Do not create repair/retry/review tasks or mutate blocked_by/on_fail edges unless the leader explicitly told you to do that.",
         f"- Before terminal completion, write the machine completion envelope to `$CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH` with task_id/execution_id/terminal_status. result_type and result_payload are optional business fields, not runtime authority.",
-        f"- Example completion envelope command: `python3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nPath(os.environ['CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH']).write_text(json.dumps({{'version': 1, 'task_id': '{task.id}', 'execution_id': '{getattr(task, 'active_execution_id', '')}', 'terminal_status': 'completed', 'result_type': 'DEV_RESULT', 'result_payload': {{'status': 'completed'}}}}) + '\\n', encoding='utf-8')\nPY`",
+        f"- Example completion envelope command: `python - <<'PY'\nimport json, os\nfrom pathlib import Path\nPath(os.environ['CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH']).write_text(json.dumps({{'version': 1, 'task_id': '{task.id}', 'execution_id': '{getattr(task, 'active_execution_id', '')}', 'terminal_status': 'completed', 'result_type': 'DEV_RESULT', 'result_payload': {{'status': 'completed'}}}}) + '\\n', encoding='utf-8')\nPY`",
         f"- When the task is truly complete, run `{clawteam_cmd} task update {team_name} {task.id} --status completed`.",
         f"- Do not pretend success. Use real validation and report exact files, commands, and results.",
         f"- If more context is needed, read your inbox and inspect the workspace before changing code.",
@@ -144,6 +141,7 @@ def build_worker_task_prompt(
         "## Result Block Formats",
         "- DEV_RESULT must include exactly these headings: status, summary, changed_files, validation, known_issues, next_action.",
         "- QA_RESULT must include exactly these headings: status, summary, evidence, validation, risk, next_action.",
+        "- QA_RESULT status may be pass, pass_with_risk, fail, or blocked. Use pass_with_risk when the main goal is validated but residual risk or unobserved branch coverage remains.",
         "- REVIEW_RESULT must include exactly these headings: decision, summary, architecture_review, required_fixes, evidence, validation, next_action.",
         "- Keep required_fixes limited to must-fix items; put nice-to-have ideas outside that section or write `none`.",
     ])
@@ -360,10 +358,10 @@ _RESULT_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str], dict[str, TaskStatus]]]
     (
         "QA_RESULT",
         re.compile(
-            r"QA_RESULT\s+status:\s*(?P<status>pass|fail|blocked)\b(?P<body>.*?)next_action:",
+            r"QA_RESULT\s+status:\s*(?P<status>pass_with_risk|pass|fail|blocked)\b(?P<body>.*?)next_action:",
             re.IGNORECASE | re.DOTALL,
         ),
-        {"pass": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.failed},
+        {"pass": TaskStatus.completed, "pass_with_risk": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.failed},
     ),
     (
         "REVIEW_RESULT",
@@ -676,8 +674,6 @@ def run_worker_iteration(
     leader_name = TeamManager.get_leader_name(team_name) or "leader"
     workspace_dir = os.environ.get("CLAWTEAM_WORKSPACE_DIR", cwd or "")
     workspace_branch = os.environ.get("CLAWTEAM_WORKSPACE_BRANCH", "")
-    session_key = f"clawteam-{team_name}-{agent_name}"
-    completion_signal_path = str(_completion_signal_path(session_key))
     prompt = build_worker_task_prompt(
         team_name=team_name,
         agent_name=agent_name,
@@ -686,8 +682,8 @@ def run_worker_iteration(
         startup_prompt=startup_prompt,
         workspace_dir=workspace_dir,
         workspace_branch=workspace_branch,
-        runtime_completion_signal_path=completion_signal_path,
     )
+    session_key = f"clawteam-{team_name}-{agent_name}"
     command = build_openclaw_agent_command(
         base_command=base_command or ["openclaw"],
         session_key=session_key,
@@ -699,7 +695,7 @@ def run_worker_iteration(
     env["CLAWTEAM_TASK_ID"] = claimed.id
     env["CLAWTEAM_TASK_EXECUTION_ID"] = claimed.active_execution_id
     env["CLAWTEAM_TASK_EXECUTION_SEQ"] = str(claimed.execution_seq)
-    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = completion_signal_path
+    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = str(_completion_signal_path(session_key))
     progress_stall_timeout_seconds = float(
         env.get("CLAWTEAM_WORKER_PROGRESS_STALL_TIMEOUT", DEFAULT_PROGRESS_STALL_TIMEOUT)
     )
