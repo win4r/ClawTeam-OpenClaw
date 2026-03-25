@@ -332,6 +332,12 @@ function TaskCard({ task, status }) {
       {status === 'failed' && (task.metadata?.failure_note || task.metadata?.failure_root_cause) && (
         <div style={S.taskBlocked}>reason: {task.metadata?.failure_note || task.metadata?.failure_root_cause}</div>
       )}
+      {status === 'completed' && task.metadata?.qa_result_status && (
+        <div style={S.taskBlocked}>qa: {task.metadata?.qa_result_status}</div>
+      )}
+      {status === 'completed' && task.metadata?.qa_result_risk && (
+        <div style={S.taskBlocked}>risk: {task.metadata?.qa_result_risk}</div>
+      )}
     </div>
   );
 }
