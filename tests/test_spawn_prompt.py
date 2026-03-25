@@ -7,6 +7,7 @@ def test_build_agent_prompt_bootstrap_uses_shell_and_quotes_data_dir(monkeypatch
     data_dir = "/tmp/clawteam data dir"
     pinned = "/tmp/custom bin/clawteam"
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", data_dir)
+    monkeypatch.setenv("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", "/tmp/runtime completion.json")
     monkeypatch.setattr("clawteam.spawn.prompt.resolve_clawteam_executable", lambda: pinned)
 
     prompt = build_agent_prompt(
@@ -22,7 +23,8 @@ def test_build_agent_prompt_bootstrap_uses_shell_and_quotes_data_dir(monkeypatch
     expected_bootstrap = (
         "`eval $(CLAWTEAM_AGENT_NAME='qa one' CLAWTEAM_AGENT_ID=qa-1 "
         "CLAWTEAM_AGENT_TYPE=general-purpose CLAWTEAM_TEAM_NAME='demo team' "
-        "CLAWTEAM_BIN='/tmp/custom bin/clawteam' CLAWTEAM_DATA_DIR='/tmp/clawteam data dir' CLAWTEAM_TASK_EXECUTION_ID=task-123-exec-9 '/tmp/custom bin/clawteam' identity set "
+        "CLAWTEAM_BIN='/tmp/custom bin/clawteam' CLAWTEAM_DATA_DIR='/tmp/clawteam data dir' CLAWTEAM_TASK_EXECUTION_ID=task-123-exec-9 "
+        "CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH='/tmp/runtime completion.json' '/tmp/custom bin/clawteam' identity set "
         "--agent-name 'qa one' --agent-id qa-1 --agent-type general-purpose "
         "--team 'demo team' --data-dir '/tmp/clawteam data dir' --shell)`"
     )
