@@ -68,6 +68,7 @@ def build_worker_task_prompt(
     startup_prompt: str = "",
     workspace_dir: str = "",
     workspace_branch: str = "",
+    runtime_completion_signal_path: str = "",
 ) -> str:
     lines: list[str] = []
     if startup_prompt.strip():
@@ -99,9 +100,8 @@ def build_worker_task_prompt(
     ]
     if getattr(task, "active_execution_id", ""):
         shell_exports.append(("CLAWTEAM_TASK_EXECUTION_ID", task.active_execution_id))
-    runtime_completion_signal_path = os.environ.get("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", "").strip()
-    if runtime_completion_signal_path:
-        shell_exports.append(("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", runtime_completion_signal_path))
+    if runtime_completion_signal_path.strip():
+        shell_exports.append(("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", runtime_completion_signal_path.strip()))
     shell_prefix = " ".join(
         f"{key}={shlex.quote(str(value))}" for key, value in shell_exports if str(value)
     )
@@ -676,6 +676,8 @@ def run_worker_iteration(
     leader_name = TeamManager.get_leader_name(team_name) or "leader"
     workspace_dir = os.environ.get("CLAWTEAM_WORKSPACE_DIR", cwd or "")
     workspace_branch = os.environ.get("CLAWTEAM_WORKSPACE_BRANCH", "")
+    session_key = f"clawteam-{team_name}-{agent_name}"
+    completion_signal_path = str(_completion_signal_path(session_key))
     prompt = build_worker_task_prompt(
         team_name=team_name,
         agent_name=agent_name,
@@ -684,8 +686,8 @@ def run_worker_iteration(
         startup_prompt=startup_prompt,
         workspace_dir=workspace_dir,
         workspace_branch=workspace_branch,
+        runtime_completion_signal_path=completion_signal_path,
     )
-    session_key = f"clawteam-{team_name}-{agent_name}"
     command = build_openclaw_agent_command(
         base_command=base_command or ["openclaw"],
         session_key=session_key,
@@ -697,7 +699,7 @@ def run_worker_iteration(
     env["CLAWTEAM_TASK_ID"] = claimed.id
     env["CLAWTEAM_TASK_EXECUTION_ID"] = claimed.active_execution_id
     env["CLAWTEAM_TASK_EXECUTION_SEQ"] = str(claimed.execution_seq)
-    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = str(_completion_signal_path(session_key))
+    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = completion_signal_path
     progress_stall_timeout_seconds = float(
         env.get("CLAWTEAM_WORKER_PROGRESS_STALL_TIMEOUT", DEFAULT_PROGRESS_STALL_TIMEOUT)
     )
