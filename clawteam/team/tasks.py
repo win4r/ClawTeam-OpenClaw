@@ -142,13 +142,15 @@ class TaskStore:
 
                 out = _Path(task.output_file).expanduser()
 
-                # First check
-                file_ok = out.exists() and out.stat().st_size > 0
-
-                # If not found, wait 3 seconds and retry (disk write buffer)
-                if not file_ok:
-                    _time.sleep(3)
-                    file_ok = out.exists() and out.stat().st_size > 0
+                # Retry loop: 5 attempts, total ~15 seconds wait
+                # OpenClaw agent may have disk write delay
+                file_ok = False
+                for attempt in range(5):
+                    if out.exists() and out.stat().st_size > 0:
+                        file_ok = True
+                        break
+                    if attempt < 4:  # Don't sleep after last attempt
+                        _time.sleep(3)
 
                 if not file_ok:
                     task.status = TaskStatus.failed
@@ -417,3 +419,36 @@ class TaskStore:
                 )
 
         return failed_tasks
+
+    def claim_pending_task(self, owner: str, caller: str) -> TaskItem | None:
+        """Atomically claim a pending or blocked task for the given owner.
+
+        This method finds the first pending/blocked task for the owner and
+        atomically updates it to in_progress with the caller as the lock holder.
+
+        Returns the claimed task if one was found, None otherwise.
+        """
+        with self._write_lock():
+            tasks = self._list_tasks_unlocked(
+                owner=owner,
+            )
+            for task in tasks:
+                if task.status in (TaskStatus.pending, TaskStatus.blocked):
+                    task.status = TaskStatus.in_progress
+                    task.locked_by = caller
+                    task.locked_at = _now_iso()
+                    task.started_at = task.started_at or _now_iso()
+                    task.updated_at = _now_iso()
+                    self._save_unlocked(task)
+
+                    from clawteam.logging import log_task
+
+                    log_task(
+                        team_name=self.team_name,
+                        action="started",
+                        task_id=task.id,
+                        subject=task.subject,
+                        agent=caller,
+                    )
+                    return task
+            return None

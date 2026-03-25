@@ -2028,6 +2028,9 @@ def spawn_agent(
     task: Optional[str] = typer.Option(
         None, "--task", help="Task to assign (becomes the agent's initial prompt)"
     ),
+    task_id: Optional[str] = typer.Option(
+        None, "--task-id", help="Link to an existing TaskItem by ID"
+    ),
     workspace: Optional[bool] = typer.Option(
         None,
         "--workspace/--no-workspace",
@@ -2108,10 +2111,8 @@ def spawn_agent(
 
     # Build prompt: identity + task + clawteam coordination guide
     prompt = None
-    task_id = ""
-    if task:
-        import os as _os
-
+    bound_task_id = ""
+    if task_id:
         from clawteam.spawn.prompt import build_agent_prompt
         from clawteam.team.manager import TeamManager
         from clawteam.team.models import TaskStatus
@@ -2120,14 +2121,32 @@ def spawn_agent(
         leader_name = TeamManager.get_leader_name(_team) or "leader"
 
         store = TaskStore(_team)
-        subject = task[:100] if len(task) > 100 else task
-        task_obj = store.create(
-            subject=subject,
-            description=task,
-            owner=_name,
-        )
-        store.update(task_obj.id, status=TaskStatus.in_progress)
-        task_id = task_obj.id
+        task_obj = store.get(task_id)
+
+        if not task_obj:
+            console.print(f"[red]Error: Task '{task_id}' not found[/red]")
+            raise typer.Exit(1)
+
+        if task_obj.status == TaskStatus.completed:
+            console.print(f"[red]Error: Task '{task_id}' already completed[/red]")
+            raise typer.Exit(1)
+
+        if task_obj.locked_by and task_obj.locked_by != _name:
+            console.print(f"[red]Error: Task locked by '{task_obj.locked_by}'[/red]")
+            raise typer.Exit(1)
+
+        if task_obj.owner and task_obj.owner != _name:
+            console.print(
+                f"[yellow]Warning: Task owner '{task_obj.owner}' != agent '{_name}'[/yellow]"
+            )
+
+        store.update(task_id, status=TaskStatus.in_progress, caller=_name)
+        bound_task_id = task_id
+
+        if not task:
+            task = task_obj.description or task_obj.subject
+
+        import os as _os
 
         prompt = build_agent_prompt(
             agent_name=_name,
@@ -2140,7 +2159,47 @@ def spawn_agent(
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{_team}",
-            task_id=task_id,
+            task_id=bound_task_id,
+        )
+    elif task:
+        import os as _os
+
+        from clawteam.spawn.prompt import build_agent_prompt
+        from clawteam.team.manager import TeamManager
+        from clawteam.team.models import TaskStatus
+        from clawteam.team.tasks import TaskStore
+
+        leader_name = TeamManager.get_leader_name(_team) or "leader"
+
+        store = TaskStore(_team)
+        store.release_stale_locks()
+
+        existing = store.claim_pending_task(_name, _name)
+        if existing:
+            bound_task_id = existing.id
+            console.print(f"[dim]Reusing task #{existing.id} for owner={_name}[/dim]")
+        else:
+            subject = task[:100] if len(task) > 100 else task
+            task_obj = store.create(
+                subject=subject,
+                description=task,
+                owner=_name,
+            )
+            store.update(task_obj.id, status=TaskStatus.in_progress)
+            bound_task_id = task_obj.id
+
+        prompt = build_agent_prompt(
+            agent_name=_name,
+            agent_id=_id,
+            agent_type=agent_type,
+            team_name=_team,
+            leader_name=leader_name,
+            task=task,
+            user=_os.environ.get("CLAWTEAM_USER", ""),
+            workspace_dir=cwd or "",
+            workspace_branch=ws_branch,
+            memory_scope=f"custom:team-{_team}",
+            task_id=bound_task_id,
         )
 
     # Session resume: inject --resume flag for claude commands
