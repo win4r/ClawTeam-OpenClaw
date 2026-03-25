@@ -63,13 +63,14 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
         agent_name="qa 1",
         leader_name="leader",
         task=task,
+        runtime_completion_signal_path="/tmp/runtime signal/completion.json",
     )
 
     expected_bootstrap = (
         "`eval $(CLAWTEAM_AGENT_NAME='qa 1' CLAWTEAM_AGENT_ID='qa 1-id' "
         "CLAWTEAM_AGENT_TYPE='general purpose' CLAWTEAM_TEAM_NAME='demo team' "
         "CLAWTEAM_BIN='/tmp/custom bin/clawteam' "
-        f"CLAWTEAM_DATA_DIR='{tmp_path / 'data dir'}' '/tmp/custom bin/clawteam' identity set --agent-name 'qa 1' --agent-id 'qa 1-id' "
+        f"CLAWTEAM_DATA_DIR='{tmp_path / 'data dir'}' CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH='/tmp/runtime signal/completion.json' '/tmp/custom bin/clawteam' identity set --agent-name 'qa 1' --agent-id 'qa 1-id' "
         "--agent-type 'general purpose' --team 'demo team' "
         f"--data-dir '{tmp_path / 'data dir'}' --shell)`"
     )
@@ -117,6 +118,7 @@ def test_build_worker_task_prompt_includes_active_execution_when_claimed(monkeyp
         agent_name="qa1",
         leader_name="leader",
         task=claimed,
+        runtime_completion_signal_path="/tmp/completion.json",
     )
 
     assert f"- Active Execution ID: {claimed.active_execution_id}" in prompt
