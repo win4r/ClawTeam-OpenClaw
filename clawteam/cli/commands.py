@@ -924,6 +924,8 @@ def task_update(
     failure_evidence: Optional[str] = typer.Option(None, "--failure-evidence", help="Concrete evidence when status=failed"),
     failure_recommended_next_owner: Optional[str] = typer.Option(None, "--failure-recommended-next-owner", help="Suggested next owner when status=failed"),
     failure_recommended_action: Optional[str] = typer.Option(None, "--failure-recommended-action", help="Suggested next action when status=failed"),
+    qa_result_status: Optional[str] = typer.Option(None, "--qa-result-status", help="Optional QA result status to persist in task metadata: pass, pass_with_risk, fail, blocked"),
+    qa_risk_note: Optional[str] = typer.Option(None, "--qa-risk-note", help="Optional QA risk note to persist in task metadata"),
     wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
     message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
     force: bool = typer.Option(False, "--force", "-f", help="Force override task lock"),
@@ -938,6 +940,22 @@ def task_update(
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
     add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
+
+    allowed_qa_result_statuses = {"pass", "pass_with_risk", "fail", "blocked"}
+    if qa_result_status is not None and qa_result_status not in allowed_qa_result_statuses:
+        _output(
+            {"error": "--qa-result-status must be one of: pass, pass_with_risk, fail, blocked"},
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+
+    extra_metadata = None
+    if qa_result_status is not None or qa_risk_note is not None:
+        extra_metadata = {}
+        if qa_result_status is not None:
+            extra_metadata["qa_result_status"] = qa_result_status
+        if qa_risk_note is not None:
+            extra_metadata["qa_risk_note"] = qa_risk_note
 
     caller = identity.agent_name
     ctx = TaskUpdateContext(
@@ -961,6 +979,7 @@ def task_update(
         failure_evidence=failure_evidence,
         failure_recommended_next_owner=failure_recommended_next_owner,
         failure_recommended_action=failure_recommended_action,
+        extra_metadata=extra_metadata,
         execution_id=os.environ.get("CLAWTEAM_TASK_EXECUTION_ID") or None,
         wake_owner=wake_owner,
         message=message or "",

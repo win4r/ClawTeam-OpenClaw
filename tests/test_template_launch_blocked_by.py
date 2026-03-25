@@ -142,6 +142,81 @@ def test_five_step_delivery_pass_with_risk_completion_still_unblocks_review(monk
     assert refreshed_qa_reg.metadata["qa_result_status"] == "pass_with_risk"
 
 
+def test_task_update_cli_persists_pass_with_risk_metadata_and_unblocks_review(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: DummyBackend())
+
+    runner = CliRunner()
+    launch = runner.invoke(
+        app,
+        [
+            "launch",
+            "five-step-delivery",
+            "--team-name",
+            "delivery-pass-with-risk-cli",
+            "--goal",
+            "Validate pass_with_risk routing",
+            "--no-workspace",
+        ],
+        env={"CLAWTEAM_DATA_DIR": str(tmp_path)},
+    )
+    assert launch.exit_code == 0, launch.output
+
+    store = TaskStore("delivery-pass-with-risk-cli")
+    by_subject = {task.subject: task for task in store.list_tasks()}
+    backend = by_subject["Implement backend/data changes with real validation"]
+    frontend = by_subject["Implement frontend/UI changes with real validation"]
+    qa_main = by_subject["Run main-flow QA on the real change"]
+    qa_reg = by_subject["Run edge-case and regression QA on the real change"]
+    review = by_subject["Review code quality, maintainability, and delivery readiness"]
+
+    store.update(backend.id, status=TaskStatus.in_progress, caller="dev1")
+    store.update(frontend.id, status=TaskStatus.in_progress, caller="dev2")
+    store.update(qa_main.id, status=TaskStatus.in_progress, caller="qa1")
+    store.update(qa_reg.id, status=TaskStatus.in_progress, caller="qa2")
+
+    env = {
+        "CLAWTEAM_DATA_DIR": str(tmp_path),
+        "CLAWTEAM_AGENT_NAME": "qa2",
+        "CLAWTEAM_AGENT_ID": "qa2-id",
+        "CLAWTEAM_AGENT_TYPE": "general-purpose",
+        "CLAWTEAM_TEAM_NAME": "delivery-pass-with-risk-cli",
+        "CLAWTEAM_TASK_EXECUTION_ID": store.get(qa_reg.id).active_execution_id,
+    }
+
+    store.update(backend.id, status=TaskStatus.completed, caller="dev1", execution_id=store.get(backend.id).active_execution_id)
+    store.update(frontend.id, status=TaskStatus.completed, caller="dev2", execution_id=store.get(frontend.id).active_execution_id)
+    store.update(qa_main.id, status=TaskStatus.completed, caller="qa1", execution_id=store.get(qa_main.id).active_execution_id)
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "update",
+            "delivery-pass-with-risk-cli",
+            qa_reg.id,
+            "--status",
+            "completed",
+            "--qa-result-status",
+            "pass_with_risk",
+            "--qa-risk-note",
+            "main goal validated; failed-branch evidence unavailable on real host",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+
+    refreshed_qa_reg = store.get(qa_reg.id)
+    refreshed_review = store.get(review.id)
+    assert refreshed_qa_reg is not None
+    assert refreshed_qa_reg.metadata["qa_result_status"] == "pass_with_risk"
+    assert refreshed_qa_reg.metadata["qa_risk_note"] == "main goal validated; failed-branch evidence unavailable on real host"
+    assert refreshed_review is not None
+    assert refreshed_review.status == TaskStatus.pending
+    assert refreshed_review.blocked_by == []
+
+
 def test_launch_template_instantiates_agent_prompt_and_task_description(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
 

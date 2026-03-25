@@ -74,6 +74,7 @@ class TaskUpdateRequest:
     failure_evidence: str | None
     failure_recommended_next_owner: str | None
     failure_recommended_action: str | None
+    extra_metadata: dict[str, Any] | None
     execution_id: str | None
     wake_owner: bool
     message: str
@@ -400,9 +401,14 @@ def execute_task_update(
             failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
+    merged_metadata_to_apply = dict(plan.metadata_to_apply or {})
+    if request.extra_metadata:
+        merged_metadata_to_apply.update(request.extra_metadata)
+    final_metadata_to_apply = merged_metadata_to_apply or None
+
     generic_patch = _build_generic_task_patch(
         request=request,
-        metadata_to_apply=plan.metadata_to_apply,
+        metadata_to_apply=final_metadata_to_apply,
         metadata_keys_to_remove=metadata_keys_to_remove,
     )
 
@@ -417,7 +423,7 @@ def execute_task_update(
                 execution_decision=execution_decision,
                 recovery_decision=recovery_decision,
             ),
-            metadata_to_apply=plan.metadata_to_apply,
+            metadata_to_apply=final_metadata_to_apply,
             metadata_keys_to_remove=metadata_keys_to_remove,
             force=request.force,
         )
@@ -462,7 +468,7 @@ def execute_task_update(
             task_id=task_id,
             caller=caller,
             request=request,
-            metadata_to_apply=plan.metadata_to_apply,
+            metadata_to_apply=final_metadata_to_apply,
             metadata_keys_to_remove=metadata_keys_to_remove,
         )
 
