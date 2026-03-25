@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from clawteam.cli.commands import app
 from clawteam.team.mailbox import MailboxManager
+from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskStore
 
 
@@ -80,6 +81,65 @@ def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
         f"task-wake:{task.id}" not in wake_keys
         for task in [setup, backend, frontend, qa_main, qa_reg, review, deliver]
     )
+
+
+def test_five_step_delivery_pass_with_risk_completion_still_unblocks_review(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: DummyBackend())
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "launch",
+            "five-step-delivery",
+            "--team-name",
+            "delivery-pass-with-risk",
+            "--goal",
+            "Validate pass_with_risk routing",
+            "--no-workspace",
+        ],
+        env={"CLAWTEAM_DATA_DIR": str(tmp_path)},
+    )
+
+    assert result.exit_code == 0, result.output
+
+    store = TaskStore("delivery-pass-with-risk")
+    by_subject = {task.subject: task for task in store.list_tasks()}
+
+    backend = by_subject["Implement backend/data changes with real validation"]
+    frontend = by_subject["Implement frontend/UI changes with real validation"]
+    qa_main = by_subject["Run main-flow QA on the real change"]
+    qa_reg = by_subject["Run edge-case and regression QA on the real change"]
+    review = by_subject["Review code quality, maintainability, and delivery readiness"]
+
+    store.update(backend.id, status=TaskStatus.completed, caller="dev1")
+    store.update(frontend.id, status=TaskStatus.completed, caller="dev2")
+    store.update(qa_main.id, status=TaskStatus.completed, caller="qa1")
+    store.update(
+        qa_reg.id,
+        status=TaskStatus.completed,
+        caller="qa2",
+        metadata={
+            "qa_result_status": "pass_with_risk",
+            "qa_risk_note": "main goal validated; failed-branch evidence unavailable on real host",
+        },
+    )
+
+    refreshed_review = store.get(review.id)
+    refreshed_backend = store.get(backend.id)
+    refreshed_frontend = store.get(frontend.id)
+    refreshed_qa_reg = store.get(qa_reg.id)
+
+    assert refreshed_review is not None
+    assert refreshed_review.status == TaskStatus.pending
+    assert refreshed_review.blocked_by == []
+    assert refreshed_backend is not None
+    assert refreshed_backend.status == TaskStatus.completed
+    assert refreshed_frontend is not None
+    assert refreshed_frontend.status == TaskStatus.completed
+    assert refreshed_qa_reg is not None
+    assert refreshed_qa_reg.metadata["qa_result_status"] == "pass_with_risk"
 
 
 def test_launch_template_instantiates_agent_prompt_and_task_description(monkeypatch, tmp_path):

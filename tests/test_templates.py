@@ -235,6 +235,8 @@ class TestLoadBuiltinTemplate:
         assert by_subject["Implement frontend/UI changes with real validation"].message_type == "DEV_RESULT"
         assert by_subject["Run main-flow QA on the real change"].message_type == "QA_RESULT"
         assert by_subject["Run edge-case and regression QA on the real change"].message_type == "QA_RESULT"
+        assert "pass_with_risk" in by_subject["Run main-flow QA on the real change"].description
+        assert "pass_with_risk" in by_subject["Run edge-case and regression QA on the real change"].description
         assert by_subject["Review code quality, maintainability, and delivery readiness"].message_type == "REVIEW_RESULT"
         assert by_subject["Review code quality, maintainability, and delivery readiness"].required_sections == [
             "decision",

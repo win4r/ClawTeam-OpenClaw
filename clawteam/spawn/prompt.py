@@ -96,6 +96,7 @@ def build_agent_prompt(
         "## Result Block Formats\n",
         "- DEV_RESULT must include exactly these headings: status, summary, changed_files, validation, known_issues, next_action.",
         "- QA_RESULT must include exactly these headings: status, summary, evidence, validation, risk, next_action.",
+        "- QA_RESULT status may be pass, pass_with_risk, fail, or blocked. Use pass_with_risk when the main goal is validated but residual risk or unobserved branch coverage remains.",
         "- REVIEW_RESULT must include exactly these headings: decision, summary, architecture_review, required_fixes, evidence, validation, next_action.",
         "- Keep required_fixes limited to must-fix items; put nice-to-have ideas outside that section or write `none`.",
         "",
