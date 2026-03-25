@@ -2162,6 +2162,7 @@ def identity_set(
     team: Optional[str] = typer.Option(None, "--team", help="Team name"),
     data_dir: Optional[str] = typer.Option(None, "--data-dir", help="ClawTeam data dir"),
     task_execution_id: Optional[str] = typer.Option(None, "--task-execution-id", help="Active task execution id"),
+    runtime_completion_signal_path: Optional[str] = typer.Option(None, "--runtime-completion-signal-path", help="Runtime completion envelope signal path"),
     shell: bool = typer.Option(False, "--shell", help="Print pure shell export lines only"),
 ):
     """Print shell export commands to set identity environment variables."""
@@ -2181,6 +2182,15 @@ def identity_set(
     resolved_execution_id = task_execution_id or os.environ.get("CLAWTEAM_TASK_EXECUTION_ID") or None
     if resolved_execution_id:
         lines.append(f"export CLAWTEAM_TASK_EXECUTION_ID={shlex.quote(resolved_execution_id)}")
+    resolved_signal_path = (
+        runtime_completion_signal_path
+        or os.environ.get("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH")
+        or None
+    )
+    if resolved_signal_path:
+        lines.append(
+            f"export CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH={shlex.quote(resolved_signal_path)}"
+        )
 
     if not lines:
         console.print("[yellow]No options specified. Use --agent-id, --agent-name, --agent-type, --team, --data-dir[/yellow]")
