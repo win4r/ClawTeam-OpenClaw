@@ -648,6 +648,115 @@ def test_execute_task_update_rejects_scope_completion_without_structured_descrip
         )
 
 
+def test_execute_task_update_allows_scope_completion_after_prior_description_update(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    store = TaskStore("demo")
+    scope = store.create(
+        "Scope the task into a minimal deliverable",
+        owner="leader",
+        metadata={
+            "template_stage": "scope",
+            "launch_brief": {
+                "format": "structured_sections",
+                "sections": {
+                    "source_request": "Validate latest flyzorro/main from a clean detached worktree using real evidence only; do not mock; fail closed on uncertainty.",
+                    "scoped_brief": "",
+                    "unknowns": [],
+                    "leader_assumptions": [],
+                    "out_of_scope": [],
+                },
+            },
+        },
+    )
+
+    final_description = """## Source Request
+Validate latest flyzorro/main from a clean detached worktree using real evidence only; do not mock; fail closed on uncertainty.
+
+## Scoped Brief
+Validate latest flyzorro/main from a clean detached worktree using real evidence only; do not mock; fail closed on uncertainty.
+
+## Unknowns
+- The exact validation commands are not yet confirmed.
+
+## Leader Assumptions
+- `flyzorro/main` is available from this machine.
+
+## Out of Scope
+- Any mocked result.
+"""
+
+    updated = execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=None,
+            owner=None,
+            subject=None,
+            description=final_description,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+    assert updated.task.description == final_description
+
+    completed = execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+    assert completed.task.status is TaskStatus.completed
+    resolved_scope = completed.task.metadata.get("resolved_scope")
+    assert isinstance(resolved_scope, dict)
+    assert resolved_scope.get("sections", {}).get("scoped_brief") == (
+        "Validate latest flyzorro/main from a clean detached worktree using real evidence only; do not mock; fail closed on uncertainty."
+    )
+
+
 def test_execute_task_update_rejects_malformed_scope_completion_as_task_validation(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
 
