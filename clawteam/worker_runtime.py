@@ -126,6 +126,7 @@ def build_openclaw_agent_command(
     session_key: str,
     prompt: str,
     timeout_seconds: int,
+    cwd: str | None = None,
 ) -> list[str]:
     if not base_command:
         raise ValueError("agent command is required")
@@ -140,6 +141,10 @@ def build_openclaw_agent_command(
     final.extend([
         "--session-id",
         session_key,
+    ])
+    if cwd:
+        final.extend(["--cwd", cwd])
+    final.extend([
         "--message",
         prompt,
         "--timeout",
@@ -521,6 +526,7 @@ def run_worker_iteration(
         session_key=session_key,
         prompt=prompt,
         timeout_seconds=timeout_seconds,
+        cwd=workspace_dir or cwd,
     )
     env = os.environ.copy()
     claimed = claim_result.task

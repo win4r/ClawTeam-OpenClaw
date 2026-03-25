@@ -50,6 +50,18 @@ def test_build_openclaw_agent_command_uses_headless_agent_mode():
     assert "hello" in cmd
 
 
+def test_build_openclaw_agent_command_includes_cwd_when_provided():
+    cmd = build_openclaw_agent_command(
+        base_command=["openclaw"],
+        session_key="clawteam-demo-qa1",
+        prompt="hello",
+        timeout_seconds=123,
+        cwd="/tmp/demo-repo",
+    )
+    assert "--cwd" in cmd
+    assert "/tmp/demo-repo" in cmd
+
+
 def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch, tmp_path):
     _seed_team(tmp_path, monkeypatch)
     monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa 1-id")
@@ -170,6 +182,8 @@ def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_pa
     assert called["command"][:2] == ["openclaw", "agent"]
     assert "--session-id" in called["command"]
     assert f"clawteam-demo-qa1" in called["command"]
+    assert "--cwd" in called["command"]
+    assert str(tmp_path / "ws") in called["command"]
     assert called["env"]["CLAWTEAM_TASK_ID"] == task.id
     assert called["env"]["CLAWTEAM_TASK_EXECUTION_ID"] == result["executionId"]
     assert called["env"]["CLAWTEAM_TASK_EXECUTION_SEQ"] == "1"
