@@ -17,6 +17,7 @@ from clawteam.worker_runtime import (
     clear_replaced_worker_unfinished_tasks,
     detect_worker_replacement,
     run_worker_iteration,
+    worker_loop,
 )
 
 
@@ -354,6 +355,93 @@ def test_run_worker_iteration_keeps_pending_task_idle_until_explicit_wake(monkey
     assert updated is not None
     assert updated.status.value == "pending"
     assert updated.locked_by == ""
+
+
+def test_worker_loop_exits_when_team_is_terminal(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+
+    task = TaskStore("demo").create(subject="Done", description="terminal", owner="qa1")
+    TaskStore("demo").update(task.id, status=TaskStatus.completed, caller="qa1")
+
+    called = {"iterations": 0}
+
+    def fake_run_worker_iteration(*args, **kwargs):
+        called["iterations"] += 1
+        return {"status": "should_not_run"}
+
+    monkeypatch.setattr(worker_runtime, "run_worker_iteration", fake_run_worker_iteration)
+
+    history = worker_loop(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    cleanup_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(worker_runtime, "_cleanup_worker_runtime", lambda team_name, agent_name: cleanup_calls.append((team_name, agent_name)) or {"removed": True, "sessionPruned": False, "remainingAgents": 0})
+
+    history = worker_loop(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert called["iterations"] == 0
+    assert cleanup_calls == [("demo", "qa1")]
+    assert history == [{"status": "team_terminal", "team": "demo", "agent": "qa1", "cleanup": {"removed": True, "sessionPruned": False, "remainingAgents": 0}}]
+
+
+def test_worker_loop_exits_after_consecutive_idle_wait(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("CLAWTEAM_WORKER_IDLE_EXIT_TIMEOUT", "1")
+
+    results = iter([
+        {"status": "waiting_for_wake", "taskId": "task-1", "messages": 0, "acked": 0},
+        {"status": "waiting_for_wake", "taskId": "task-1", "messages": 0, "acked": 0},
+    ])
+    times = iter([100.0, 101.2, 101.2])
+
+    cleanup_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(worker_runtime, "run_worker_iteration", lambda *args, **kwargs: next(results))
+    monkeypatch.setattr(worker_runtime, "_team_is_terminal", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(worker_runtime, "_cleanup_worker_runtime", lambda team_name, agent_name: cleanup_calls.append((team_name, agent_name)) or {"removed": True, "sessionPruned": False, "remainingAgents": 0})
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda *_args, **_kwargs: None)
+
+    history = worker_loop(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert [item["status"] for item in history] == ["waiting_for_wake", "waiting_for_wake", "idle_exit"]
+    assert cleanup_calls == [("demo", "qa1")]
+    assert history[-1]["team"] == "demo"
+    assert history[-1]["agent"] == "qa1"
+    assert history[-1]["idleSeconds"] >= 1.0
+
+
+
+def test_worker_loop_resets_idle_timer_after_progress(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("CLAWTEAM_WORKER_IDLE_EXIT_TIMEOUT", "1")
+
+    results = iter([
+        {"status": "waiting_for_wake", "taskId": "task-1", "messages": 0, "acked": 0},
+        {"status": "dispatched", "taskId": "task-1"},
+        {"status": "waiting_for_wake", "taskId": "task-2", "messages": 0, "acked": 0},
+        {"status": "waiting_for_wake", "taskId": "task-2", "messages": 0, "acked": 0},
+    ])
+    times = iter([100.0, 100.8, 101.9, 101.9])
+
+    monkeypatch.setattr(worker_runtime, "run_worker_iteration", lambda *args, **kwargs: next(results))
+    monkeypatch.setattr(worker_runtime, "_team_is_terminal", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda *_args, **_kwargs: None)
+
+    history = worker_loop(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert [item["status"] for item in history] == ["waiting_for_wake", "dispatched", "waiting_for_wake", "waiting_for_wake", "idle_exit"]
+    assert history[-1]["idleSeconds"] >= 1.0
+
 
 
 def test_run_worker_iteration_fails_closed_on_nonzero_agent_exit(monkeypatch, tmp_path):

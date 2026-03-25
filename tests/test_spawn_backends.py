@@ -612,3 +612,74 @@ def test_register_agent_persists_worker_instance_id(monkeypatch, tmp_path):
     from clawteam.spawn.registry import get_agent_record
 
     assert get_agent_record("demo", "worker1")["worker_instance_id"] == "worker1-instance"
+
+
+def test_unregister_agent_removes_registry_and_session_index_without_pruning_nonempty_team(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    from clawteam.spawn.registry import get_agent_record, unregister_agent
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="subprocess",
+        pid=12345,
+        session_key="clawteam-demo-worker1",
+    )
+    register_agent(
+        team_name="demo",
+        agent_name="worker2",
+        backend="subprocess",
+        pid=12346,
+        session_key="clawteam-demo-worker2",
+    )
+
+    result = unregister_agent("demo", "worker1", session_key="clawteam-demo-worker1")
+
+    assert result == {"removed": True, "sessionPruned": False, "remainingAgents": 1}
+    assert get_agent_record("demo", "worker1") is None
+    assert get_agent_record("demo", "worker2") is not None
+
+
+def test_unregister_agent_prunes_empty_tmux_session(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    from clawteam.spawn.registry import unregister_agent
+
+    register_agent(
+        team_name="demo",
+        agent_name="worker1",
+        backend="tmux",
+        tmux_target="clawteam-demo:worker1",
+        pid=12345,
+        session_key="clawteam-demo-worker1",
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+
+        class _Result:
+            def __init__(self, returncode: int):
+                self.returncode = returncode
+                self.stdout = ""
+                self.stderr = ""
+
+        if args[:3] == ["tmux", "has-session", "-t"]:
+            return _Result(0)
+        if args[:3] == ["tmux", "kill-session", "-t"]:
+            return _Result(0)
+        return _Result(1)
+
+    monkeypatch.setattr("clawteam.spawn.registry.subprocess.run", fake_run)
+
+    result = unregister_agent("demo", "worker1", session_key="clawteam-demo-worker1")
+
+    assert result == {"removed": True, "sessionPruned": True, "remainingAgents": 0}
+    assert [call[:3] for call in calls] == [
+        ["tmux", "has-session", "-t"],
+        ["tmux", "kill-session", "-t"],
+    ]

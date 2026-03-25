@@ -230,6 +230,58 @@ def terminate_agent(team_name: str, agent_name: str, data_dir: str | Path | None
     return terminated
 
 
+def unregister_agent(
+    team_name: str,
+    agent_name: str,
+    data_dir: str | Path | None = None,
+    *,
+    session_key: str | None = None,
+) -> dict[str, object]:
+    """Remove one agent from spawn/session registries and prune empty tmux session."""
+    resolved_data_dir = _normalize_data_dir(data_dir)
+    path = _registry_path(team_name, resolved_data_dir)
+    registry = _load(path)
+    record = registry.pop(agent_name, None)
+    if record is not None:
+        _save(path, registry)
+
+    index_path = _session_index_path()
+    session_index = _load(index_path)
+    keys_to_remove: list[str] = []
+    if session_key:
+        keys_to_remove.append(session_key)
+    if isinstance(record, dict) and record.get("session_key"):
+        keys_to_remove.append(str(record.get("session_key")))
+    for key in keys_to_remove:
+        session_index.pop(key, None)
+    if keys_to_remove:
+        _save(index_path, session_index)
+
+    session_name = f"clawteam-{team_name}"
+    session_pruned = False
+    if not registry:
+        has_session = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if has_session.returncode == 0:
+            kill = subprocess.run(
+                ["tmux", "kill-session", "-t", session_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            session_pruned = kill.returncode == 0
+
+    return {
+        "removed": record is not None,
+        "sessionPruned": session_pruned,
+        "remainingAgents": len(registry),
+    }
+
+
+
 def list_dead_agents(team_name: str) -> list[str]:
     """Return names of agents whose processes are no longer alive."""
     registry = get_registry(team_name)
