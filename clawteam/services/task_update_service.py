@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+
+FAILURE_REPAIR_PACKET_KEYS = (
+    "failure_target_files",
+    "failure_repro_steps",
+    "failure_expected_result",
+    "failure_candidate_patch",
+)
+
 from clawteam.services.task_service import wake_tasks_to_pending
 
 
@@ -57,6 +65,35 @@ merge_update_metadata = merge_transition_metadata
 plan_task_update_followups = plan_task_transition_followups
 
 
+def _build_failure_repair_packet(task: TaskItem) -> str | None:
+    if not isinstance(task.metadata, dict):
+        return None
+
+    lines: list[str] = []
+    target_files = task.metadata.get("failure_target_files")
+    if isinstance(target_files, list):
+        filtered = [str(item).strip() for item in target_files if str(item).strip()]
+        if filtered:
+            lines.append("Target files:")
+            lines.extend(f"- {item}" for item in filtered)
+
+    repro_steps = (task.metadata.get("failure_repro_steps") or "").strip()
+    if repro_steps:
+        lines.append(f"Repro steps: {repro_steps}")
+
+    expected_result = (task.metadata.get("failure_expected_result") or "").strip()
+    if expected_result:
+        lines.append(f"Expected result: {expected_result}")
+
+    candidate_patch = (task.metadata.get("failure_candidate_patch") or "").strip()
+    if candidate_patch:
+        lines.append(f"Candidate patch: {candidate_patch}")
+
+    if not lines:
+        return None
+    return "\n".join(["Repair packet:", *lines])
+
+
 def plan_task_update(
     *,
     existing: TaskItem,
@@ -87,6 +124,26 @@ class TaskUpdateEffects:
 
 
 @dataclass(frozen=True)
+class FailureRepairPacket:
+    target_files: list[str] | None = None
+    repro_steps: str | None = None
+    expected_result: str | None = None
+    candidate_patch: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        if self.target_files:
+            metadata["failure_target_files"] = list(self.target_files)
+        if self.repro_steps is not None:
+            metadata["failure_repro_steps"] = self.repro_steps
+        if self.expected_result is not None:
+            metadata["failure_expected_result"] = self.expected_result
+        if self.candidate_patch is not None:
+            metadata["failure_candidate_patch"] = self.candidate_patch
+        return metadata
+
+
+@dataclass(frozen=True)
 class TaskUpdateRequest:
     status: TaskStatus | None
     owner: str | None
@@ -101,10 +158,13 @@ class TaskUpdateRequest:
     failure_evidence: str | None
     failure_recommended_next_owner: str | None
     failure_recommended_action: str | None
-    execution_id: str | None
-    wake_owner: bool
-    message: str
-    force: bool
+    qa_result_status: str | None = None
+    qa_risk_note: str | None = None
+    failure_repair_packet: FailureRepairPacket | None = None
+    execution_id: str | None = None
+    wake_owner: bool = False
+    message: str = ""
+    force: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +232,16 @@ def _propagate_resolved_scope_to_targets(
         )
 
 
+def _build_failure_reopen_message(failed_task: TaskItem, target: TaskItem) -> str:
+    repair_packet = _build_failure_repair_packet(failed_task)
+    parts = [
+        f"Task {target.id} is reopened because task {failed_task.id} failed and routed work back to you. Start now and report only real blockers.",
+    ]
+    if repair_packet:
+        parts.append(repair_packet)
+    return "\n".join(parts)
+
+
 def execute_task_update_effects(
     *,
     ctx: TaskUpdateContext,
@@ -223,10 +293,7 @@ def execute_task_update_effects(
                 ctx.team,
                 failed_targets_to_wake,
                 caller=caller,
-                message_builder=lambda target: (
-                    f"Task {target.id} is reopened because task {task.id} failed and routed work back to you. "
-                    "Start now and report only real blockers."
-                ),
+                message_builder=lambda target: _build_failure_reopen_message(task, target),
                 repo=ctx.repo,
                 store=ctx.store,
                 runtime=ctx.runtime,
@@ -415,6 +482,21 @@ def execute_task_update(
         existing=existing,
         request=transition_request,
         all_tasks=ctx.store.list_tasks(),
+    )
+
+    metadata_to_apply = dict(plan.metadata_to_apply or {})
+    if request.qa_result_status is not None:
+        metadata_to_apply["qa_result_status"] = request.qa_result_status
+    if request.qa_risk_note is not None:
+        metadata_to_apply["qa_risk_note"] = request.qa_risk_note
+    if request.failure_repair_packet is not None:
+        if request.status != TaskStatus.failed:
+            raise TaskUpdateValidationError("failure repair-packet options require --status failed")
+        metadata_to_apply.update(request.failure_repair_packet.to_metadata())
+    plan = TaskUpdatePlan(
+        metadata_to_apply=metadata_to_apply or None,
+        dependent_ids_to_wake=plan.dependent_ids_to_wake,
+        failed_targets_to_wake=plan.failed_targets_to_wake,
     )
 
     metadata_keys_to_remove: list[str] | None = None

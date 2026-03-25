@@ -592,6 +592,63 @@ def test_task_failed_auto_notifies_and_respawns_reopened_owner(monkeypatch, tmp_
     assert any("reopened because task" in (msg.content or "") for msg in messages)
 
 
+def test_task_failed_regular_reopen_includes_repair_packet(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    impl = store.create("Implement fix", description="Fix the broken path", owner="dev1")
+    qa = store.create(
+        "Regression QA",
+        owner="qa1",
+        blocked_by=[impl.id],
+        metadata={"on_fail": [impl.id]},
+    )
+    store.update(impl.id, status=TaskStatus.completed)
+    with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+        qa = store.update(qa.id, status=TaskStatus.in_progress, caller="qa1")
+
+    workspace = tmp_path / "dev1-worktree"
+    workspace.mkdir()
+    _write_workspace_registry("demo", "dev1", workspace, tmp_path)
+
+    backend = RecordingBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
+    monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda team, agent: False if agent == "dev1" else True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", qa.id,
+            "--status", "failed",
+            "--failure-kind", "regular",
+            "--failure-note", "Repro is clear; send back to implement",
+            "--failure-target-files", "clawteam/board/static/index.html",
+            "--failure-repro-steps", "Open board at 1600x1200 and verify 5 summary cards render as 5 tracks",
+            "--failure-expected-result", "Board shows 5 tracks instead of collapsing to 4",
+            "--failure-candidate-patch", "Keep existing local diff only as a candidate patch; commit cleanly before claiming done",
+        ],
+        env={**env, "CLAWTEAM_AGENT_NAME": "qa1", "CLAWTEAM_AGENT_ID": "qa1-id", "CLAWTEAM_AGENT_TYPE": "general-purpose", "CLAWTEAM_AGENT_LEADER": "0", "CLAWTEAM_TASK_EXECUTION_ID": qa.active_execution_id or ""},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert "Repair packet:" in call["prompt"]
+    assert "clawteam/board/static/index.html" in call["prompt"]
+    assert "Board shows 5 tracks instead of collapsing to 4" in call["prompt"]
+    assert "candidate patch" in call["prompt"].lower()
+
+    impl_after = TaskStore("demo").get(impl.id)
+    assert impl_after is not None
+    assert impl_after.status.value == "pending"
+
+
 def test_task_failed_without_actual_qa_start_does_not_reopen_owner(monkeypatch, tmp_path):
     monkeypatch.delenv("CLAWTEAM_TASK_EXECUTION_ID", raising=False)
     env = _team_env(tmp_path)

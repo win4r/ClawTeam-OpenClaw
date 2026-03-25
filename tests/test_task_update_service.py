@@ -6,6 +6,7 @@ import pytest
 
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.task_update_service import (
+    FailureRepairPacket,
     TaskUpdateContext,
     TaskUpdateEffects,
     TaskUpdatePlan,
@@ -135,6 +136,57 @@ def test_execute_task_update_builds_full_result_and_updates_store(monkeypatch, t
     assert result.effects.failure_notice is not None
     assert result.effects.failure_notice["failureNotice"] == "sent"
     assert notices == [{"team": "demo", "task": qa.id, "caller": "qa1", "kind": "complex"}]
+
+
+def test_execute_task_update_persists_explicit_failed_task_metadata(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Regression QA", owner="qa1")
+    task = store.update(task.id, status=TaskStatus.in_progress, caller="qa1")
+
+    result = execute_task_update(
+        task_id=task.id,
+        caller="qa1",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.failed,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind="complex",
+            failure_note=None,
+            failure_root_cause="qa found a reproducible bug",
+            failure_evidence="board still renders 4 tracks",
+            failure_recommended_next_owner="dev2",
+            failure_recommended_action="fix board layout and rerun qa",
+            qa_result_status="fail",
+            qa_risk_note="main path still broken",
+            failure_repair_packet=FailureRepairPacket(
+                target_files=["clawteam/board/static/index.html"],
+            ),
+            execution_id=task.active_execution_id,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    assert result.task.metadata["qa_result_status"] == "fail"
+    assert result.task.metadata["qa_risk_note"] == "main path still broken"
+    assert result.task.metadata["failure_target_files"] == ["clawteam/board/static/index.html"]
 
 
 def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(monkeypatch, tmp_path):

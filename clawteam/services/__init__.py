@@ -15,6 +15,7 @@ from clawteam.services.task_service import (
     wake_tasks_to_pending,
 )
 from clawteam.services.task_update_service import (
+    FailureRepairPacket,
     TaskUpdateContext,
     TaskUpdateEffects,
     TaskUpdatePlan,
@@ -47,6 +48,7 @@ __all__ = [
     "TaskTransitionPlan",
     "TaskTransitionRequest",
     "TaskTransitionValidationError",
+    "FailureRepairPacket",
     "TaskUpdateContext",
     "TaskUpdateEffects",
     "TaskUpdatePlan",
