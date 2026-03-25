@@ -6,6 +6,27 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from clawteam.services.task_service import wake_tasks_to_pending
+
+
+def _build_dependency_completion_message(task, target) -> str:
+    message = (
+        f"Task {target.id} is unblocked because dependency {task.id} completed. "
+        "Start now and report only real blockers."
+    )
+    qa_result = task.metadata.get("qa_result") if isinstance(task.metadata, dict) else None
+    if isinstance(qa_result, dict) and qa_result:
+        status = str(qa_result.get("status") or "").strip()
+        summary = str(qa_result.get("summary") or "").strip()
+        risk = str(qa_result.get("risk") or "").strip()
+        structured_lines = ["", "Dependency QA context:"]
+        if status:
+            structured_lines.append(f"- status: {status}")
+        if summary:
+            structured_lines.append(f"- summary: {summary}")
+        if risk:
+            structured_lines.append(f"- risk: {risk}")
+        message += "\n" + "\n".join(structured_lines)
+    return message
 from clawteam.templates import (
     ScopeTaskValidationError,
     find_scope_audit_warnings,
@@ -189,10 +210,7 @@ def execute_task_update_effects(
                 ctx.release_team,
                 dependent_ids_to_wake,
                 caller=caller,
-                message_builder=lambda target: (
-                    f"Task {target.id} is unblocked because dependency {task.id} completed. "
-                    "Start now and report only real blockers."
-                ),
+                message_builder=lambda target: _build_dependency_completion_message(task, target),
                 repo=ctx.release_repo,
                 store=ctx.store,
                 runtime=ctx.runtime,
