@@ -232,6 +232,54 @@ def terminate_agent(team_name: str, agent_name: str, data_dir: str | Path | None
     return terminated
 
 
+def unregister_agent(
+    team_name: str,
+    agent_name: str,
+    data_dir: str | Path | None = None,
+    *,
+    session_key: str = "",
+) -> dict[str, int | bool]:
+    """Remove an agent from registry/session indexes and prune empty tmux sessions.
+
+    This is cleanup-oriented and intentionally best-effort: registry/session removal should
+    still succeed even if tmux pruning cannot run.
+    """
+    resolved_data_dir = _normalize_data_dir(data_dir)
+    path = _registry_path(team_name, resolved_data_dir)
+    registry = _load(path)
+    removed = registry.pop(agent_name, None) is not None
+    if removed:
+        _save(path, registry)
+
+    pruned_session = False
+    if session_key:
+        session_index = _load(_session_index_path())
+        if session_index.pop(session_key, None) is not None:
+            _save(_session_index_path(), session_index)
+
+    remaining_agents = len(registry)
+    if remaining_agents == 0 and removed:
+        session_name = f"clawteam-{team_name}"
+        has_session = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True,
+            text=True,
+        )
+        if has_session.returncode == 0:
+            kill_session = subprocess.run(
+                ["tmux", "kill-session", "-t", session_name],
+                capture_output=True,
+                text=True,
+            )
+            pruned_session = kill_session.returncode == 0
+
+    return {
+        "removed": removed,
+        "sessionPruned": pruned_session,
+        "remainingAgents": remaining_agents,
+    }
+
+
 def list_dead_agents(team_name: str) -> list[str]:
     """Return names of agents whose processes are no longer alive."""
     registry = get_registry(team_name)
