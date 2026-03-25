@@ -5,7 +5,10 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
 import clawteam.worker_runtime as worker_runtime
+from clawteam.cli.commands import app
 from clawteam.spawn.subprocess_backend import SubprocessBackend
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
@@ -87,6 +90,8 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
     assert "QA_RESULT status may be pass, pass_with_risk, fail, or blocked" in prompt
     assert "The task brief in Description is the current scope authority." in prompt
     assert "they do not by themselves approve new endpoints, APIs, schemas, pages, tabs, workflows, or deliverables." in prompt
+    assert f"clawteam task update demo team {task.id} --status completed" in prompt
+    assert "--execution-id" not in prompt
 
 
 def test_infer_terminal_status_from_transcript_tail_accepts_qa_pass_with_risk():
@@ -146,7 +151,44 @@ def test_build_worker_task_prompt_includes_active_execution_when_claimed(monkeyp
     )
 
     assert f"- Active Execution ID: {claimed.active_execution_id}" in prompt
+    assert f"clawteam task update demo {task.id} --status completed --execution-id {claimed.active_execution_id}" in prompt
+    assert f"clawteam task update demo {task.id} --status failed --failure-kind complex" in prompt
+    assert f"--execution-id {claimed.active_execution_id}" in prompt
 
+
+def test_task_update_cli_prefers_explicit_execution_id_over_env(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(subject="Fix thing", description="Real task", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("CLAWTEAM_AGENT_TYPE", "general-purpose")
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("CLAWTEAM_TASK_EXECUTION_ID", "stale-exec-id")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "update",
+            "demo",
+            task.id,
+            "--status",
+            "completed",
+            "--execution-id",
+            claimed.task.active_execution_id,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    updated = store.get(task.id)
+    assert updated is not None
+    assert updated.status == TaskStatus.completed
+    assert updated.last_terminal_execution_id == claimed.task.active_execution_id
 
 
 def test_run_worker_iteration_claims_and_dispatches_openclaw(monkeypatch, tmp_path):
