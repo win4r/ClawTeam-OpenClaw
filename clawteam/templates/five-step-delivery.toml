@@ -390,7 +390,7 @@ Do not:
 
 Report as exact block:
 QA_RESULT
-status: <pass|fail|blocked>
+status: <pass|pass_with_risk|fail|blocked>
 summary: <short result>
 evidence:
 - <repro/result evidence>
@@ -418,9 +418,9 @@ Context:
 Done when:
 1. 边界和异常场景验证完成
 2. 相关回归点检查完成
-3. 结果明确为 pass / fail / blocked
+3. 结果明确为 pass / pass_with_risk / fail / blocked
 4. 若失败，给出可复现 blocker
-5. 若通过，给出进入 Review 的依据
+5. 若通过或 pass_with_risk，给出进入 Review 的依据
 
 Do not:
 - 不要脑补通过
@@ -431,7 +431,7 @@ Do not:
 
 Report as exact block:
 QA_RESULT
-status: <pass|fail|blocked>
+status: <pass|pass_with_risk|fail|blocked>
 summary: <short result>
 evidence:
 - <repro/result evidence>

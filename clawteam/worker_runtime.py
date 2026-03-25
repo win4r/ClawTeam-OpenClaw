@@ -100,8 +100,8 @@ def build_worker_task_prompt(
     ]
     if getattr(task, "active_execution_id", ""):
         shell_exports.append(("CLAWTEAM_TASK_EXECUTION_ID", task.active_execution_id))
-    if runtime_completion_signal_path.strip():
-        shell_exports.append(("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", runtime_completion_signal_path.strip()))
+    if runtime_completion_signal_path:
+        shell_exports.append(("CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH", runtime_completion_signal_path))
     shell_prefix = " ".join(
         f"{key}={shlex.quote(str(value))}" for key, value in shell_exports if str(value)
     )
@@ -144,6 +144,7 @@ def build_worker_task_prompt(
         "## Result Block Formats",
         "- DEV_RESULT must include exactly these headings: status, summary, changed_files, validation, known_issues, next_action.",
         "- QA_RESULT must include exactly these headings: status, summary, evidence, validation, risk, next_action.",
+        "- QA_RESULT status may be pass, pass_with_risk, fail, or blocked. Use pass_with_risk when the main goal is validated but residual risk or unobserved branch coverage remains.",
         "- REVIEW_RESULT must include exactly these headings: decision, summary, architecture_review, required_fixes, evidence, validation, next_action.",
         "- Keep required_fixes limited to must-fix items; put nice-to-have ideas outside that section or write `none`.",
     ])
@@ -360,10 +361,10 @@ _RESULT_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str], dict[str, TaskStatus]]]
     (
         "QA_RESULT",
         re.compile(
-            r"QA_RESULT\s+status:\s*(?P<status>pass|fail|blocked)\b(?P<body>.*?)next_action:",
+            r"QA_RESULT\s+status:\s*(?P<status>pass_with_risk|pass|fail|blocked)\b(?P<body>.*?)next_action:",
             re.IGNORECASE | re.DOTALL,
         ),
-        {"pass": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.failed},
+        {"pass": TaskStatus.completed, "pass_with_risk": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.failed},
     ),
     (
         "REVIEW_RESULT",
@@ -677,7 +678,7 @@ def run_worker_iteration(
     workspace_dir = os.environ.get("CLAWTEAM_WORKSPACE_DIR", cwd or "")
     workspace_branch = os.environ.get("CLAWTEAM_WORKSPACE_BRANCH", "")
     session_key = f"clawteam-{team_name}-{agent_name}"
-    completion_signal_path = str(_completion_signal_path(session_key))
+    runtime_completion_signal_path = str(_completion_signal_path(session_key))
     prompt = build_worker_task_prompt(
         team_name=team_name,
         agent_name=agent_name,
@@ -686,7 +687,7 @@ def run_worker_iteration(
         startup_prompt=startup_prompt,
         workspace_dir=workspace_dir,
         workspace_branch=workspace_branch,
-        runtime_completion_signal_path=completion_signal_path,
+        runtime_completion_signal_path=runtime_completion_signal_path,
     )
     command = build_openclaw_agent_command(
         base_command=base_command or ["openclaw"],
@@ -699,7 +700,7 @@ def run_worker_iteration(
     env["CLAWTEAM_TASK_ID"] = claimed.id
     env["CLAWTEAM_TASK_EXECUTION_ID"] = claimed.active_execution_id
     env["CLAWTEAM_TASK_EXECUTION_SEQ"] = str(claimed.execution_seq)
-    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = completion_signal_path
+    env["CLAWTEAM_RUNTIME_COMPLETION_SIGNAL_PATH"] = runtime_completion_signal_path
     progress_stall_timeout_seconds = float(
         env.get("CLAWTEAM_WORKER_PROGRESS_STALL_TIMEOUT", DEFAULT_PROGRESS_STALL_TIMEOUT)
     )
