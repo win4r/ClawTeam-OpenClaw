@@ -423,9 +423,10 @@ def execute_task_update(
     existing_launch_brief = existing.metadata.get("launch_brief") if isinstance(existing.metadata, dict) else None
     is_scope_task = (existing.metadata.get("template_stage") == "scope") if isinstance(existing.metadata, dict) else False
     if request.status == TaskStatus.completed and is_scope_task:
-        if not (request.description or "").strip():
+        final_scope_description = (request.description or existing.description or "").strip()
+        if not final_scope_description:
             raise TaskTransitionValidationError(
-                "scope task completion must include the final structured brief via --description before downstream release"
+                "scope task completion must include the final structured brief before downstream release"
             )
         source_request = ""
         if isinstance(existing_launch_brief, dict):
@@ -435,7 +436,7 @@ def execute_task_update(
         try:
             validated_scope = validate_scope_task_completion(
                 source_request=source_request,
-                leader_brief=request.description or "",
+                leader_brief=final_scope_description,
             )
         except ScopeTaskValidationError as e:
             raise TaskTransitionValidationError(str(e)) from e
