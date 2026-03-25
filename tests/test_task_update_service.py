@@ -12,6 +12,7 @@ from clawteam.services.task_update_service import (
     TaskUpdateRequest,
     TaskUpdateResult,
     TaskUpdateValidationError,
+    _build_dependency_completion_message,
     execute_task_update,
     execute_task_update_effects,
 )
@@ -564,6 +565,31 @@ def test_execute_task_update_effects_handles_failure_notice_and_reopen_release(m
     assert effects.failure_notice["failureNotice"] == "sent"
     assert effects.failure_notice["failureLeader"] == "leader"
     assert notices == [{"team": "demo", "task": qa.id, "caller": "qa1", "kind": "complex"}]
+
+
+def test_build_dependency_completion_message_includes_structured_qa_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    store = TaskStore("demo")
+    qa = store.create(
+        "Regression QA",
+        owner="qa1",
+        metadata={
+            "qa_result": {
+                "status": "pass_with_risk",
+                "summary": "Main goal validated",
+                "risk": "- failed branch remains unvalidated",
+            }
+        },
+    )
+    review = store.create("Review", owner="review1")
+
+    message = _build_dependency_completion_message(qa, review)
+    assert "Dependency QA context:" in message
+    assert "- status: pass_with_risk" in message
+    assert "- summary: Main goal validated" in message
+    assert "- risk: - failed branch remains unvalidated" in message
 
 
 def test_execute_task_update_rejects_scope_completion_without_structured_description(monkeypatch, tmp_path):
