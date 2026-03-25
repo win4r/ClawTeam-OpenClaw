@@ -20,6 +20,7 @@ from clawteam.delivery.failure_notifier import notify_task_failure
 from clawteam.delivery.release_notifier import notify_task_release
 from clawteam.templates import LaunchTemplateError, execute_template_launch, render_task
 from clawteam.services import (
+    FailureRepairPacket,
     RuntimeOrchestrator,
     TaskReleaseContext,
     TaskReleaseRequest,
@@ -925,6 +926,12 @@ def task_update(
     failure_evidence: Optional[str] = typer.Option(None, "--failure-evidence", help="Concrete evidence when status=failed"),
     failure_recommended_next_owner: Optional[str] = typer.Option(None, "--failure-recommended-next-owner", help="Suggested next owner when status=failed"),
     failure_recommended_action: Optional[str] = typer.Option(None, "--failure-recommended-action", help="Suggested next action when status=failed"),
+    qa_result_status: Optional[str] = typer.Option(None, "--qa-result-status", help="Optional QA result status to persist in task metadata: pass, pass_with_risk, fail, blocked"),
+    qa_risk_note: Optional[str] = typer.Option(None, "--qa-risk-note", help="Optional QA risk note to persist in task metadata"),
+    failure_target_files: Optional[str] = typer.Option(None, "--failure-target-files", help="Comma-separated files that should be treated as likely repair targets when status=failed"),
+    failure_repro_steps: Optional[str] = typer.Option(None, "--failure-repro-steps", help="Structured repro steps to include in the repair packet when status=failed"),
+    failure_expected_result: Optional[str] = typer.Option(None, "--failure-expected-result", help="Expected fixed behavior to include in the repair packet when status=failed"),
+    failure_candidate_patch: Optional[str] = typer.Option(None, "--failure-candidate-patch", help="Candidate patch hint only; not treated as completion when status=failed"),
     execution_id: Optional[str] = typer.Option(None, "--execution-id", help="Explicit execution ID for execution-scoped terminal writeback"),
     wake_owner: bool = typer.Option(False, "--wake-owner", help="When the task becomes pending, notify the owner and respawn a dead worker automatically"),
     message: Optional[str] = typer.Option(None, "--message", "-m", help="Optional release note to send when waking the owner"),
@@ -940,6 +947,30 @@ def task_update(
     blocks_list = [b.strip() for b in add_blocks.split(",") if b.strip()] if add_blocks else None
     blocked_by_list = [b.strip() for b in add_blocked_by.split(",") if b.strip()] if add_blocked_by else None
     add_on_fail_list = [b.strip() for b in add_on_fail.split(",") if b.strip()] if add_on_fail else None
+
+    allowed_qa_result_statuses = {"pass", "pass_with_risk", "fail", "blocked"}
+    if qa_result_status is not None and qa_result_status not in allowed_qa_result_statuses:
+        _output(
+            {"error": "--qa-result-status must be one of: pass, pass_with_risk, fail, blocked"},
+            lambda d: console.print(f"[red]{d['error']}[/red]"),
+        )
+        raise typer.Exit(1)
+
+    failure_target_files_list = [b.strip() for b in failure_target_files.split(",") if b.strip()] if failure_target_files else None
+    failure_repair_packet = None
+    if any(value is not None for value in (failure_target_files, failure_repro_steps, failure_expected_result, failure_candidate_patch)):
+        if ts != TaskStatus.failed:
+            _output(
+                {"error": "failure repair-packet options require --status failed"},
+                lambda d: console.print(f"[red]{d['error']}[/red]"),
+            )
+            raise typer.Exit(1)
+        failure_repair_packet = FailureRepairPacket(
+            target_files=failure_target_files_list,
+            repro_steps=failure_repro_steps,
+            expected_result=failure_expected_result,
+            candidate_patch=failure_candidate_patch,
+        )
 
     caller = identity.agent_name
     ctx = TaskUpdateContext(
@@ -963,6 +994,9 @@ def task_update(
         failure_evidence=failure_evidence,
         failure_recommended_next_owner=failure_recommended_next_owner,
         failure_recommended_action=failure_recommended_action,
+        qa_result_status=qa_result_status,
+        qa_risk_note=qa_risk_note,
+        failure_repair_packet=failure_repair_packet,
         execution_id=execution_id or os.environ.get("CLAWTEAM_TASK_EXECUTION_ID") or None,
         wake_owner=wake_owner,
         message=message or "",
