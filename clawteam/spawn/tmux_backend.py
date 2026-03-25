@@ -9,7 +9,6 @@ import subprocess
 import tempfile
 import time
 
-from clawteam.config import get_effective
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
 from clawteam.spawn.command_validation import normalize_spawn_command, validate_spawn_command
@@ -65,7 +64,6 @@ class TmuxBackend(SpawnBackend):
         env_vars["PATH"] = build_spawn_path(env_vars.get("PATH", os.environ.get("PATH")))
         if os.path.isabs(clawteam_bin):
             env_vars.setdefault("CLAWTEAM_BIN", clawteam_bin)
-            env_vars.setdefault("CLAWTEAM_CMD", clawteam_bin)
 
         normalized_command = normalize_spawn_command(command)
 
@@ -83,23 +81,18 @@ class TmuxBackend(SpawnBackend):
             elif _is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
 
-        # OpenClaw headless agent mode: run a real agent turn via the Gateway
-        # instead of opening the interactive TUI. TUI can stay idle after
-        # injecting an initial message, which makes ClawTeam workers appear
-        # spawned without actually executing tasks.
+        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
         if _is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
-            openclaw_agent, _ = get_effective("openclaw_agent")
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
-                final_command = [final_command[0], "agent"]
-            elif len(final_command) >= 2 and final_command[1] == "tui":
-                final_command = [final_command[0], "agent", *final_command[2:]]
-
-            if "agent" in final_command:
-                if openclaw_agent and "--agent" not in final_command:
-                    final_command.extend(["--agent", openclaw_agent])
-                if "--session-id" not in final_command:
-                    final_command.extend(["--session-id", session_key])
+                final_command = [final_command[0], "tui", "--session", session_key]
+                if prompt:
+                    final_command.extend(["--message", prompt])
+            elif "tui" in final_command:
+                final_command.extend(["--session", session_key])
+                if prompt:
+                    final_command.extend(["--message", prompt])
+            elif "agent" in final_command:
                 if prompt:
                     final_command.extend(["--message", prompt])
 
@@ -419,9 +412,4 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
 
 def _is_interactive_cli(command: list[str]) -> bool:
     """Check if the command is an interactive AI CLI."""
-    return (
-        _is_claude_command(command)
-        or _is_codex_command(command)
-        or _is_openclaw_command(command)
-        or _is_nanobot_command(command)
-    )
+    return _is_claude_command(command) or _is_codex_command(command) or _is_openclaw_command(command) or _is_nanobot_command(command)
