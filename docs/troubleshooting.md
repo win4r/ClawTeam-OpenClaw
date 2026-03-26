@@ -15,18 +15,20 @@ its lock can remain on the task.
 
 ### Recovery
 
-Use stale-lock sweep to recover affected tasks:
+Use stale-lock sweep + leader self-heal loop:
 
 ```bash
 clawteam lifecycle sweep --team <team>
+clawteam lifecycle leader-loop --team <team> --once
 ```
 
-What it does:
+What they do:
 
-1. Detects locks held by dead agents
-2. Releases stale locks
-3. Moves affected `in_progress` tasks back to `pending`
-4. Sends a summary message to the team leader inbox
+1. Detect locks held by dead agents
+2. Release stale locks
+3. Move affected `in_progress` tasks back to `pending`
+4. Attempt controlled auto-respawn of dead workers (backoff + retry budget)
+5. Send recovery summary to team leader inbox
 
 ### Verify
 

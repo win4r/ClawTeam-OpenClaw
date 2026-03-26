@@ -19,10 +19,24 @@ class TmuxBackend(SpawnBackend):
 
     Each agent gets its own tmux window in a session named ``clawteam-{team}``.
     Agents run in interactive mode so their work is visible in the tmux pane.
+
+    Note: we explicitly use the default socket path (e.g. /tmp/tmux-0/default)
+    to avoid "stale socket file but no server" ambiguity across environments.
     """
 
     def __init__(self):
         self._agents: dict[str, str] = {}  # agent_name -> tmux target
+
+    @staticmethod
+    def _tmux_cmd() -> list[str]:
+        sock = os.environ.get("TMUX", "")
+        # TMUX env var is typically like: "/tmp/tmux-0/default,1234,0" when inside tmux.
+        if sock and "," in sock:
+            sock = sock.split(",", 1)[0]
+        if sock and sock.endswith("/default"):
+            return ["tmux", "-S", sock]
+        # Most hosts use /tmp/tmux-<uid>/default.
+        return ["tmux", "-S", f"/tmp/tmux-{os.getuid()}/default"]
 
     def spawn(
         self,
@@ -119,9 +133,21 @@ class TmuxBackend(SpawnBackend):
         else:
             full_cmd = f"{unset_clause}{export_str}; {cmd_str}; {exit_hook}"
 
+        # Ensure there is a running tmux server bound to the default socket.
+        # We have seen cases where the socket file exists but no server is running,
+        # which causes subsequent tmux commands to behave like a "fake alive".
+        tmux_cmd = ["tmux"]
+        tmux_cmd_sock = self._tmux_cmd()
+
+        subprocess.run(
+            tmux_cmd + ["start-server"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
         # Check if tmux session exists
         check = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
+            tmux_cmd + ["has-session", "-t", session_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -130,13 +156,13 @@ class TmuxBackend(SpawnBackend):
 
         if check.returncode != 0:
             launch = subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session_name, "-n", agent_name, full_cmd],
+                tmux_cmd + ["new-session", "-d", "-s", session_name, "-n", agent_name, full_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
         else:
             launch = subprocess.run(
-                ["tmux", "new-window", "-t", session_name, "-n", agent_name, full_cmd],
+                tmux_cmd + ["new-window", "-t", session_name, "-n", agent_name, full_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -145,10 +171,22 @@ class TmuxBackend(SpawnBackend):
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
 
-        # Detect commands that die before the session becomes observable.
+        # Detect cases where the session/window wasn't actually created (tmux server not running).
         time.sleep(0.3)
+        session_check = subprocess.run(
+            tmux_cmd + ["has-session", "-t", session_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if session_check.returncode != 0:
+            return (
+                "Error: tmux session did not become available after launch. "
+                "This usually means the tmux server exited immediately."
+            )
+
+        # Detect commands that die before the session becomes observable.
         pane_check = subprocess.run(
-            ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
+            tmux_cmd + ["list-panes", "-t", target, "-F", "#{pane_id}"],
             capture_output=True,
             text=True,
         )
@@ -173,12 +211,12 @@ class TmuxBackend(SpawnBackend):
                 f.write(prompt)
                 tmp_path = f.name
             subprocess.run(
-                ["tmux", "load-buffer", "-b", f"prompt-{agent_name}", tmp_path],
+                tmux_cmd + ["load-buffer", "-b", f"prompt-{agent_name}", tmp_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
             subprocess.run(
-                ["tmux", "paste-buffer", "-b", f"prompt-{agent_name}", "-t", target],
+                tmux_cmd + ["paste-buffer", "-b", f"prompt-{agent_name}", "-t", target],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -186,19 +224,19 @@ class TmuxBackend(SpawnBackend):
             # first to confirm the pasted text, second to submit.
             time.sleep(0.5)
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Enter"],
+                tmux_cmd + ["send-keys", "-t", target, "Enter"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
             time.sleep(0.3)
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Enter"],
+                tmux_cmd + ["send-keys", "-t", target, "Enter"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
             # Clean up
             subprocess.run(
-                ["tmux", "delete-buffer", "-b", f"prompt-{agent_name}"],
+                tmux_cmd + ["delete-buffer", "-b", f"prompt-{agent_name}"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -207,7 +245,7 @@ class TmuxBackend(SpawnBackend):
             # Generic command: append prompt via send-keys
             time.sleep(1)
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, prompt, "Enter"],
+                tmux_cmd + ["send-keys", "-t", target, prompt, "Enter"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -217,7 +255,7 @@ class TmuxBackend(SpawnBackend):
         # Capture pane PID for robust liveness checking (survives tile operations)
         pane_pid = 0
         pid_result = subprocess.run(
-            ["tmux", "list-panes", "-t", target, "-F", "#{pane_pid}"],
+            tmux_cmd + ["list-panes", "-t", target, "-F", "#{pane_pid}"],
             capture_output=True, text=True,
         )
         if pid_result.returncode == 0 and pid_result.stdout.strip():
@@ -257,8 +295,9 @@ class TmuxBackend(SpawnBackend):
         """
         session = TmuxBackend.session_name(team_name)
 
+        tmux_cmd = TmuxBackend._tmux_cmd()
         check = subprocess.run(
-            ["tmux", "has-session", "-t", session],
+            tmux_cmd + ["has-session", "-t", session],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -267,14 +306,14 @@ class TmuxBackend(SpawnBackend):
 
         # Count current panes in window 0
         pane_count = subprocess.run(
-            ["tmux", "list-panes", "-t", f"{session}:0"],
+            tmux_cmd + ["list-panes", "-t", f"{session}:0"],
             capture_output=True, text=True,
         )
         num_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
 
         # Get windows
         result = subprocess.run(
-            ["tmux", "list-windows", "-t", session, "-F", "#{window_index}"],
+            tmux_cmd + ["list-windows", "-t", session, "-F", "#{window_index}"],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -290,17 +329,17 @@ class TmuxBackend(SpawnBackend):
             first = windows[0]
             for w in windows[1:]:
                 subprocess.run(
-                    ["tmux", "join-pane", "-s", f"{session}:{w}", "-t", f"{session}:{first}", "-h"],
+                    tmux_cmd + ["join-pane", "-s", f"{session}:{w}", "-t", f"{session}:{first}", "-h"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 )
             subprocess.run(
-                ["tmux", "select-layout", "-t", f"{session}:{first}", "tiled"],
+                tmux_cmd + ["select-layout", "-t", f"{session}:{first}", "tiled"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
 
         # Recount
         pane_count = subprocess.run(
-            ["tmux", "list-panes", "-t", f"{session}:0"],
+            tmux_cmd + ["list-panes", "-t", f"{session}:0"],
             capture_output=True, text=True,
         )
         final_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
@@ -314,7 +353,8 @@ class TmuxBackend(SpawnBackend):
             return result
 
         session = TmuxBackend.session_name(team_name)
-        subprocess.run(["tmux", "attach-session", "-t", session])
+        tmux_cmd = TmuxBackend._tmux_cmd()
+        subprocess.run(tmux_cmd + ["attach-session", "-t", session])
         return result
 
 
@@ -373,15 +413,16 @@ def _confirm_workspace_trust_if_prompted(
 
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        tmux_cmd = ["tmux"]
         pane = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", target],
+            tmux_cmd + ["capture-pane", "-p", "-t", target],
             capture_output=True,
             text=True,
         )
         pane_text = pane.stdout.lower() if pane.returncode == 0 else ""
         if _looks_like_workspace_trust_prompt(command, pane_text):
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Enter"],
+                tmux_cmd + ["send-keys", "-t", target, "Enter"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )

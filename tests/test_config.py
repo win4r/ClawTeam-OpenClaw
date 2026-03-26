@@ -12,6 +12,9 @@ class TestClawTeamConfig:
         assert cfg.default_backend == "tmux"
         assert cfg.skip_permissions is True
         assert cfg.workspace == "auto"
+        assert cfg.auto_respawn is True
+        assert cfg.respawn_backoff_seconds == 30
+        assert cfg.max_respawns_per_agent == 2
 
     def test_custom_values(self):
         cfg = ClawTeamConfig(user="alice", default_backend="subprocess", workspace="never")
@@ -83,6 +86,19 @@ class TestGetEffective:
         val, source = get_effective("data_dir")
         assert val == "/custom/path"
         assert source == "env"
+
+    def test_auto_respawn_env(self, monkeypatch):
+        monkeypatch.setenv("CLAWTEAM_AUTO_RESPAWN", "false")
+        val, source = get_effective("auto_respawn")
+        assert val == "false"
+        assert source == "env"
+
+    def test_respawn_backoff_from_file(self, monkeypatch):
+        monkeypatch.delenv("CLAWTEAM_RESPAWN_BACKOFF_SECONDS", raising=False)
+        save_config(ClawTeamConfig(respawn_backoff_seconds=45))
+        val, source = get_effective("respawn_backoff_seconds")
+        assert val == "45"
+        assert source == "file"
 
     def test_unknown_key_returns_empty(self):
         val, source = get_effective("nonexistent_key")

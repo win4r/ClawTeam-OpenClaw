@@ -17,6 +17,9 @@ class ClawTeamConfig(BaseModel):
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
     default_backend: str = "tmux"  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
+    auto_respawn: bool = True
+    respawn_backoff_seconds: int = 30
+    max_respawns_per_agent: int = 2
 
 
 def config_path() -> Path:
@@ -58,6 +61,9 @@ def get_effective(key: str) -> tuple[str, str]:
         "workspace": "CLAWTEAM_WORKSPACE",
         "default_backend": "CLAWTEAM_DEFAULT_BACKEND",
         "skip_permissions": "CLAWTEAM_SKIP_PERMISSIONS",
+        "auto_respawn": "CLAWTEAM_AUTO_RESPAWN",
+        "respawn_backoff_seconds": "CLAWTEAM_RESPAWN_BACKOFF_SECONDS",
+        "max_respawns_per_agent": "CLAWTEAM_MAX_RESPAWNS_PER_AGENT",
     }
     defaults = ClawTeamConfig()
     cfg = load_config()

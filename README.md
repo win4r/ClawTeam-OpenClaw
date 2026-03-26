@@ -492,7 +492,8 @@ clawteam plan reject <team> <plan-id> <agent> --feedback "Revise X"
 clawteam lifecycle request-shutdown <team> <agent> --reason "done"
 clawteam lifecycle approve-shutdown <team> <request-id> <agent>
 clawteam lifecycle idle <team>
-clawteam lifecycle sweep --team <team>        # recover stale task locks
+clawteam lifecycle sweep --team <team>               # recover stale task locks
+clawteam lifecycle leader-loop --team <team> --once  # one-shot self-heal pass
 
 # Templates
 clawteam launch <template> --team <name> --goal "Build X"

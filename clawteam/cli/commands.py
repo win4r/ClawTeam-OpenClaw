@@ -96,6 +96,7 @@ def config_show():
     keys = [
         "data_dir", "user", "default_team",
         "transport", "workspace", "default_backend", "skip_permissions",
+        "auto_respawn", "respawn_backoff_seconds", "max_respawns_per_agent",
     ]
     data = {}
     for k in keys:
@@ -117,7 +118,7 @@ def config_show():
 
 @config_app.command("set")
 def config_set(
-    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions)"),
+    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent)"),
     value: str = typer.Argument(..., help="Config value"),
 ):
     """Persistently set a configuration value."""
@@ -145,7 +146,7 @@ def config_set(
 
 @config_app.command("get")
 def config_get(
-    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions)"),
+    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent)"),
 ):
     """Get the effective value of a config key."""
     from clawteam.config import ClawTeamConfig, get_effective
@@ -1666,6 +1667,42 @@ def lifecycle_sweep(
             + ("" if d['released'] == 0 else " and moved affected tasks to pending")
         ),
     )
+
+
+@lifecycle_app.command("leader-loop")
+def lifecycle_leader_loop(
+    team: str = typer.Option(..., "--team", "-t", help="Team name"),
+    once: bool = typer.Option(False, "--once", help="Run one loop iteration and exit"),
+    interval: float = typer.Option(10.0, "--interval", help="Loop interval seconds (when not --once)"),
+):
+    """Run leader self-healing loop.
+
+    Detects dead agents, releases stale locks, and auto-respawns workers with
+    backoff/retry budget.
+    """
+    from clawteam.team.leader_loop import LeaderLoop
+    from clawteam.team.mailbox import MailboxManager
+
+    mailbox = MailboxManager(team)
+    loop = LeaderLoop(team, mailbox)
+
+    if once:
+        result = loop.run_once()
+        _output(
+            result,
+            lambda d: console.print(
+                f"[green]OK[/green] dead={len(d['dead_agents'])} "
+                f"respawned={len(d['respawned'])} failed={len(d['failed'])}"
+            ),
+        )
+        return
+
+    if not _json_output:
+        console.print(
+            f"Starting leader loop for [cyan]{team}[/cyan] "
+            f"(interval={interval}s). Press Ctrl+C to stop."
+        )
+    loop.run_forever(interval_seconds=interval)
 
 
 # ============================================================================
