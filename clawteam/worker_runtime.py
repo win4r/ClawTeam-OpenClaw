@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import time
+from io import TextIOBase
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -49,6 +50,14 @@ class RuntimeCompletionEnvelope:
     result_type: str = ""
     result_payload: Any | None = None
     emitted_at: str = ""
+
+
+@dataclass
+class _PipeProgressState:
+    stdout_chunks: list[str]
+    stderr_chunks: list[str]
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
 
 
 def load_startup_prompt(path: str | None) -> str:
@@ -477,6 +486,47 @@ def _infer_terminal_status_from_completion_signal(
     return inferred, result_type, signal.terminal_status
 
 
+def _configure_nonblocking_text_pipe(pipe: TextIOBase | None) -> None:
+    if pipe is None:
+        return
+    try:
+        os.set_blocking(pipe.fileno(), False)
+    except (AttributeError, OSError, ValueError):
+        return
+
+
+def _drain_text_pipe_nonblocking(pipe: TextIOBase | None, chunks: list[str]) -> int:
+    if pipe is None:
+        return 0
+    total = 0
+    while True:
+        try:
+            chunk = pipe.read()
+        except BlockingIOError:
+            break
+        except OSError:
+            break
+        if chunk in (None, ""):
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return total
+
+
+def _collect_runtime_progress(
+    proc: subprocess.Popen[str],
+    session_key: str,
+    pipe_state: _PipeProgressState,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    transcript_marker = _transcript_progress_marker(session_key)
+    stdout_pipe = getattr(proc, "stdout", None)
+    stderr_pipe = getattr(proc, "stderr", None)
+    pipe_state.stdout_bytes += _drain_text_pipe_nonblocking(stdout_pipe, pipe_state.stdout_chunks)
+    pipe_state.stderr_bytes += _drain_text_pipe_nonblocking(stderr_pipe, pipe_state.stderr_chunks)
+    io_marker = (pipe_state.stdout_bytes, pipe_state.stderr_bytes)
+    return transcript_marker, io_marker
+
+
 def _run_agent_with_progress_watchdog(
     *,
     command: list[str],
@@ -495,35 +545,61 @@ def _run_agent_with_progress_watchdog(
         stderr=subprocess.PIPE,
         text=True,
     )
+    _configure_nonblocking_text_pipe(getattr(proc, "stdout", None))
+    _configure_nonblocking_text_pipe(getattr(proc, "stderr", None))
+    pipe_state = _PipeProgressState(stdout_chunks=[], stderr_chunks=[])
     started_at = time.monotonic()
     last_progress_at = started_at
-    last_marker = _transcript_progress_marker(session_key)
+    last_transcript_marker, last_io_marker = _collect_runtime_progress(proc, session_key, pipe_state)
 
     while True:
         if proc.poll() is not None:
+            _collect_runtime_progress(proc, session_key, pipe_state)
             stdout, stderr = proc.communicate()
-            return subprocess.CompletedProcess(command, proc.returncode or 0, stdout or "", stderr or "")
+            if stdout:
+                pipe_state.stdout_chunks.append(stdout)
+            if stderr:
+                pipe_state.stderr_chunks.append(stderr)
+            return subprocess.CompletedProcess(
+                command,
+                proc.returncode or 0,
+                "".join(pipe_state.stdout_chunks),
+                "".join(pipe_state.stderr_chunks),
+            )
 
         now = time.monotonic()
-        marker = _transcript_progress_marker(session_key)
-        if marker != last_marker:
-            last_marker = marker
+        transcript_marker, io_marker = _collect_runtime_progress(proc, session_key, pipe_state)
+        if transcript_marker != last_transcript_marker or io_marker != last_io_marker:
+            last_transcript_marker = transcript_marker
+            last_io_marker = io_marker
             last_progress_at = now
 
         if total_timeout_seconds > 0 and now - started_at > total_timeout_seconds:
             proc.kill()
+            _collect_runtime_progress(proc, session_key, pipe_state)
             stdout, stderr = proc.communicate()
+            if stdout:
+                pipe_state.stdout_chunks.append(stdout)
+            if stderr:
+                pipe_state.stderr_chunks.append(stderr)
             raise TimeoutError(f"worker agent turn exceeded total timeout of {total_timeout_seconds}s")
 
         if progress_stall_timeout_seconds > 0 and now - last_progress_at > progress_stall_timeout_seconds:
             proc.kill()
+            _collect_runtime_progress(proc, session_key, pipe_state)
             stdout, stderr = proc.communicate()
+            if stdout:
+                pipe_state.stdout_chunks.append(stdout)
+            if stderr:
+                pipe_state.stderr_chunks.append(stderr)
             tail = _read_transcript_tail(session_key)
             raise TimeoutError(
-                "worker agent turn stalled without transcript progress for "
+                "worker agent turn stalled without runtime progress for "
                 f"{progress_stall_timeout_seconds:.0f}s\n"
-                f"stdout: {(stdout or '').strip()}\n"
-                f"stderr: {(stderr or '').strip()}\n"
+                f"transcript_marker: {transcript_marker}\n"
+                f"io_marker: {io_marker}\n"
+                f"stdout: {''.join(pipe_state.stdout_chunks).strip()}\n"
+                f"stderr: {''.join(pipe_state.stderr_chunks).strip()}\n"
                 f"transcript_tail:\n{tail}"
             )
 
@@ -780,15 +856,23 @@ def run_worker_iteration(
             progress_poll_interval_seconds=progress_poll_interval_seconds,
         )
     except Exception as exc:
+        reason = "worker runtime dispatch failed"
+        stall_phase = "dispatch"
+        if isinstance(exc, TimeoutError) and "stalled without runtime progress" in str(exc):
+            reason = "worker agent turn stalled without runtime progress"
+            stall_phase = "dispatch_runtime_progress_stall"
+        elif isinstance(exc, TimeoutError) and "exceeded total timeout" in str(exc):
+            reason = "worker agent turn exceeded total timeout"
+            stall_phase = "dispatch_total_timeout"
         failed = _fail_claimed_task(
             team_name=team_name,
             agent_name=agent_name,
             task_id=claimed.id,
-            reason="worker runtime dispatch failed",
+            reason=reason,
             evidence=repr(exc),
             execution_id=claimed.active_execution_id,
             session_key=session_key,
-            stall_phase="dispatch",
+            stall_phase=stall_phase,
         )
         failed.update({
             "messages": message_count,
