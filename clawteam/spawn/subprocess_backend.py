@@ -109,34 +109,15 @@ class SubprocessBackend(SpawnBackend):
         # openclaw agent may not exit cleanly (WebSocket hang), so we watch the
         # actual process and trigger lifecycle + webhook when it terminates.
         #
-        # We use os.fork() + os.system() to create a fully detached watcher
-        # that survives the parent clawteam CLI exit and isn't affected by
-        # test monkeypatches on subprocess.Popen.
+        # Use os.system with & to create a fully detached background process
+        # that survives the parent CLI exit.
         _agent_pid = process.pid
-        try:
-            _pid = os.fork()
-            if _pid == 0:
-                # Child process: watch and call lifecycle_on_exit
-                try:
-                    os.setsid()  # Detach from parent session
-                except Exception:
-                    pass
-                # Poll until agent process exits
-                while True:
-                    try:
-                        os.kill(_agent_pid, 0)  # Check if process exists
-                    except OSError:
-                        break  # Process exited
-                    import time
-                    time.sleep(2)
-                # Call lifecycle_on_exit
-                os.system(
-                    f"{shlex.quote(clawteam_bin)} lifecycle on-exit "
-                    f"--team {shlex.quote(team_name)} --agent {shlex.quote(agent_name)}"
-                )
-                os._exit(0)
-        except OSError:
-            pass  # Fork failed, skip watcher
+        _watcher_cmd = (
+            f"while kill -0 {_agent_pid} 2>/dev/null; do sleep 2; done; "
+            f"{shlex.quote(clawteam_bin)} lifecycle on-exit "
+            f"--team {shlex.quote(team_name)} --agent {shlex.quote(agent_name)}"
+        )
+        os.system(f"({_watcher_cmd}) &>/dev/null &")
 
         # Persist spawn info for liveness checking
         from clawteam.spawn.registry import register_agent
