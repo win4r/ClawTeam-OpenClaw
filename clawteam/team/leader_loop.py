@@ -132,7 +132,11 @@ class LeaderLoop:
 
 
 def _age_seconds(t: TaskItem, started: bool = False) -> float:
-    """Best-effort age calc."""
+    """Best-effort age calc.
+
+    Supports datetime objects and ISO datetime strings (including trailing ``Z``).
+    Naive datetimes are treated as UTC for deterministic behavior across hosts.
+    """
     ts = None
     if started and getattr(t, "started_at", None):
         ts = t.started_at
@@ -140,11 +144,18 @@ def _age_seconds(t: TaskItem, started: bool = False) -> float:
         ts = t.created_at
     if not ts:
         return 0.0
+
     try:
-        # Handle both datetime objects and ISO format strings
+        from datetime import datetime, timezone
+
         if isinstance(ts, str):
-            from datetime import datetime
-            ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        return time.time() - ts.timestamp()
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        elif not isinstance(ts, datetime):
+            return 0.0
+
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        return max(0.0, time.time() - ts.timestamp())
     except Exception:
         return 0.0

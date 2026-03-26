@@ -142,3 +142,25 @@ def test_dedup_prevents_spam(fixed_time, monkeypatch):
 
     # With dedup, even though we loop twice, we should not send more than 1 ping
     assert len([m for m in mb.sent if "PING" in m["content"]]) == 1
+
+
+def test_ping_with_z_suffix_timestamp(monkeypatch):
+    # Regression: ISO strings with trailing 'Z' should be parsed and trigger ping.
+    now = 1_700_000_000.0
+    monkeypatch.setattr(time, "time", lambda: now)
+    monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
+
+    created_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 61))
+    task = _task_pending(created_at=created_iso)
+
+    mb = FakeMailbox()
+    store = FakeTaskStore([task])
+
+    cfg = LeaderLoopConfig(poll_interval=0.0, ping_after=30.0, nudge_after=9999, timeout=0.0)
+    loop = LeaderLoop(team_name="t", leader_inbox="leader", mailbox=mb, task_store=store, cfg=cfg)
+
+    loop.run()
+
+    assert len(mb.sent) == 1
+    assert "PING" in mb.sent[0]["content"]
