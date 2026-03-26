@@ -405,7 +405,7 @@ _RESULT_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str], dict[str, TaskStatus]]]
             r"QA_RESULT\s+status:\s*(?P<status>pass_with_risk|pass|fail|blocked)\b(?P<body>.*?)next_action:",
             re.IGNORECASE | re.DOTALL,
         ),
-        {"pass": TaskStatus.completed, "pass_with_risk": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.failed},
+        {"pass": TaskStatus.completed, "pass_with_risk": TaskStatus.completed, "fail": TaskStatus.failed, "blocked": TaskStatus.blocked},
     ),
     (
         "REVIEW_RESULT",

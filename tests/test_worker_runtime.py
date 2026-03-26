@@ -175,6 +175,26 @@ next_action: move to review
     }
 
 
+def test_infer_terminal_status_from_transcript_tail_accepts_qa_blocked():
+    transcript = """
+QA_RESULT
+status: blocked
+summary: Could not reproduce upstream failure in the real worker flow.
+evidence:
+- run timed out without upstream-provider error evidence
+validation:
+- clawteam worker run qa-upstream --once (openclaw)
+risk:
+- validation path still missing a reproducible upstream-failure trigger
+next_action: wait for explicit repro path
+"""
+    assert _infer_terminal_status_from_transcript_tail(transcript) == (
+        TaskStatus.blocked,
+        "QA_RESULT",
+        "blocked",
+    )
+
+
 def test_infer_upstream_failure_evidence_matches_provider_error_text():
     evidence = _infer_upstream_failure_evidence(
         "",
@@ -1018,6 +1038,50 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_transcript_result
     assert updated.metadata["runtime_terminal_recovery_terminal_status"] == "completed"
     assert updated.metadata["runtime_terminal_recovery_compatibility_fallback"] == "true"
     assert updated.last_terminal_status == "completed"
+
+
+def test_run_worker_iteration_recovers_qa_blocked_result_block_as_blocked(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="QA thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    transcript_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    (transcript_dir / "clawteam-demo-qa1.jsonl").write_text(
+        '{"type":"message","message":{"role":"assistant","content":"QA_RESULT\nstatus: blocked\nsummary: upstream failure path could not be reproduced\nevidence:\n- run timed out without upstream-provider error evidence\nvalidation:\n- clawteam worker run qa-upstream --once (openclaw)\nrisk:\n- validation path still missing a reproducible trigger\nnext_action: wait for explicit repro path"}}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", lambda *args, **kwargs: _Completed(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        worker_runtime,
+        "_wait_for_post_exit_settle",
+        lambda **kwargs: (TaskStore("demo").get(task.id), False),
+    )
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "recovered_terminal"
+    assert result["taskId"] == task.id
+    assert result["recoveredStatus"] == "blocked"
+    assert result["recoveredFrom"] == "QA_RESULT"
+    assert result["recoverySource"] == "transcript_result_block_temporary_compatibility"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status.value == "blocked"
+    assert updated.metadata["runtime_terminal_recovery"] == "transcript_result_block_temporary_compatibility"
+    assert updated.metadata["runtime_terminal_recovery_result_type"] == "QA_RESULT"
+    assert updated.metadata["runtime_terminal_recovery_terminal_status"] == "blocked"
+    assert updated.metadata["runtime_terminal_recovery_compatibility_fallback"] == "true"
+    assert updated.metadata["qa_result_status"] == "blocked"
+    assert updated.metadata["qa_result_summary"] == "upstream failure path could not be reproduced"
 
 
 
