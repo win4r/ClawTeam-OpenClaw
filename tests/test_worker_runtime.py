@@ -809,6 +809,7 @@ def test_run_worker_iteration_fails_closed_when_dispatch_raises(monkeypatch, tmp
     assert updated.locked_by == ""
     assert updated.metadata["failure_kind"] == "complex"
     assert updated.metadata["failure_root_cause"] == "worker runtime dispatch failed"
+    assert updated.metadata["stall_phase"] == "dispatch"
     assert "stream_read_error" in updated.metadata["failure_evidence"]
 
 
@@ -1088,7 +1089,9 @@ def test_progress_watchdog_raises_when_transcript_stalls(monkeypatch, tmp_path):
         )
         assert False, "expected TimeoutError"
     except TimeoutError as exc:
-        assert "stalled without transcript progress" in str(exc)
+        assert "stalled without runtime progress" in str(exc)
+        assert "transcript_marker:" in str(exc)
+        assert "io_marker:" in str(exc)
         assert killed["value"] is True
 
 
@@ -1133,6 +1136,64 @@ def test_progress_watchdog_allows_running_process_when_transcript_keeps_growing(
 
     assert result.returncode == 0
     assert result.stdout == "ok"
+
+
+
+def test_progress_watchdog_treats_stdout_growth_as_runtime_progress(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    timeline = iter([0.0, 0.0, 0.4, 0.8, 1.1])
+    monkeypatch.setattr(worker_runtime.time, "monotonic", lambda: next(timeline))
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda _: None)
+    monkeypatch.setattr(worker_runtime, "_transcript_progress_marker", lambda session_key: (0, 0))
+
+    class DummyPipe:
+        def __init__(self, chunks):
+            self._chunks = iter(chunks)
+
+        def fileno(self):
+            return 0
+
+        def read(self):
+            return next(self._chunks, "")
+
+    class DummyProc:
+        def __init__(self):
+            self.returncode = None
+            self.stdout = DummyPipe(["", "booting...", "still working", "done"])
+            self.stderr = DummyPipe(["", "", "", ""])
+            self.poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count >= 4:
+                self.returncode = 0
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def communicate(self):
+            return ("", "")
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+    monkeypatch.setattr(os, "set_blocking", lambda *args, **kwargs: None)
+
+    result = worker_runtime._run_agent_with_progress_watchdog(
+        command=["openclaw", "agent"],
+        cwd=None,
+        env=os.environ.copy(),
+        session_key="clawteam-demo-qa1",
+        total_timeout_seconds=900,
+        progress_stall_timeout_seconds=1.0,
+        progress_poll_interval_seconds=0.01,
+    )
+
+    assert result.returncode == 0
+    assert "booting..." in result.stdout
+    assert "still working" in result.stdout
+    assert "done" in result.stdout
 
 
 
