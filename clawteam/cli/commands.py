@@ -1619,13 +1619,14 @@ def lifecycle_on_exit(
                 ["tmux", "capture-pane", "-p", "-t", info["tmux_target"], "-S", "-80"],
                 capture_output=True,
                 text=True,
+                timeout=5,
             )
             if pane.returncode == 0 and pane.stdout.strip():
                 lines = [line.rstrip() for line in pane.stdout.splitlines() if line.strip()]
                 tail = " | ".join(lines[-6:])
                 if tail:
                     exit_detail = f" Last output: {tail[:700]}"
-        except Exception:
+        except (subprocess.TimeoutExpired, OSError):
             exit_detail = ""
 
     # Notify leader

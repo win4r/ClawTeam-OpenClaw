@@ -10,5 +10,6 @@ def test_openclaw_prompt_mentions_allowlisted_absolute_clawteam_path():
         leader_name="leader",
         task="do work",
     )
-    assert "$CLAWTEAM_CMD" in prompt
+    assert "$CLAWTEAM_BIN" in prompt
+    assert "$CLAWTEAM_CMD" not in prompt
     assert "allowlist" in prompt.lower()

@@ -286,6 +286,9 @@ class WorkspaceManager:
                     continue
 
                 source_path = current_dir / filename
+                if source_path.is_symlink():
+                    logger.debug("workspace overlay skipped symlink %s", source_path)
+                    continue
                 relative = source_path.relative_to(source_root)
                 target_path = target_root / relative
                 if target_path.exists():

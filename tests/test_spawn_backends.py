@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -338,6 +339,123 @@ def test_subprocess_backend_normalizes_nanobot_and_uses_message_flag(monkeypatch
     )
 
     assert "nanobot agent -w /tmp/demo -m 'do work'" in captured["cmd"]
+
+
+def test_lifecycle_on_exit_tmux_capture_uses_timeout(monkeypatch):
+    run_kwargs: dict[str, object] = {}
+    sent: dict[str, str] = {}
+
+    class FakeSessionStore:
+        def __init__(self, team):
+            self.team = team
+
+        def clear(self, agent):
+            return None
+
+    class FakeTask:
+        def __init__(self):
+            self.id = "task-1"
+            self.owner = "worker1"
+            self.status = "in_progress"
+            self.subject = "Do work"
+
+    class FakeTaskStore:
+        def __init__(self, team):
+            self.team = team
+            self.task = FakeTask()
+
+        def list_tasks(self):
+            return [self.task]
+
+        def update(self, task_id, status):
+            self.task.status = status
+
+    class FakeMailbox:
+        def __init__(self, team):
+            self.team = team
+
+        def send(self, from_agent, to, content):
+            sent["content"] = content
+
+    def fake_run(args, **kwargs):
+        run_kwargs.update(kwargs)
+        return type("Result", (), {"returncode": 0, "stdout": "line1\nline2\n", "stderr": ""})()
+
+    monkeypatch.setattr("clawteam.cli.commands.SessionStore", FakeSessionStore, raising=False)
+    monkeypatch.setattr("clawteam.spawn.sessions.SessionStore", FakeSessionStore)
+    monkeypatch.setattr("clawteam.cli.commands.TaskStore", FakeTaskStore, raising=False)
+    monkeypatch.setattr("clawteam.team.tasks.TaskStore", FakeTaskStore)
+    monkeypatch.setattr("clawteam.cli.commands.MailboxManager", FakeMailbox, raising=False)
+    monkeypatch.setattr("clawteam.team.mailbox.MailboxManager", FakeMailbox)
+    monkeypatch.setattr("clawteam.cli.commands.TeamManager.get_leader_name", lambda team: "leader", raising=False)
+    monkeypatch.setattr("clawteam.team.manager.TeamManager.get_leader_name", lambda team: "leader")
+    monkeypatch.setattr("clawteam.cli.commands.get_agent_info", lambda team, agent: {"backend": "tmux", "tmux_target": "demo:1"}, raising=False)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_info", lambda team, agent: {"backend": "tmux", "tmux_target": "demo:1"})
+    monkeypatch.setattr("clawteam.cli.commands.subprocess.run", fake_run, raising=False)
+
+    from clawteam.cli.commands import lifecycle_on_exit
+
+    lifecycle_on_exit(team="demo", agent="worker1")
+
+    assert run_kwargs["timeout"] == 5
+    assert "Last output:" in sent["content"]
+
+
+def test_lifecycle_on_exit_handles_tmux_capture_timeout(monkeypatch):
+    sent: dict[str, str] = {}
+
+    class FakeSessionStore:
+        def __init__(self, team):
+            self.team = team
+
+        def clear(self, agent):
+            return None
+
+    class FakeTask:
+        def __init__(self):
+            self.id = "task-1"
+            self.owner = "worker1"
+            self.status = "in_progress"
+            self.subject = "Do work"
+
+    class FakeTaskStore:
+        def __init__(self, team):
+            self.team = team
+            self.task = FakeTask()
+
+        def list_tasks(self):
+            return [self.task]
+
+        def update(self, task_id, status):
+            self.task.status = status
+
+    class FakeMailbox:
+        def __init__(self, team):
+            self.team = team
+
+        def send(self, from_agent, to, content):
+            sent["content"] = content
+
+    def fake_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=kwargs.get("timeout", 0))
+
+    monkeypatch.setattr("clawteam.cli.commands.SessionStore", FakeSessionStore, raising=False)
+    monkeypatch.setattr("clawteam.spawn.sessions.SessionStore", FakeSessionStore)
+    monkeypatch.setattr("clawteam.cli.commands.TaskStore", FakeTaskStore, raising=False)
+    monkeypatch.setattr("clawteam.team.tasks.TaskStore", FakeTaskStore)
+    monkeypatch.setattr("clawteam.cli.commands.MailboxManager", FakeMailbox, raising=False)
+    monkeypatch.setattr("clawteam.team.mailbox.MailboxManager", FakeMailbox)
+    monkeypatch.setattr("clawteam.cli.commands.TeamManager.get_leader_name", lambda team: "leader", raising=False)
+    monkeypatch.setattr("clawteam.team.manager.TeamManager.get_leader_name", lambda team: "leader")
+    monkeypatch.setattr("clawteam.cli.commands.get_agent_info", lambda team, agent: {"backend": "tmux", "tmux_target": "demo:1"}, raising=False)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_info", lambda team, agent: {"backend": "tmux", "tmux_target": "demo:1"})
+    monkeypatch.setattr("clawteam.cli.commands.subprocess.run", fake_run, raising=False)
+
+    from clawteam.cli.commands import lifecycle_on_exit
+
+    lifecycle_on_exit(team="demo", agent="worker1")
+
+    assert "Last output:" not in sent["content"]
 
 
 def test_resolve_clawteam_executable_ignores_unrelated_argv0(monkeypatch, tmp_path):
