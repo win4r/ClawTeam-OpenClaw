@@ -16,6 +16,12 @@ COMPLEX_FAILURE_REQUIRED_FLAGS = {
     "--failure-recommended-next-owner": "failure_recommended_next_owner",
     "--failure-recommended-action": "failure_recommended_action",
 }
+BLOCKED_ROUTING_REQUIRED_FLAGS = {
+    "--failure-root-cause": "failure_root_cause",
+    "--failure-evidence": "failure_evidence",
+    "--failure-recommended-next-owner": "failure_recommended_next_owner",
+    "--failure-recommended-action": "failure_recommended_action",
+}
 
 
 class TaskTransitionValidationError(ValueError):
@@ -108,32 +114,62 @@ def build_failure_metadata(
         "failure_recommended_action": failure_recommended_action,
     }
 
-    if status != TaskStatus.failed:
-        if any((value or "").strip() for value in option_values.values()):
-            raise TaskTransitionValidationError("failure options require --status failed")
-        return None
+    if status == TaskStatus.failed:
+        kind = (failure_kind or "complex").strip().lower()
+        if kind not in ("regular", "complex"):
+            raise TaskTransitionValidationError("--failure-kind must be regular or complex")
 
-    kind = (failure_kind or "complex").strip().lower()
-    if kind not in ("regular", "complex"):
-        raise TaskTransitionValidationError("--failure-kind must be regular or complex")
+        failure_metadata: dict[str, str] = {"failure_kind": kind}
+        for key, value in option_values.items():
+            if key == "failure_kind":
+                continue
+            if value and value.strip():
+                failure_metadata[key] = value.strip()
 
-    failure_metadata: dict[str, str] = {"failure_kind": kind}
-    for key, value in option_values.items():
-        if key == "failure_kind":
-            continue
-        if value and value.strip():
-            failure_metadata[key] = value.strip()
+        if kind == "complex":
+            missing = [
+                flag
+                for flag, key in COMPLEX_FAILURE_REQUIRED_FLAGS.items()
+                if not (option_values.get(key) or "").strip()
+            ]
+            if missing:
+                raise TaskTransitionValidationError(f"complex fail requires: {', '.join(missing)}")
 
-    if kind == "complex":
+        return failure_metadata
+
+    if status == TaskStatus.blocked:
+        if failure_kind and failure_kind.strip():
+            raise TaskTransitionValidationError("--failure-kind is not allowed with --status blocked")
+        blocked_option_values = {
+            "failure_note": failure_note,
+            "failure_root_cause": failure_root_cause,
+            "failure_evidence": failure_evidence,
+            "failure_recommended_next_owner": failure_recommended_next_owner,
+            "failure_recommended_action": failure_recommended_action,
+        }
+        if not any((value or "").strip() for value in blocked_option_values.values()):
+            return None
+
         missing = [
             flag
-            for flag, key in COMPLEX_FAILURE_REQUIRED_FLAGS.items()
-            if not (option_values.get(key) or "").strip()
+            for flag, key in BLOCKED_ROUTING_REQUIRED_FLAGS.items()
+            if not (blocked_option_values.get(key) or "").strip()
         ]
         if missing:
-            raise TaskTransitionValidationError(f"complex fail requires: {', '.join(missing)}")
+            raise TaskTransitionValidationError(f"blocked routing requires: {', '.join(missing)}")
 
-    return failure_metadata
+        blocked_metadata: dict[str, str] = {}
+        if failure_note and failure_note.strip():
+            blocked_metadata["blocked_note"] = failure_note.strip()
+        blocked_metadata["blocked_root_cause"] = (failure_root_cause or "").strip()
+        blocked_metadata["blocked_evidence"] = (failure_evidence or "").strip()
+        blocked_metadata["blocked_recommended_next_owner"] = (failure_recommended_next_owner or "").strip()
+        blocked_metadata["blocked_recommended_action"] = (failure_recommended_action or "").strip()
+        return blocked_metadata
+
+    if any((value or "").strip() for value in option_values.values()):
+        raise TaskTransitionValidationError("failure options require --status failed or --status blocked")
+    return None
 
 
 def merge_transition_metadata(

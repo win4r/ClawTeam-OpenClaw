@@ -737,7 +737,8 @@ def test_task_failed_complex_does_not_reopen_owner_even_after_actual_start(monke
     )
 
     assert result.exit_code == 0, result.output
-    assert len(backend.calls) == 0
+    assert len(backend.calls) == 1
+    assert backend.calls[0]["agent_name"] == "leader"
 
     impl_after = TaskStore("demo").get(impl.id)
     assert impl_after.status.value == "completed"
@@ -827,6 +828,42 @@ def test_task_update_failed_regular_does_not_notify_leader(monkeypatch, tmp_path
     inbox = MailboxManager("demo")
     messages = inbox.peek("leader")
     assert messages == []
+
+
+def test_task_update_blocked_accepts_structured_routing_and_creates_leader_triage(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAWTEAM_TASK_EXECUTION_ID", raising=False)
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Regression QA", owner="qa1")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task", "update", "demo", task.id,
+            "--status", "blocked",
+            "--failure-root-cause", "Unable to reproduce upstream failure in real worker flow",
+            "--failure-evidence", "Only timeout observed; no upstream-provider error evidence captured",
+            "--failure-recommended-next-owner", "leader",
+            "--failure-recommended-action", "Define repro or fault-injection path before rerunning QA",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    updated = TaskStore("demo").get(task.id)
+    assert updated.status.value == "blocked"
+    assert updated.metadata["blocked_root_cause"] == "Unable to reproduce upstream failure in real worker flow"
+    assert updated.metadata["blocked_recommended_next_owner"] == "leader"
+    triage = TaskStore("demo").get(updated.metadata["triage_followup_task_id"])
+    assert triage is not None
+    assert triage.owner == "leader"
+    assert triage.subject.startswith("Triage blocked task:")
 
 
 def test_task_update_failed_complex_requires_structured_fields(monkeypatch, tmp_path):

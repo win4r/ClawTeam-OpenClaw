@@ -220,6 +220,7 @@ class TaskUpdateEffects:
     wake: dict[str, Any] | None
     auto_releases: list[dict[str, Any]]
     failure_notice: dict[str, Any] | None
+    triage_release: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -341,6 +342,70 @@ def _build_failure_reopen_message(failed_task: TaskItem, target: TaskItem) -> st
     return "\n".join(parts)
 
 
+def _build_triage_followup(task: TaskItem, ctx: TaskUpdateContext) -> tuple[TaskItem, str, bool] | tuple[None, None, bool]:
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    is_complex_failure = task.status == TaskStatus.failed and metadata.get("failure_kind") == "complex"
+    is_blocked = task.status == TaskStatus.blocked
+    if not is_complex_failure and not is_blocked:
+        return None, None, False
+
+    owner_key = "failure_recommended_next_owner" if is_complex_failure else "blocked_recommended_next_owner"
+    action_key = "failure_recommended_action" if is_complex_failure else "blocked_recommended_action"
+    root_key = "failure_root_cause" if is_complex_failure else "blocked_root_cause"
+    evidence_key = "failure_evidence" if is_complex_failure else "blocked_evidence"
+    note_key = "failure_note" if is_complex_failure else "blocked_note"
+
+    from clawteam.team.manager import TeamManager
+
+    next_owner = str(metadata.get(owner_key) or "").strip()
+    next_action = str(metadata.get(action_key) or "").strip()
+    if not next_owner or not next_action:
+        return None, None, False
+    if TeamManager.get_member(ctx.team, next_owner) is None:
+        fallback_leader = TeamManager.get_leader_name(ctx.team) or "leader"
+        next_owner = fallback_leader
+
+    existing_followup_id = str(metadata.get("triage_followup_task_id") or "").strip()
+    if existing_followup_id:
+        existing_followup = ctx.store.get(existing_followup_id)
+        if existing_followup is not None:
+            return existing_followup, next_owner, False
+
+    root_cause = str(metadata.get(root_key) or "").strip() or "Unspecified"
+    evidence = str(metadata.get(evidence_key) or "").strip() or "No evidence provided."
+    note = str(metadata.get(note_key) or "").strip()
+    repair_packet = _build_failure_repair_packet(task)
+    kind_label = "complex failure" if is_complex_failure else "blocked task"
+    triage = ctx.store.create(
+        subject=f"Triage {kind_label}: {task.subject}",
+        owner=next_owner,
+        description="\n".join(
+            line
+            for line in [
+                f"Source task: {task.subject} ({task.id})",
+                f"Current status: {task.status.value}",
+                f"Recommended action: {next_action}",
+                f"Root cause: {root_cause}",
+                f"Evidence: {evidence}",
+                f"Note: {note}" if note else "",
+                repair_packet or "",
+                "Goal: decide the correct reroute/recovery path and then reopen or release the right owner.",
+            ]
+            if line
+        ),
+        metadata={
+            "triage_followup": "true",
+            "triage_source_task_id": task.id,
+            "triage_source_status": task.status.value,
+            "triage_recommended_action": next_action,
+        },
+    )
+    patched_metadata = dict(metadata)
+    patched_metadata["triage_followup_task_id"] = triage.id
+    ctx.store.update(task.id, metadata=patched_metadata)
+    return triage, next_owner, True
+
+
 def execute_task_update_effects(
     *,
     ctx: TaskUpdateContext,
@@ -400,6 +465,23 @@ def execute_task_update_effects(
             )
         )
 
+    triage_release = None
+    triage_task, _triage_owner, triage_created = _build_triage_followup(task, ctx)
+    if triage_task is not None and triage_task.owner and triage_created:
+        try:
+            triage_release = ctx.runtime.release_to_owner(
+                triage_task,
+                caller=caller,
+                message=(
+                    f"Task {triage_task.id} is auto-created from {task.id}. "
+                    "Triage the blocker/failure, choose the next owner, and only then reopen or reroute work."
+                ),
+                respawn=True,
+                release_notifier=ctx.release_notifier,
+            )
+        except Exception as exc:
+            triage_release = {"taskId": triage_task.id, "owner": triage_task.owner, "releaseError": str(exc)}
+
     failure_notice = None
     if task.status == TaskStatus.failed:
         failure_notice = ctx.failure_notifier(ctx.team, task, caller)
@@ -408,6 +490,7 @@ def execute_task_update_effects(
         wake=wake,
         auto_releases=auto_releases,
         failure_notice=failure_notice,
+        triage_release=triage_release,
     )
 
 
