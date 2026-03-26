@@ -39,6 +39,16 @@ class LeaderLoop:
         released = self.task_store.release_stale_locks()
         dead_agents = list_dead_agents(self.team_name)
 
+        # Bootstrap: treat members with no registry entry as "dead" so the
+        # loop spawns them without manual intervention.
+        for member in TeamManager.list_members(self.team_name):
+            if member.name == TeamManager.get_leader_name(self.team_name):
+                continue
+            if member.name not in dead_agents:
+                registry = get_registry(self.team_name)
+                if member.name not in registry:
+                    dead_agents.append(member.name)
+
         result = {
             "team": self.team_name,
             "released_locks": released,
@@ -53,6 +63,8 @@ class LeaderLoop:
 
         state = self._load_state()
         now = time.time()
+        desired_backend_raw, _ = get_effective("default_backend")
+        desired_backend = (desired_backend_raw or "subprocess").strip() or "subprocess"
 
         for agent_name in dead_agents:
             agent_state = state.setdefault("agents", {}).setdefault(agent_name, {
@@ -60,7 +72,17 @@ class LeaderLoop:
                 "last_attempt": 0.0,
                 "permanent_failure": False,
                 "last_error": "",
+                "backend_policy": desired_backend,
             })
+
+            # If backend strategy changed (e.g. tmux -> subprocess), clear old
+            # permanent-failure lockout and retry budget for recovery.
+            if agent_state.get("backend_policy") != desired_backend:
+                agent_state["attempts"] = 0
+                agent_state["last_attempt"] = 0.0
+                agent_state["permanent_failure"] = False
+                agent_state["last_error"] = ""
+                agent_state["backend_policy"] = desired_backend
 
             if agent_state.get("permanent_failure"):
                 result["skipped"].append({"agent": agent_name, "reason": "permanent_failure"})
@@ -112,7 +134,11 @@ class LeaderLoop:
     def _respawn_agent(self, agent_name: str) -> tuple[bool, dict]:
         registry = get_registry(self.team_name)
         reg_info = registry.get(agent_name, {})
-        backend_name = reg_info.get("backend") or "tmux"
+
+        # Aggressive mode: ignore per-agent backend in registry.
+        # Use global default_backend for all respawns (tmux is treated as non-essential).
+        default_backend_raw, _ = get_effective("default_backend")
+        backend_name = (default_backend_raw or "subprocess").strip() or "subprocess"
         command = reg_info.get("command") or ["openclaw"]
 
         # Pick a pending task for this agent as resume entrypoint.

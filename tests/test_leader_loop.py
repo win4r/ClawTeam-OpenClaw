@@ -104,3 +104,52 @@ def test_leader_loop_stops_after_retry_budget_exhausted():
     assert len(first["failed"]) == 1
     assert any(item["reason"] in ("retry_exhausted", "permanent_failure") for item in second["skipped"])
     assert len(fake_backend.calls) == 1
+
+
+def test_leader_loop_switching_backend_policy_resets_permanent_failure_and_uses_default_backend():
+    _setup_team("team-loop-policy")
+    mailbox = MailboxManager("team-loop-policy")
+    fake_backend = _FakeBackend("Agent 'worker1' spawned as subprocess")
+
+    loop = LeaderLoop(
+        "team-loop-policy",
+        mailbox,
+        config=LeaderLoopConfig(auto_respawn=True, respawn_backoff_seconds=0, max_respawns_per_agent=2),
+    )
+
+    # Seed old state: worker is permanently failed under tmux policy.
+    loop._save_state({
+        "agents": {
+            "worker1": {
+                "attempts": 2,
+                "last_attempt": 99.0,
+                "permanent_failure": True,
+                "last_error": "old",
+                "backend_policy": "tmux",
+            }
+        }
+    })
+
+    def _fake_get_effective(key: str):
+        if key == "default_backend":
+            return "subprocess", "file"
+        if key == "skip_permissions":
+            return "true", "default"
+        return "", "default"
+
+    with patch("clawteam.team.leader_loop.list_dead_agents", return_value=["worker1"]), patch(
+        "clawteam.team.leader_loop.get_registry",
+        return_value={"worker1": {"backend": "tmux", "command": ["openclaw"]}},
+    ), patch("clawteam.team.leader_loop.get_backend", return_value=fake_backend), patch(
+        "clawteam.team.leader_loop.get_effective", side_effect=_fake_get_effective
+    ), patch("clawteam.team.leader_loop.time.time", return_value=100.0):
+        result = loop.run_once()
+
+    assert len(result["respawned"]) == 1
+    assert result["respawned"][0]["backend"] == "subprocess"
+    assert len(fake_backend.calls) == 1
+
+    state = loop._load_state()["agents"]["worker1"]
+    assert state["permanent_failure"] is False
+    assert state["attempts"] == 1
+    assert state["backend_policy"] == "subprocess"
