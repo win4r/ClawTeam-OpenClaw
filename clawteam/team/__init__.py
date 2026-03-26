@@ -1,11 +1,6 @@
 """Team coordination layer for multi-agent collaboration."""
 
-from clawteam.team.lifecycle import LifecycleManager
-from clawteam.team.mailbox import MailboxManager
-from clawteam.team.manager import TeamManager
-from clawteam.team.plan import PlanManager
-from clawteam.team.tasks import TaskStore
-from clawteam.team.watcher import InboxWatcher
+from importlib import import_module
 
 __all__ = [
     "TeamManager",
@@ -15,3 +10,19 @@ __all__ = [
     "LifecycleManager",
     "InboxWatcher",
 ]
+
+
+def __getattr__(name: str):
+    module_map = {
+        "LifecycleManager": ("clawteam.team.lifecycle", "LifecycleManager"),
+        "MailboxManager": ("clawteam.team.mailbox", "MailboxManager"),
+        "TeamManager": ("clawteam.team.manager", "TeamManager"),
+        "PlanManager": ("clawteam.team.plan", "PlanManager"),
+        "TaskStore": ("clawteam.team.tasks", "TaskStore"),
+        "InboxWatcher": ("clawteam.team.watcher", "InboxWatcher"),
+    }
+    target = module_map.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = target
+    return getattr(import_module(module_name), attr_name)

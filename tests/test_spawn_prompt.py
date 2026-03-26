@@ -1,7 +1,34 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 from clawteam.spawn.prompt import build_agent_prompt
 from clawteam.task.terminal_commands import build_terminal_task_update_command
+
+
+def test_spawn_prompt_imports_cleanly_from_fresh_python_process():
+    repo_root = os.path.dirname(os.path.dirname(__file__))
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        repo_root if not existing_pythonpath else os.pathsep.join([repo_root, existing_pythonpath])
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import clawteam.spawn.prompt; import clawteam.task.transition; import clawteam.team.tasks",
+        ],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_build_agent_prompt_bootstrap_uses_shell_and_quotes_data_dir(monkeypatch):
