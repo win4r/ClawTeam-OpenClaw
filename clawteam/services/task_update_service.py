@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable
 
 
@@ -398,6 +399,7 @@ def _build_triage_followup(task: TaskItem, ctx: TaskUpdateContext) -> tuple[Task
             "triage_source_task_id": task.id,
             "triage_source_status": task.status.value,
             "triage_recommended_action": next_action,
+            "triage_recommended_next_owner": next_owner,
         },
     )
     patched_metadata = dict(metadata)
@@ -405,6 +407,112 @@ def _build_triage_followup(task: TaskItem, ctx: TaskUpdateContext) -> tuple[Task
     ctx.store.update(task.id, metadata=patched_metadata)
     return triage, next_owner, True
 
+
+def _build_triage_resolution_message(source: TaskItem, triage: TaskItem, action: str) -> str:
+    return (
+        f"Task {source.id} is reopened after triage follow-up {triage.id} completed. "
+        f"Next action: {action}. Start now and report only real blockers."
+    )
+
+
+def _apply_triage_followup_resolution(
+    *,
+    ctx: TaskUpdateContext,
+    triage: TaskItem,
+    caller: str,
+) -> list[dict[str, Any]] | None:
+    if triage.status != TaskStatus.completed:
+        return None
+    metadata = triage.metadata if isinstance(triage.metadata, dict) else {}
+    if metadata.get("triage_followup") != "true":
+        return None
+
+    source_id = str(metadata.get("triage_source_task_id") or "").strip()
+    if not source_id:
+        return None
+
+    source = ctx.store.get(source_id)
+    if source is None:
+        return None
+
+    if str(source.metadata.get("triage_followup_task_id") or "").strip() != triage.id:
+        return None
+
+    if str(source.metadata.get("triage_followup_resolution_id") or "").strip() == triage.id:
+        return None
+
+    source_status = str(metadata.get("triage_source_status") or source.status.value)
+    if source_status == TaskStatus.blocked.value:
+        if source.status != TaskStatus.blocked:
+            return None
+        next_owner = str(source.metadata.get("blocked_recommended_next_owner") or "").strip()
+        next_action = str(source.metadata.get("blocked_recommended_action") or "").strip()
+    elif source_status == TaskStatus.failed.value:
+        if source.status != TaskStatus.failed:
+            return None
+        if str(source.metadata.get("failure_kind") or "").strip() != "complex":
+            return None
+        next_owner = str(source.metadata.get("failure_recommended_next_owner") or "").strip()
+        next_action = str(source.metadata.get("failure_recommended_action") or "").strip()
+    else:
+        return None
+
+    if not next_owner or not next_action:
+        return None
+
+    from clawteam.team.manager import TeamManager
+
+    if TeamManager.get_member(ctx.team, next_owner) is None:
+        fallback_leader = TeamManager.get_leader_name(ctx.team) or "leader"
+        next_owner = fallback_leader
+
+    reopen_decision = plan_reopen_task(existing=source, event=ReopenTaskEvent(caller=caller))
+    if not reopen_decision.accepted:
+        return None
+
+    apply_result = _apply_reopen_transition(
+        ctx=ctx,
+        task_id=source.id,
+        caller=caller,
+        force=False,
+        decision=reopen_decision,
+    )
+    updated = apply_result.task if apply_result is not None else None
+    if updated is None:
+        return None
+
+    resolution_metadata = {
+        "triage_followup_resolution_id": triage.id,
+        "triage_followup_resolved_at": datetime.now().astimezone().isoformat(),
+        "triage_followup_resolved_by": triage.owner or caller,
+        "triage_followup_resolution_owner": next_owner,
+        "triage_followup_resolution_action": next_action,
+        "triage_followup_resolution_source_status": source_status,
+    }
+
+    updated = _apply_generic_patch(
+        ctx=ctx,
+        task_id=source.id,
+        patch=TaskPatch(
+            owner=next_owner,
+            metadata=resolution_metadata,
+        ),
+        caller=caller,
+        force=False,
+    )
+    if updated is None:
+        return None
+
+    return wake_tasks_to_pending(
+        ctx.team,
+        [updated.id],
+        caller=caller,
+        message_builder=lambda target: _build_triage_resolution_message(target, triage, next_action),
+        repo=ctx.repo,
+        store=ctx.store,
+        runtime=ctx.runtime,
+        release_notifier=ctx.release_notifier,
+    )
 
 def execute_task_update_effects(
     *,
@@ -481,6 +589,8 @@ def execute_task_update_effects(
             )
         except Exception as exc:
             triage_release = {"taskId": triage_task.id, "owner": triage_task.owner, "releaseError": str(exc)}
+
+    _apply_triage_followup_resolution(ctx=ctx, triage=task, caller=caller)
 
     failure_notice = None
     if task.status == TaskStatus.failed:
