@@ -14,6 +14,7 @@ class ClawTeamConfig(BaseModel):
     user: str = ""
     default_team: str = ""
     transport: str = ""
+    task_store: str = ""  # "file" (default) — extensible for redis/sql later
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
     default_backend: str = "tmux"  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
@@ -55,6 +56,7 @@ def get_effective(key: str) -> tuple[str, str]:
         "user": "CLAWTEAM_USER",
         "default_team": "CLAWTEAM_TEAM_NAME",
         "transport": "CLAWTEAM_TRANSPORT",
+        "task_store": "CLAWTEAM_TASK_STORE",
         "workspace": "CLAWTEAM_WORKSPACE",
         "default_backend": "CLAWTEAM_DEFAULT_BACKEND",
         "skip_permissions": "CLAWTEAM_SKIP_PERMISSIONS",
