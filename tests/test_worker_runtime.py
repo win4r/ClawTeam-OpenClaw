@@ -121,6 +121,7 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
     assert "Use structured result blocks instead of free-form prose" in prompt
     assert "SETUP_RESULT must include exactly these headings" in prompt
     assert "SETUP_RESULT remote_status must be confirmed_latest, cached_only, or unreachable" in prompt
+    assert "do not rely on Linux-only `timeout`" in prompt
     assert "do not guess a test path and present that as proof" in prompt
     assert "QA_RESULT must include exactly these headings" in prompt
     assert "QA_RESULT status may be pass, pass_with_risk, fail, or blocked" in prompt

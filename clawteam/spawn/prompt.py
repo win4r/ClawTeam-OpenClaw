@@ -140,6 +140,7 @@ def build_agent_prompt(
         "- SETUP_RESULT must include exactly these headings: status, remote_status, remote_head, detached_worktree, detached_head, install, baseline_validation, known_limitations, next_action.",
         "- SETUP_RESULT remote_status must be confirmed_latest, cached_only, or unreachable.",
         "- For setup tasks, fail closed: do not claim latest main unless `git ls-remote --heads <remote> <branch>` succeeded; if remote probing fails or times out, report cached_only or unreachable explicitly.",
+        "- For setup tasks, if you need a bounded remote probe, do not rely on Linux-only `timeout`; use `python3` / subprocess timeout or the host tool's timeout so the same step works on macOS too.",
         "- For setup tasks, detached worktree evidence must include the path plus actual `git rev-parse HEAD` / `git status --short --branch` output from that detached workspace.",
         "- For setup tasks, baseline validation must be discovered before execution (for example pyproject / README / Makefile / package.json / tests); do not guess a test path and present that as proof.",
         "- DEV_RESULT must include exactly these headings: status, summary, changed_files, validation, known_issues, next_action.",

@@ -790,6 +790,7 @@ class TestLoadBuiltinTemplate:
             "next_action",
         ]
         assert "Remote gate" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
+        assert "不要依赖 Linux 专属 `timeout`" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
         assert "SETUP_RESULT" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
         assert by_subject["Implement backend/data changes with real validation"].message_type == "DEV_RESULT"
         assert by_subject["Implement frontend/UI changes with real validation"].message_type == "DEV_RESULT"

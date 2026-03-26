@@ -281,6 +281,7 @@ Setup contract (must satisfy or fail closed):
    - 先产出 `git remote -v`
    - 再产出 `git rev-parse remotes/flyzorro/main || true`
    - 再尝试 `git ls-remote --heads flyzorro main`
+   - 若需要有界探测，不要依赖 Linux 专属 `timeout`；改用 `python3` / subprocess timeout 或宿主工具层 timeout，保证 macOS 也能跑
    - 若 `ls-remote` 成功，才能声称 latest main 已确认
    - 若失败/超时，只能明确写 `remote_status: cached_only` 或 `remote_status: unreachable`
 2. Detached worktree gate
