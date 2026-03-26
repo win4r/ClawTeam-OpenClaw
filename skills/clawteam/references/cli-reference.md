@@ -334,6 +334,42 @@ clawteam spawn subprocess claude --team dev-team --agent-name bob --agent-type r
 
 ---
 
+## Agent Commands (`clawteam agent`)
+
+### `agent status`
+
+Check if an agent is alive and what task it's working on.
+
+```bash
+clawteam agent status <agent_name> --team <team>
+```
+
+Returns:
+- `status: alive|dead` - whether the tmux window exists
+- `task_lock: <task_id>|null` - the task the agent is working on
+- `in_registry: true|false` - whether the agent is registered
+
+Example:
+```bash
+# Check if thinker is still alive
+clawteam agent status thinker --team thinking-chains
+
+# JSON output
+clawteam --json agent status thinker --team thinking-chains
+```
+
+### `agent list`
+
+List all agents in a team with their status.
+
+```bash
+clawteam agent list --team <team>
+```
+
+Returns a table with agent name, status (alive/dead), and current task.
+
+---
+
 ## Identity Commands (`clawteam identity`)
 
 ### `identity show`

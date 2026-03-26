@@ -107,12 +107,14 @@ class SubprocessBackend(SpawnBackend):
 
         # Persist spawn info for liveness checking
         from clawteam.spawn.registry import register_agent
+        session_key = f"clawteam-{team_name}-{agent_name}"
         register_agent(
             team_name=team_name,
             agent_name=agent_name,
             backend="subprocess",
             pid=process.pid,
             command=list(normalized_command),
+            session_key=session_key,
         )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"

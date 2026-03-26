@@ -19,6 +19,7 @@ def build_agent_prompt(
     workspace_branch: str = "",
     memory_scope: str = "",
     task_id: str = "",
+    webhook_notify: bool = False,
 ) -> str:
     """Build agent prompt: identity + task + optional workspace info."""
     lines = [
@@ -83,4 +84,19 @@ def build_agent_prompt(
             "",
         ]
     )
+    if webhook_notify:
+        lines.extend(
+            [
+                "",
+                "## 完成後通知",
+                "",
+                "任務完成後，執行以下命令通知主 session：",
+                "",
+                "```bash",
+                f'~/.openclaw/workspace/scripts/acp-notify.sh "任務完成" "{team_name}" "{agent_name}" "{task_id}"',
+                "```",
+                "",
+                "呢個係必須步驟，唔可以 skip。",
+            ]
+        )
     return "\n".join(lines)

@@ -7,7 +7,11 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+
+# Global lock to prevent concurrent tmux operations from interfering
+_tmux_lock = threading.Lock()
 
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
@@ -115,88 +119,122 @@ class TmuxBackend(SpawnBackend):
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
         if cwd:
-            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && {cmd_str}; {exit_hook}"
+            full_cmd = (
+                f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && {cmd_str}; {exit_hook}"
+            )
         else:
             full_cmd = f"{unset_clause}{export_str}; {cmd_str}; {exit_hook}"
 
         # ── Zombie Socket Hunter ──
         # If has-session returns True but list-sessions fails, we have a zombie socket.
         # Clean it up so tmux can start fresh.
-        check = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if check.returncode == 0:
-            verify = subprocess.run(
-                ["tmux", "list-sessions", "-t", session_name, "-F", "#{session_name}"],
-                capture_output=True, text=True,
+        # Lock to prevent concurrent spawns from interfering
+        with _tmux_lock:
+            check = subprocess.run(
+                ["tmux", "has-session", "-t", session_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            if verify.returncode != 0:
-                # Zombie socket detected — kill server and remove stale socket
-                subprocess.run(
-                    ["tmux", "kill-server"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            if check.returncode == 0:
+                verify = subprocess.run(
+                    ["tmux", "list-sessions", "-t", session_name, "-F", "#{session_name}"],
+                    capture_output=True,
+                    text=True,
                 )
-                # Remove stale socket files
-                import glob as _glob
-                for sock in _glob.glob("/tmp/tmux-*/default"):
-                    try:
-                        os.unlink(sock)
-                    except OSError:
-                        pass
-                # Re-check after cleanup
-                check = subprocess.run(
-                    ["tmux", "has-session", "-t", session_name],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                if verify.returncode != 0:
+                    # Zombie socket detected — kill server and remove stale socket
+                    subprocess.run(
+                        ["tmux", "kill-server"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    # Remove stale socket files
+                    import glob as _glob
+
+                    for sock in _glob.glob("/tmp/tmux-*/default"):
+                        try:
+                            os.unlink(sock)
+                        except OSError:
+                            pass
+                    # Re-check after cleanup
+                    check = subprocess.run(
+                        ["tmux", "has-session", "-t", session_name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+
+            target = f"{session_name}:{agent_name}"
+
+            if check.returncode != 0:
+                launch = subprocess.run(
+                    ["tmux", "new-session", "-d", "-s", session_name, "-n", agent_name, full_cmd],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
-
-        target = f"{session_name}:{agent_name}"
-
-        if check.returncode != 0:
-            launch = subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session_name, "-n", agent_name, full_cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        else:
-            launch = subprocess.run(
-                ["tmux", "new-window", "-d", "-t", session_name, "-n", agent_name, full_cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            else:
+                launch = subprocess.run(
+                    ["tmux", "new-window", "-d", "-t", session_name, "-n", agent_name, full_cmd],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
 
         if launch.returncode != 0:
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
 
         # Detect commands that die before the session becomes observable.
-        time.sleep(0.3)
-        pane_check = subprocess.run(
-            ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
-            capture_output=True,
-            text=True,
-        )
-        if pane_check.returncode != 0 or not pane_check.stdout.strip():
-            return (
-                f"Error: agent command '{normalized_command[0]}' exited immediately after launch. "
+        # Poll for pane availability with exponential backoff
+        # OpenClaw TUI needs more than 0.3s to initialize (Node.js + Gateway connection)
+        pane_alive = False
+        max_attempts = 6
+        for attempt in range(max_attempts):
+            wait_time = min(0.5 * (2**attempt), 2.0)  # 0.5, 1, 2, 2, 2, 2 seconds
+            time.sleep(wait_time)
+
+            pane_check = subprocess.run(
+                ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
+                capture_output=True,
+                text=True,
+            )
+            if pane_check.returncode == 0 and pane_check.stdout.strip():
+                pane_alive = True
+                break
+
+        if not pane_alive:
+            error_msg = (
+                f"agent command '{normalized_command[0]}' exited immediately after launch "
+                f"(checked {max_attempts} times over ~10s). "
                 "Verify the CLI works standalone before using it with clawteam spawn."
             )
+            # Log error to team spawn log
+            from clawteam.logging import log_spawn
+
+            log_spawn(
+                team_name=team_name,
+                agent_name=agent_name,
+                status="error",
+                message=error_msg,
+                error=error_msg,
+            )
+            return f"Error: {error_msg}"
 
         # ── Pipe-Pane Logging ──
         # Capture all pane output to a log file for debugging.
         from pathlib import Path as _Path
+
         log_dir = _Path.home() / ".clawteam" / "logs" / team_name
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"{agent_name}.log"
         subprocess.run(
             ["tmux", "pipe-pane", "-t", target, "-o", f"cat >> {log_file}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         # Set remain-on-exit so window stays visible after agent crashes
         subprocess.run(
             ["tmux", "set-option", "-t", target, "remain-on-exit", "on"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
 
         _confirm_workspace_trust_if_prompted(target, normalized_command)
@@ -244,7 +282,12 @@ class TmuxBackend(SpawnBackend):
                 stderr=subprocess.PIPE,
             )
             os.unlink(tmp_path)
-        elif prompt and not _is_codex_command(normalized_command) and not _is_openclaw_command(normalized_command) and not _is_nanobot_command(normalized_command):
+        elif (
+            prompt
+            and not _is_codex_command(normalized_command)
+            and not _is_openclaw_command(normalized_command)
+            and not _is_nanobot_command(normalized_command)
+        ):
             # Generic command: append prompt via send-keys
             time.sleep(1)
             subprocess.run(
@@ -259,7 +302,8 @@ class TmuxBackend(SpawnBackend):
         pane_pid = 0
         pid_result = subprocess.run(
             ["tmux", "list-panes", "-t", target, "-F", "#{pane_pid}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if pid_result.returncode == 0 and pid_result.stdout.strip():
             try:
@@ -269,6 +313,10 @@ class TmuxBackend(SpawnBackend):
 
         # Persist spawn info for liveness checking
         from clawteam.spawn.registry import register_agent
+
+        # Build session_key for tool call extraction (OpenClaw transcript lookup)
+        session_key = f"agent:main:clawteam-{team_name}-{agent_name}"
+
         register_agent(
             team_name=team_name,
             agent_name=agent_name,
@@ -276,6 +324,7 @@ class TmuxBackend(SpawnBackend):
             tmux_target=target,
             pid=pane_pid,
             command=list(normalized_command),
+            session_key=session_key,
         )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"
@@ -309,14 +358,16 @@ class TmuxBackend(SpawnBackend):
         # Count current panes in window 0
         pane_count = subprocess.run(
             ["tmux", "list-panes", "-t", f"{session}:0"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         num_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
 
         # Get windows
         result = subprocess.run(
             ["tmux", "list-windows", "-t", session, "-F", "#{window_index}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             return f"Error: failed to list windows: {result.stderr.strip()}"
@@ -332,19 +383,24 @@ class TmuxBackend(SpawnBackend):
             for w in windows[1:]:
                 subprocess.run(
                     ["tmux", "join-pane", "-s", f"{session}:{w}", "-t", f"{session}:{first}", "-h"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             subprocess.run(
                 ["tmux", "select-layout", "-t", f"{session}:{first}", "tiled"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
 
         # Recount
         pane_count = subprocess.run(
             ["tmux", "list-panes", "-t", f"{session}:0"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
-        final_panes = len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
+        final_panes = (
+            len(pane_count.stdout.strip().splitlines()) if pane_count.returncode == 0 else 0
+        )
         return f"Tiled {final_panes} panes in {session}"
 
     @staticmethod
@@ -453,4 +509,9 @@ def _looks_like_workspace_trust_prompt(command: list[str], pane_text: str) -> bo
 
 def _is_interactive_cli(command: list[str]) -> bool:
     """Check if the command is an interactive AI CLI."""
-    return _is_claude_command(command) or _is_codex_command(command) or _is_openclaw_command(command) or _is_nanobot_command(command)
+    return (
+        _is_claude_command(command)
+        or _is_codex_command(command)
+        or _is_openclaw_command(command)
+        or _is_nanobot_command(command)
+    )

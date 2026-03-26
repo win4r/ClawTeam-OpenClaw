@@ -1930,6 +1930,7 @@ def lifecycle_on_exit(
     from pathlib import Path
 
     from clawteam.logging import log_task
+    from clawteam.spawn.tool_calls import extract_and_log
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.models import TaskStatus
@@ -1966,6 +1967,20 @@ def lifecycle_on_exit(
             store.update(t.id, status=TaskStatus.pending)
             pending.append(t)
 
+    # ── Tool Call Extraction (best-effort, never blocks) ──
+    # Try to get session_key from spawn registry
+    session_key = None
+    try:
+        from clawteam.spawn.registry import get_registry
+
+        registry = get_registry(team)
+        agent_info = registry.get(agent, {})
+        session_key = agent_info.get("session_key", "")
+    except Exception:
+        pass
+
+    tool_call_result = extract_and_log(team, agent, session_key=session_key or None)
+
     leader_name = TeamManager.get_leader_name(team)
     if leader_name:
         mailbox = MailboxManager(team)
@@ -1979,6 +1994,13 @@ def lifecycle_on_exit(
         if pending:
             subjects = ", ".join(t.subject for t in pending)
             msg_parts.append(f"Reset to pending: {subjects}")
+
+        # Append tool call summary to notification
+        if tool_call_result.get("status") == "ok" and tool_call_result.get("tool_calls", 0) > 0:
+            msg_parts.append(
+                f"Tool calls: {tool_call_result['tool_calls']}. "
+                f"Log: {tool_call_result.get('log_file', '')}"
+            )
 
         if msg_parts:
             mailbox.send(
@@ -2001,12 +2023,18 @@ def lifecycle_on_exit(
             "completed": [{"id": t.id, "subject": t.subject} for t in completed],
             "failed": [{"id": t.id, "subject": t.subject} for t in failed],
             "pending": [{"id": t.id, "subject": t.subject} for t in pending],
+            "tool_calls": tool_call_result,
         },
         lambda d: console.print(
             f"[yellow]Agent '{agent}' exited.[/yellow] "
             f"Completed: {len(d['completed'])}, "
             f"Failed: {len(d['failed'])}, "
             f"Pending: {len(d['pending'])}"
+            + (
+                f", Tool calls: {d['tool_calls'].get('tool_calls', 0)}"
+                if d["tool_calls"].get("tool_calls", 0) > 0
+                else ""
+            )
         ),
     )
 
@@ -2160,6 +2188,7 @@ def spawn_agent(
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{_team}",
             task_id=bound_task_id,
+            webhook_notify=True,
         )
     elif task:
         import os as _os
@@ -2200,6 +2229,7 @@ def spawn_agent(
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{_team}",
             task_id=bound_task_id,
+            webhook_notify=True,
         )
 
     # Session resume: inject --resume flag for claude commands
@@ -2821,6 +2851,7 @@ def launch_team(
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{t_name}",
+            webhook_notify=True,
         )
 
         # Resolve skip_permissions from config

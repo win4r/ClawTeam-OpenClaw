@@ -120,14 +120,37 @@ Agents spawned with defaults get:
 # Create with dependencies
 clawteam task create my-team "Deploy" --blocked-by <impl-task-id>,<test-task-id>
 
-# Update status
-clawteam task update my-team <task-id> --status in_progress
-clawteam task update my-team <task-id> --status completed  # auto-unblocks dependents
+# Update status - IMPORTANT: Always update status when starting/completing!
+clawteam task update my-team <task-id> --status in_progress   # When starting work
+clawteam task update my-team <task-id> --status completed     # When done (auto-unblocks dependents)
 
 # Filter tasks
 clawteam task list my-team --status blocked
 clawteam task list my-team --owner worker1
 ```
+
+> **Critical**: Without status updates, the system cannot track progress accurately. Always update status when starting and completing work.
+
+### Checking Agent Status
+
+If you need to verify another agent's status (e.g., to check if it's still working):
+
+```bash
+# Check single agent status
+clawteam agent status <agent_name> --team <team>
+
+# List all agents in a team
+clawteam agent list --team <team>
+```
+
+**Before declaring an agent has crashed:**
+1. Run `clawteam agent status` to verify if the tmux window exists
+2. Check if they have a task lock (working on a task)
+3. Only declare "crashed" if status is "dead"
+
+Do NOT assume an agent has crashed just because:
+- Task status is "pending" (agent may be working without updating status)
+- You haven't received a message recently (always check with `agent status` first)
 
 ### Waiting for Sub-Agents
 

@@ -20,6 +20,7 @@ def register_agent(
     tmux_target: str = "",
     pid: int = 0,
     command: list[str] | None = None,
+    session_key: str = "",
 ) -> None:
     """Record spawn info for an agent (atomic write)."""
     from clawteam.logging import log_spawn
@@ -31,6 +32,7 @@ def register_agent(
         "tmux_target": tmux_target,
         "pid": pid,
         "command": command or [],
+        "session_key": session_key,
     }
     _save(path, registry)
     log_spawn(
