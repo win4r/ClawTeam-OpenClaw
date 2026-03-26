@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -35,6 +36,8 @@ def _build_dependency_completion_message(task, target) -> str:
             structured_lines.append(f"- risk: {risk}")
         message += "\n" + "\n".join(structured_lines)
     return message
+
+
 from clawteam.templates import (
     ScopeTaskValidationError,
     find_scope_audit_warnings,
@@ -92,6 +95,102 @@ def _build_failure_repair_packet(task: TaskItem) -> str | None:
     if not lines:
         return None
     return "\n".join(["Repair packet:", *lines])
+
+
+def _extract_structured_sections(description: str) -> dict[str, str]:
+    text = (description or "").strip()
+    if not text:
+        return {}
+    sections: dict[str, str] = {}
+    current: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^([A-Za-z][A-Za-z0-9_ ]*):\s*(.*)$", line.strip())
+        if match:
+            if current is not None:
+                sections[current] = "\n".join(buf).strip()
+            current = match.group(1).strip().lower().replace(" ", "_")
+            initial = match.group(2).strip()
+            buf = [initial] if initial else []
+            continue
+        if current is not None:
+            buf.append(line)
+    if current is not None:
+        sections[current] = "\n".join(buf).strip()
+    return sections
+
+
+def _looks_like_sha(value: str) -> bool:
+    candidate = (value or "").strip()
+    return bool(re.fullmatch(r"[0-9a-fA-F]{7,40}", candidate))
+
+
+def _looks_like_command_evidence_block(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return any(line.startswith("-") and ("->" in line or ":" in line) for line in lines)
+
+
+def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
+    if request.status != TaskStatus.completed:
+        return
+    metadata = existing.metadata or {}
+    if metadata.get("message_type") != "SETUP_RESULT":
+        return
+
+    description = (request.description if request.description is not None else existing.description or "").strip()
+    if not description:
+        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT via --description")
+    lines = description.splitlines()
+    header = (lines[0].strip() if lines else "")
+    if header != "SETUP_RESULT":
+        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT header via --description")
+
+    sections = _extract_structured_sections(description)
+    required_sections = [str(s).strip().lower() for s in (metadata.get("required_sections") or []) if str(s).strip()]
+    missing = [section for section in required_sections if section not in sections or not sections[section].strip()]
+    if missing:
+        raise TaskTransitionValidationError(
+            "setup completion missing required SETUP_RESULT sections: " + ", ".join(missing)
+        )
+
+    remote_status = sections.get("remote_status", "").strip().lower()
+    if remote_status not in {"confirmed_latest", "cached_only", "unreachable"}:
+        raise TaskTransitionValidationError(
+            "setup completion requires remote_status to be one of: confirmed_latest, cached_only, unreachable"
+        )
+
+    remote_head = sections.get("remote_head", "").strip()
+    if remote_head.lower() == "none":
+        if remote_status == "confirmed_latest":
+            raise TaskTransitionValidationError("setup completion cannot use remote_head none when remote_status=confirmed_latest")
+    elif not _looks_like_sha(remote_head):
+        raise TaskTransitionValidationError("setup completion requires remote_head to look like a git sha or `none`")
+
+    detached_worktree = sections.get("detached_worktree", "").strip()
+    if detached_worktree.lower() == "none":
+        raise TaskTransitionValidationError("setup completion requires detached_worktree evidence; `none` is not allowed")
+
+    detached_head = sections.get("detached_head", "").strip()
+    if detached_head.lower() == "none" or not _looks_like_sha(detached_head):
+        raise TaskTransitionValidationError("setup completion requires detached_head to look like a git sha")
+
+    install_block = sections.get("install", "")
+    if not _looks_like_command_evidence_block(install_block):
+        raise TaskTransitionValidationError("setup completion requires install evidence in `- <command> -> <result>` form")
+
+    baseline_block = sections.get("baseline_validation", "")
+    if not _looks_like_command_evidence_block(baseline_block):
+        raise TaskTransitionValidationError(
+            "setup completion requires baseline_validation evidence in `- <command> -> <result>` form"
+        )
+
+    if remote_status == "confirmed_latest" and "ls-remote" not in description:
+        raise TaskTransitionValidationError(
+            "setup completion with remote_status=confirmed_latest requires explicit `git ls-remote` evidence"
+        )
 
 
 def plan_task_update(
@@ -570,6 +669,8 @@ def execute_task_update(
             failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
+    _validate_setup_completion(existing, request)
+
     generic_patch = _build_generic_task_patch(
         request=request,
         metadata_to_apply=plan.metadata_to_apply,
@@ -592,6 +693,30 @@ def execute_task_update(
             force=request.force,
         )
         task = apply_result.task if apply_result is not None else None
+        if task is not None and any(
+            value is not None for value in (
+                request.owner,
+                request.subject,
+                request.description,
+                request.add_blocks,
+                request.add_blocked_by,
+            )
+        ):
+            task = _apply_generic_patch(
+                ctx=ctx,
+                task_id=task_id,
+                patch=TaskPatch(
+                    owner=request.owner,
+                    subject=request.subject,
+                    description=request.description,
+                    add_blocks=request.add_blocks,
+                    add_blocked_by=request.add_blocked_by,
+                    metadata=None,
+                    metadata_keys_to_remove=None,
+                ),
+                caller=caller,
+                force=request.force,
+            )
     elif request.status == TaskStatus.pending and existing.status != TaskStatus.pending:
         reopen_decision = plan_reopen_task(existing=existing, event=ReopenTaskEvent(caller=caller))
         if not reopen_decision.accepted:
