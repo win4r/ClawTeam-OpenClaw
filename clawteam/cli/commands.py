@@ -1643,6 +1643,31 @@ def lifecycle_check_zombies(
     raise typer.Exit(1)
 
 
+@lifecycle_app.command("sweep")
+def lifecycle_sweep(
+    team: str = typer.Option(..., "--team", "-t", help="Team name"),
+):
+    """Sweep stale locks held by dead agents and recover affected tasks.
+
+    This is a recovery command for cases where worker processes die unexpectedly and
+    leave tasks locked in in_progress.
+    """
+    from clawteam.team.lifecycle import LifecycleManager
+    from clawteam.team.mailbox import MailboxManager
+
+    mailbox = MailboxManager(team)
+    lm = LifecycleManager(team, mailbox)
+    result = lm.sweep_stale_locks()
+
+    _output(
+        result,
+        lambda d: console.print(
+            f"[green]OK[/green] Released {d['released']} stale lock(s)"
+            + ("" if d['released'] == 0 else " and moved affected tasks to pending")
+        ),
+    )
+
+
 # ============================================================================
 # Spawn Command
 # ============================================================================

@@ -213,6 +213,47 @@ class TestTaskLocking:
             updated = store.update(t.id, status=TaskStatus.in_progress, caller="live-agent")
         assert updated.locked_by == "live-agent"
 
+    def test_lock_binding_written_on_acquire(self, store):
+        t = store.create("binding")
+        fake_registry = {
+            "agent-a": {
+                "backend": "tmux",
+                "tmux_target": "clawteam-demo:agent-a",
+                "pid": 12345,
+            }
+        }
+
+        with patch("clawteam.spawn.registry.get_registry", return_value=fake_registry), patch(
+            "clawteam.spawn.registry.is_agent_alive", return_value=None
+        ):
+            updated = store.update(t.id, status=TaskStatus.in_progress, caller="agent-a")
+
+        binding = updated.metadata.get("lock_binding")
+        assert binding is not None
+        assert binding["agent"] == "agent-a"
+        assert binding["backend"] == "tmux"
+        assert binding["tmux_target"] == "clawteam-demo:agent-a"
+        assert binding["pid"] == 12345
+
+    def test_release_stale_locks_resets_in_progress_and_marks_metadata(self, store):
+        t = store.create("stale")
+        with patch("clawteam.spawn.registry.get_registry", return_value={}), patch(
+            "clawteam.spawn.registry.is_agent_alive", return_value=None
+        ):
+            store.update(t.id, status=TaskStatus.in_progress, caller="dead-agent")
+
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=False):
+            released = store.release_stale_locks()
+
+        assert t.id in released
+        after = store.get(t.id)
+        assert after is not None
+        assert after.status == TaskStatus.pending
+        assert after.locked_by == ""
+        assert "lock_binding" not in after.metadata
+        assert "stale_lock_released" in after.metadata
+        assert after.metadata["stale_lock_released"]["agent"] == "dead-agent"
+
 
 class TestDurationTracking:
     """Tests for the started_at / duration tracking feature."""

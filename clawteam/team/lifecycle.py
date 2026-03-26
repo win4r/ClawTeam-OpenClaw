@@ -6,6 +6,8 @@ import shutil
 
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import MessageType, get_data_dir
+from clawteam.team.tasks import TaskStore
+from clawteam.team.manager import TeamManager
 
 
 class LifecycleManager:
@@ -77,6 +79,37 @@ class LifecycleManager:
             last_task=last_task or None,
             status=task_status or None,
         )
+
+    def sweep_stale_locks(self) -> dict:
+        """Release stale task locks and notify leader.
+
+        Returns a summary dict suitable for CLI JSON output.
+        """
+        store = TaskStore(self.team_name)
+        released_ids = store.release_stale_locks()
+
+        if not released_ids:
+            return {"released": 0, "tasks": []}
+
+        released_tasks = [store.get(tid) for tid in released_ids]
+        released_tasks = [t for t in released_tasks if t is not None]
+
+        leader_name = TeamManager.get_leader_name(self.team_name)
+        if leader_name:
+            summary = ", ".join(f"{t.id}:{t.subject}" for t in released_tasks)
+            self.mailbox.send(
+                from_agent="system",
+                to=leader_name,
+                content=(
+                    f"Recovered {len(released_tasks)} stale lock(s): {summary}. "
+                    "Affected in_progress tasks were moved back to pending."
+                ),
+            )
+
+        return {
+            "released": len(released_tasks),
+            "tasks": [{"id": t.id, "subject": t.subject} for t in released_tasks],
+        }
 
     @staticmethod
     def cleanup_team(team_name: str) -> bool:

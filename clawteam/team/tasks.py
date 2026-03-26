@@ -122,6 +122,8 @@ class TaskStore:
             if status in (TaskStatus.completed, TaskStatus.pending):
                 task.locked_by = ""
                 task.locked_at = ""
+                if "lock_binding" in task.metadata:
+                    task.metadata.pop("lock_binding", None)
 
             # Compute duration when completing a task that has a start time
             if status == TaskStatus.completed and task.started_at:
@@ -175,6 +177,24 @@ class TaskStore:
         task.locked_by = caller or ""
         task.locked_at = _now_iso() if caller else ""
 
+        # Record lock binding to aid liveness diagnosis/recovery.
+        if caller:
+            from clawteam.spawn.registry import get_registry
+            binding = {
+                "agent": caller,
+                "bound_at": task.locked_at,
+            }
+            info = get_registry(self.team_name).get(caller, {})
+            if info:
+                binding.update(
+                    {
+                        "backend": info.get("backend", ""),
+                        "tmux_target": info.get("tmux_target", ""),
+                        "pid": info.get("pid", 0),
+                    }
+                )
+            task.metadata["lock_binding"] = binding
+
     def release_stale_locks(self) -> list[str]:
         """Scan all tasks and release locks held by dead agents.
 
@@ -187,10 +207,19 @@ class TaskStore:
             for task in self._list_tasks_unlocked():
                 if not task.locked_by:
                     continue
-                alive = is_agent_alive(self.team_name, task.locked_by)
+                dead_agent = task.locked_by
+                alive = is_agent_alive(self.team_name, dead_agent)
                 if alive is False:
                     task.locked_by = ""
                     task.locked_at = ""
+                    # Recover status when lock owner died mid-flight.
+                    if task.status == TaskStatus.in_progress:
+                        task.status = TaskStatus.pending
+                    task.metadata.pop("lock_binding", None)
+                    task.metadata["stale_lock_released"] = {
+                        "agent": dead_agent,
+                        "released_at": _now_iso(),
+                    }
                     task.updated_at = _now_iso()
                     self._save_unlocked(task)
                     released.append(task.id)
