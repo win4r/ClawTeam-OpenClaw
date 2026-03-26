@@ -1943,6 +1943,28 @@ def lifecycle_on_exit(
         t for t in tasks if t.owner == agent and t.status == TaskStatus.in_progress
     ]
 
+    # ── Webhook Completion Notification (always, even if no in_progress tasks) ──
+    # Must run before early return so agent exit is always reported
+    try:
+        import urllib.request
+
+        _hook_url = "http://127.0.0.1:18789/hooks/wake"
+        _hook_token = "03f2748a27dd645344362e5b1a655e96"
+        _text = f"[ClawTeam] {team} — Agent: {agent} exited."
+        _data = json.dumps({"text": _text, "mode": "now"}).encode()
+        _req = urllib.request.Request(
+            _hook_url,
+            data=_data,
+            headers={
+                "Authorization": f"Bearer {_hook_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(_req, timeout=5)
+    except Exception:
+        pass  # Never block agent exit on webhook failure
+
     if not in_progress_tasks:
         return
 
