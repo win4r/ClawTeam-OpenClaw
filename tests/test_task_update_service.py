@@ -201,6 +201,228 @@ def test_execute_task_update_allows_late_completed_to_recover_watchdog_failure(m
 
 
 
+def test_execute_task_update_rejects_setup_completion_without_setup_result_header(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create(
+        "Prepare repo, branch, env, and runnable baseline",
+        owner="config1",
+        metadata={
+            "template_stage": "setup",
+            "message_type": "SETUP_RESULT",
+            "required_sections": [
+                "status",
+                "remote_status",
+                "remote_head",
+                "detached_worktree",
+                "detached_head",
+                "install",
+                "baseline_validation",
+                "known_limitations",
+                "next_action",
+            ],
+        },
+    )
+    claimed = store.update(task.id, status=TaskStatus.in_progress, caller="config1")
+
+    try:
+        execute_task_update(
+            task_id=task.id,
+            caller="config1",
+            ctx=TaskUpdateContext(
+                store=store,
+                team="demo",
+                runtime=RuntimeOrchestrator(team="demo"),
+                release_notifier=lambda team, task, caller, message: None,
+                failure_notifier=lambda team, task, caller: None,
+            ),
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description="status: completed",
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                extra_metadata=None,
+                execution_id=claimed.active_execution_id,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+    except Exception as exc:
+        assert "SETUP_RESULT header" in str(exc)
+    else:
+        raise AssertionError("expected setup completion header rejection")
+
+
+def test_execute_task_update_rejects_setup_completion_with_missing_required_sections(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create(
+        "Prepare repo, branch, env, and runnable baseline",
+        owner="config1",
+        metadata={
+            "template_stage": "setup",
+            "message_type": "SETUP_RESULT",
+            "required_sections": [
+                "status",
+                "remote_status",
+                "remote_head",
+                "detached_worktree",
+                "detached_head",
+                "install",
+                "baseline_validation",
+                "known_limitations",
+                "next_action",
+            ],
+        },
+    )
+    claimed = store.update(task.id, status=TaskStatus.in_progress, caller="config1")
+
+    incomplete = """SETUP_RESULT
+status: completed
+remote_status: cached_only
+remote_head: abc123
+install:
+- pip install ok
+next_action: handoff
+"""
+
+    try:
+        execute_task_update(
+            task_id=task.id,
+            caller="config1",
+            ctx=TaskUpdateContext(
+                store=store,
+                team="demo",
+                runtime=RuntimeOrchestrator(team="demo"),
+                release_notifier=lambda team, task, caller, message: None,
+                failure_notifier=lambda team, task, caller: None,
+            ),
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description=incomplete,
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                extra_metadata=None,
+                execution_id=claimed.active_execution_id,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+    except Exception as exc:
+        assert "missing required SETUP_RESULT sections" in str(exc)
+        assert "detached_worktree" in str(exc)
+    else:
+        raise AssertionError("expected setup completion section rejection")
+
+
+def test_execute_task_update_accepts_valid_setup_completion(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create(
+        "Prepare repo, branch, env, and runnable baseline",
+        owner="config1",
+        metadata={
+            "template_stage": "setup",
+            "message_type": "SETUP_RESULT",
+            "required_sections": [
+                "status",
+                "remote_status",
+                "remote_head",
+                "detached_worktree",
+                "detached_head",
+                "install",
+                "baseline_validation",
+                "known_limitations",
+                "next_action",
+            ],
+        },
+    )
+    claimed = store.update(task.id, status=TaskStatus.in_progress, caller="config1")
+
+    valid = """SETUP_RESULT
+status: completed
+remote_status: confirmed_latest
+remote_head: 51a0127
+
+detached_worktree: /tmp/demo-detached
+detached_head: 51a0127
+install:
+- python -m pip install -e .[dev] -> success
+baseline_validation:
+- pytest tests/test_config.py tests/test_models.py -q -> 29 passed
+known_limitations:
+- none
+next_action: handoff to implement
+"""
+
+    result = execute_task_update(
+        task_id=task.id,
+        caller="config1",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description=valid,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            extra_metadata=None,
+            execution_id=claimed.active_execution_id,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    assert result.task.status == TaskStatus.completed
+    assert result.task.description.startswith("SETUP_RESULT")
+
+
 def test_execute_task_update_rejects_stale_execution_writeback(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
 

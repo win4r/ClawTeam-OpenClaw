@@ -64,6 +64,19 @@ def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
 
     assert qa_reg.metadata.get("on_fail") == [backend.id, frontend.id]
     assert review.metadata.get("on_fail") == [backend.id, frontend.id]
+    assert setup.metadata.get("template_stage") == "setup"
+    assert setup.metadata.get("message_type") == "SETUP_RESULT"
+    assert setup.metadata.get("required_sections") == [
+        "status",
+        "remote_status",
+        "remote_head",
+        "detached_worktree",
+        "detached_head",
+        "install",
+        "baseline_validation",
+        "known_limitations",
+        "next_action",
+    ]
 
     assert scope.status.value == "pending"
     assert setup.status.value == "blocked"

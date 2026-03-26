@@ -2602,6 +2602,12 @@ def launch_team(
         metadata = {}
         if task_def.on_fail:
             metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
+        if task_def.stage:
+            metadata["template_stage"] = task_def.stage
+        if task_def.message_type:
+            metadata["message_type"] = task_def.message_type
+        if task_def.required_sections:
+            metadata["required_sections"] = list(task_def.required_sections)
 
         rendered_description = render_task(
             task_def.description,

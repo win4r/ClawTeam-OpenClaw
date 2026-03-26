@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -28,6 +29,59 @@ TaskUpdateValidationError = TaskTransitionValidationError
 TaskUpdatePlan = TaskTransitionPlan
 merge_update_metadata = merge_transition_metadata
 plan_task_update_followups = plan_task_transition_followups
+
+
+def _extract_structured_sections(description: str) -> dict[str, str]:
+    text = (description or "").strip()
+    if not text:
+        return {}
+    sections: dict[str, str] = {}
+    current: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^([A-Za-z][A-Za-z0-9_ ]*):\s*(.*)$", line.strip())
+        if match:
+            if current is not None:
+                sections[current] = "\n".join(buf).strip()
+            current = match.group(1).strip().lower().replace(" ", "_")
+            initial = match.group(2).strip()
+            buf = [initial] if initial else []
+            continue
+        if current is not None:
+            buf.append(line)
+    if current is not None:
+        sections[current] = "\n".join(buf).strip()
+    return sections
+
+
+def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
+    if request.status != TaskStatus.completed:
+        return
+    metadata = existing.metadata or {}
+    if metadata.get("message_type") != "SETUP_RESULT":
+        return
+
+    description = (request.description if request.description is not None else existing.description or "").strip()
+    if not description:
+        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT via --description")
+    lines = description.splitlines()
+    header = (lines[0].strip() if lines else "")
+    if header != "SETUP_RESULT":
+        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT header via --description")
+
+    sections = _extract_structured_sections(description)
+    required_sections = [str(s).strip().lower() for s in (metadata.get("required_sections") or []) if str(s).strip()]
+    missing = [section for section in required_sections if section not in sections or not sections[section].strip()]
+    if missing:
+        raise TaskTransitionValidationError(
+            "setup completion missing required SETUP_RESULT sections: " + ", ".join(missing)
+        )
+
+    remote_status = sections.get("remote_status", "").strip().lower()
+    if remote_status not in {"confirmed_latest", "cached_only", "unreachable"}:
+        raise TaskTransitionValidationError(
+            "setup completion requires remote_status to be one of: confirmed_latest, cached_only, unreachable"
+        )
 
 
 def plan_task_update(
@@ -74,11 +128,11 @@ class TaskUpdateRequest:
     failure_evidence: str | None
     failure_recommended_next_owner: str | None
     failure_recommended_action: str | None
-    extra_metadata: dict[str, Any] | None
     execution_id: str | None
     wake_owner: bool
     message: str
     force: bool
+    extra_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +303,11 @@ def _apply_terminal_transition(
     decision: Any,
     metadata_to_apply: dict[str, Any] | None,
     metadata_keys_to_remove: list[str] | None,
+    owner: str | None,
+    subject: str | None,
+    description: str | None,
+    add_blocks: list[str] | None,
+    add_blocked_by: list[str] | None,
     force: bool,
 ) -> TransitionApplyResult | None:
     return ctx.store.apply_transition_decision(
@@ -262,6 +321,11 @@ def _apply_terminal_transition(
         execution_id=execution_id,
         metadata=metadata_to_apply,
         metadata_keys_to_remove=metadata_keys_to_remove,
+        owner=owner,
+        subject=subject,
+        description=description,
+        add_blocks=add_blocks,
+        add_blocked_by=add_blocked_by,
         force=force,
     )
 
@@ -401,6 +465,8 @@ def execute_task_update(
             failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
+    _validate_setup_completion(existing, request)
+
     merged_metadata_to_apply = dict(plan.metadata_to_apply or {})
     if request.extra_metadata:
         merged_metadata_to_apply.update(request.extra_metadata)
@@ -425,6 +491,11 @@ def execute_task_update(
             ),
             metadata_to_apply=final_metadata_to_apply,
             metadata_keys_to_remove=metadata_keys_to_remove,
+            owner=request.owner,
+            subject=request.subject,
+            description=request.description,
+            add_blocks=request.add_blocks,
+            add_blocked_by=request.add_blocked_by,
             force=request.force,
         )
         task = apply_result.task if apply_result is not None else None
