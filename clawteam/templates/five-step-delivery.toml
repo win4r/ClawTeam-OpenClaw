@@ -253,6 +253,8 @@ Report as exact sections:
 subject = "Prepare repo, branch, env, and runnable baseline"
 owner = "config1"
 stage = "setup"
+message_type = "SETUP_RESULT"
+required_sections = ["status", "remote_status", "remote_head", "detached_worktree", "detached_head", "install", "baseline_validation", "known_limitations", "next_action"]
 blocked_by = ["Scope the task into a minimal deliverable"]
 description = """Goal:
 确认代码仓、分支、依赖、环境、启动命令、测试命令都真实可运行，为实现阶段建立干净基线。
@@ -271,15 +273,42 @@ Do not:
 - 不要修改业务逻辑
 - 不要把环境问题伪装成代码问题
 - 不要跳过真实命令验证
+- 不要无限等待 fetch / install / test；外部探测必须 fail-closed
+- 不要猜 baseline test 文件，先发现再执行
 
-Report:
-- Repo/workspace
-- Branch status
-- Install/build/test commands executed
-- What passed
-- What failed
-- Exact blocker if not ready
-- Recommended next step
+Setup contract (must satisfy or fail closed):
+1. Remote gate
+   - 先产出 `git remote -v`
+   - 再产出 `git rev-parse remotes/flyzorro/main || true`
+   - 再尝试 `git ls-remote --heads flyzorro main`
+   - 若 `ls-remote` 成功，才能声称 latest main 已确认
+   - 若失败/超时，只能明确写 `remote_status: cached_only` 或 `remote_status: unreachable`
+2. Detached worktree gate
+   - 必须真实创建 detached worktree
+   - 必须产出 detached path、`git rev-parse HEAD`、`git status --short --branch`
+   - 没有 detached 证据，不算 setup 完成
+3. Install gate
+   - 优先用 detached worktree 作为 cwd 执行安装，不要依赖脆弱 shell 拼接
+   - 必须报告实际 install command 与结果
+4. Baseline validation gate
+   - 先发现 repo 里真实可跑的 baseline（pyproject / README / Makefile / package.json / tests）
+   - 再选择最小真实 baseline 执行
+   - 不要拍脑袋猜测试路径
+
+Report as exact block:
+SETUP_RESULT
+status: <completed|blocked|failed>
+remote_status: <confirmed_latest|cached_only|unreachable>
+remote_head: <sha|none>
+detached_worktree: <path|none>
+detached_head: <sha|none>
+install:
+- <command + actual result>
+baseline_validation:
+- <command or discovery step + actual result>
+known_limitations:
+- <risk/blocker or none>
+next_action: <handoff or fail-closed blocker>
 """
 
 [[template.tasks]]

@@ -517,6 +517,10 @@ def build_launch_task_input(
         metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
     if task_def.stage:
         metadata["template_stage"] = task_def.stage.strip().lower()
+    if task_def.message_type:
+        metadata["message_type"] = task_def.message_type
+    if task_def.required_sections:
+        metadata["required_sections"] = list(task_def.required_sections)
 
     prepared_brief = prepare_task_launch_brief(
         task_def.description,

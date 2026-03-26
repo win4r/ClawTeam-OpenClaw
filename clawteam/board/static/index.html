@@ -282,6 +282,46 @@ function Members({ members }) {
   );
 }
 
+function parseStructuredResult(content) {
+  if (!content) return null;
+  const normalized = String(content).trim();
+  const lines = normalized.split(/\r?\n/);
+  const header = (lines[0] || '').trim();
+  if (!header) return null;
+
+  const messageType = ['SETUP_RESULT', 'QA_RESULT', 'DEV_RESULT', 'REVIEW_RESULT'].includes(header)
+    ? header
+    : null;
+  if (!messageType) return null;
+
+  const statusMatch = normalized.match(/^status:\s*([^\n]+)/m);
+  const decisionMatch = normalized.match(/^decision:\s*([^\n]+)/m);
+  const summaryMatch = normalized.match(/^summary:\s*([^\n]+)/m);
+  const value = (statusMatch?.[1] || decisionMatch?.[1] || '').trim();
+
+  return {
+    messageType,
+    value,
+    summary: (summaryMatch?.[1] || '').trim(),
+  };
+}
+
+function resultTone(value) {
+  switch ((value || '').trim().toLowerCase()) {
+    case 'pass':
+    case 'approved':
+    case 'completed':
+      return 'green';
+    case 'pass_with_risk':
+      return 'orange';
+    case 'fail':
+    case 'blocked':
+    case 'changes_requested':
+      return 'red';
+    default:
+      return 'neutral';
+  }
+}
 function Messages({ messages }) {
   const sorted = useMemo(() => {
     return [...messages].sort((a, b) =>

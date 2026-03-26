@@ -777,6 +777,20 @@ class TestLoadBuiltinTemplate:
             "Implement backend/data changes with real validation",
             "Implement frontend/UI changes with real validation",
         ]
+        assert by_subject["Prepare repo, branch, env, and runnable baseline"].message_type == "SETUP_RESULT"
+        assert by_subject["Prepare repo, branch, env, and runnable baseline"].required_sections == [
+            "status",
+            "remote_status",
+            "remote_head",
+            "detached_worktree",
+            "detached_head",
+            "install",
+            "baseline_validation",
+            "known_limitations",
+            "next_action",
+        ]
+        assert "Remote gate" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
+        assert "SETUP_RESULT" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
         assert by_subject["Implement backend/data changes with real validation"].message_type == "DEV_RESULT"
         assert by_subject["Implement frontend/UI changes with real validation"].message_type == "DEV_RESULT"
         assert by_subject["Run main-flow QA on the real change"].message_type == "QA_RESULT"
