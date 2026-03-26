@@ -25,8 +25,16 @@ if [[ ! -f "$TEAM_JSON" ]]; then
     DATA_DIR="/var/lib/clawteam"
     TEAM_JSON="$ALT_TEAM_JSON"
   else
-    echo "team not found: $TEAM ($TEAM_JSON or $ALT_TEAM_JSON)"
-    exit 2
+    # Some environments keep the runtime metadata in memory/IPC while task
+    # files still land under /var/lib/clawteam. Fall back to task presence.
+    if compgen -G "/var/lib/clawteam/tasks/$TEAM/task-*.json" > /dev/null; then
+      DATA_DIR="/var/lib/clawteam"
+    elif compgen -G "$DATA_DIR/tasks/$TEAM/task-*.json" > /dev/null; then
+      :
+    else
+      echo "team not found: $TEAM ($TEAM_JSON or $ALT_TEAM_JSON)"
+      exit 2
+    fi
   fi
 fi
 
