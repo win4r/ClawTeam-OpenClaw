@@ -7,6 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from clawteam.fileutil import atomic_write_text, file_locked
 from clawteam.team.models import get_data_dir
 
 
@@ -22,17 +23,18 @@ def register_agent(
     pid: int = 0,
     command: list[str] | None = None,
 ) -> None:
-    """Record spawn info for an agent (atomic write)."""
+    """Record spawn info for an agent (atomic + locked write)."""
     path = _registry_path(team_name)
-    registry = _load(path)
-    registry[agent_name] = {
-        "backend": backend,
-        "tmux_target": tmux_target,
-        "pid": pid,
-        "command": command or [],
-        "spawned_at": time.time(),
-    }
-    _save(path, registry)
+    with file_locked(path):
+        registry = _load(path)
+        registry[agent_name] = {
+            "backend": backend,
+            "tmux_target": tmux_target,
+            "pid": pid,
+            "command": command or [],
+            "spawned_at": time.time(),
+        }
+        _save(path, registry)
 
 
 def get_registry(team_name: str) -> dict[str, dict]:
@@ -162,15 +164,4 @@ def _load(path: Path) -> dict:
 
 
 def _save(path: Path, data: dict) -> None:
-    import tempfile
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        import os
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        Path(tmp).replace(path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    atomic_write_text(path, json.dumps(data, indent=2))

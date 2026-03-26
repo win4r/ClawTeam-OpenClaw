@@ -6,10 +6,15 @@ import collections
 import json
 import os
 import socket
+import threading
+import time
+import uuid
 from pathlib import Path
 
+from clawteam.fileutil import atomic_write_text
 from clawteam.team.models import get_data_dir
 from clawteam.transport.base import Transport
+from clawteam.transport.claimed import ClaimedMessage
 from clawteam.transport.file import FileTransport
 
 
@@ -28,6 +33,9 @@ class P2PTransport(Transport):
     - Offline fallback: if peer is unreachable, messages go through FileTransport
     """
 
+    _peer_heartbeat_interval_s = 1.0
+    _peer_lease_ms = 5000
+
     def __init__(self, team_name: str, bind_agent: str | None = None):
         self.team_name = team_name
         self._bind_agent = bind_agent
@@ -37,6 +45,8 @@ class P2PTransport(Transport):
         self._push_cache: dict[str, object] = {}
         self._peek_buffer: collections.deque = collections.deque()
         self._port: int | None = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
         if bind_agent:
             self._start_listener()
 
@@ -48,20 +58,77 @@ class P2PTransport(Transport):
         self._pull = self._ctx.socket(zmq.PULL)
         self._port = self._pull.bind_to_random_port("tcp://*")
         self._register_peer()
+        self._start_peer_heartbeat()
 
-    def _register_peer(self) -> None:
-        """Write peers/{agent}.json with host/port/pid."""
-        if not self._bind_agent or self._port is None:
-            return
-        peer_file = _peers_dir(self.team_name) / f"{self._bind_agent}.json"
-        info = {
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
+
+    @staticmethod
+    def _as_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _is_local_host(host: str) -> bool:
+        return host in {
+            socket.gethostname(),
+            socket.getfqdn(),
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }
+
+    def _lease_is_fresh(self, info: dict[str, object]) -> bool | None:
+        lease_expires_at_ms = self._as_int(info.get("leaseExpiresAtMs"))
+        if lease_expires_at_ms is not None:
+            return lease_expires_at_ms >= self._now_ms()
+
+        heartbeat_at_ms = self._as_int(info.get("heartbeatAtMs"))
+        lease_duration_ms = self._as_int(info.get("leaseDurationMs"))
+        if heartbeat_at_ms is None or lease_duration_ms is None:
+            return None
+        return heartbeat_at_ms + lease_duration_ms >= self._now_ms()
+
+    def _peer_info(self) -> dict[str, object]:
+        now_ms = self._now_ms()
+        return {
             "host": socket.gethostname(),
             "port": self._port,
             "pid": os.getpid(),
+            "heartbeatAtMs": now_ms,
+            "leaseDurationMs": self._peer_lease_ms,
+            "leaseExpiresAtMs": now_ms + self._peer_lease_ms,
         }
-        tmp = peer_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(info), encoding="utf-8")
-        tmp.rename(peer_file)
+
+    def _start_peer_heartbeat(self) -> None:
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name=f"clawteam-p2p-heartbeat-{self.team_name}-{self._bind_agent}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _heartbeat_loop(self) -> None:
+        while not self._heartbeat_stop.wait(self._peer_heartbeat_interval_s):
+            try:
+                self._register_peer()
+            except Exception:
+                continue
+
+    def _register_peer(self) -> None:
+        """Write peers/{agent}.json with host/port/pid plus lease metadata."""
+        if not self._bind_agent or self._port is None:
+            return
+        peer_file = _peers_dir(self.team_name) / f"{self._bind_agent}.json"
+        atomic_write_text(peer_file, json.dumps(self._peer_info()))
 
     def _deregister_peer(self) -> None:
         """Remove peers/{agent}.json."""
@@ -80,15 +147,31 @@ class P2PTransport(Transport):
             return None
         try:
             info = json.loads(peer_file.read_text(encoding="utf-8"))
-            pid = info.get("pid")
-            if pid and not self._pid_alive(pid):
-                # Stale peer file — clean it up
+            host = str(info["host"])
+            pid = self._as_int(info.get("pid"))
+            lease_is_fresh = self._lease_is_fresh(info)
+            is_local_host = self._is_local_host(host)
+            if is_local_host and pid:
+                # Same-host peers can still be trusted via PID liveness even if
+                # the lease heartbeat is delayed briefly.
+                if self._pid_alive(pid):
+                    return f"tcp://{host}:{info['port']}"
                 try:
                     peer_file.unlink(missing_ok=True)
                 except OSError:
                     pass
                 return None
-            host = info["host"]
+            if lease_is_fresh is False:
+                # Remote peers rely on lease freshness because their PIDs are not
+                # meaningful on this machine.
+                try:
+                    peer_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
+            if lease_is_fresh is None and not is_local_host:
+                # Remote peers need lease metadata because the local PID table is meaningless.
+                return None
             port = info["port"]
             return f"tcp://{host}:{port}"
         except Exception:
@@ -132,27 +215,72 @@ class P2PTransport(Transport):
         # Peer unreachable — fall back to file
         self._file_fallback.deliver(recipient, data)
 
+    def claim_messages(self, agent_name: str, limit: int = 10) -> list[ClaimedMessage]:
+        claimed: list[ClaimedMessage] = []
+
+        while self._peek_buffer and len(claimed) < limit:
+            data = self._peek_buffer.popleft()
+            claimed.append(
+                ClaimedMessage(
+                    data=data,
+                    ack=lambda: None,
+                    quarantine=lambda error, payload=data: self._file_fallback._quarantine_bytes(
+                        agent_name,
+                        payload,
+                        error,
+                        source_name=f"p2p-{uuid.uuid4().hex[:8]}.json",
+                    ),
+                )
+            )
+
+        if self._pull:
+            import zmq
+
+            while len(claimed) < limit:
+                try:
+                    data = self._pull.recv(zmq.NOBLOCK)
+                    claimed.append(
+                        ClaimedMessage(
+                            data=data,
+                            ack=lambda: None,
+                            quarantine=lambda error, payload=data: self._file_fallback._quarantine_bytes(
+                                agent_name,
+                                payload,
+                                error,
+                                source_name=f"p2p-{uuid.uuid4().hex[:8]}.json",
+                            ),
+                        )
+                    )
+                except zmq.Again:
+                    break
+
+        remaining = limit - len(claimed)
+        if remaining > 0:
+            claimed.extend(self._file_fallback.claim_messages(agent_name, remaining))
+        return claimed
+
     def fetch(self, agent_name: str, limit: int = 10, consume: bool = True) -> list[bytes]:
-        messages: list[bytes] = []
-        # 1. Drain peek buffer first (only on consume)
         if consume:
-            while self._peek_buffer and len(messages) < limit:
-                messages.append(self._peek_buffer.popleft())
-        # 2. Drain ZMQ PULL socket (non-blocking)
+            messages: list[bytes] = []
+            for claimed in self.claim_messages(agent_name, limit):
+                messages.append(claimed.data)
+                claimed.ack()
+            return messages
+
+        messages: list[bytes] = []
+        # 1. Drain ZMQ PULL socket (non-blocking)
         if self._pull:
             import zmq
 
             while len(messages) < limit:
                 try:
                     data = self._pull.recv(zmq.NOBLOCK)
-                    if consume:
-                        messages.append(data)
-                    else:
-                        self._peek_buffer.append(data)
-                        messages.append(data)
+                    self._peek_buffer.append(data)
+                    messages.append(data)
                 except zmq.Again:
                     break
-        # 3. File fallback for remaining
+
+        # 2. File fallback for remaining
         remaining = limit - len(messages)
         if remaining > 0:
             messages.extend(self._file_fallback.fetch(agent_name, remaining, consume))
@@ -172,6 +300,10 @@ class P2PTransport(Transport):
         return list(peers)
 
     def close(self) -> None:
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=self._peer_heartbeat_interval_s + 0.1)
+            self._heartbeat_thread = None
         self._deregister_peer()
         for sock in self._push_cache.values():
             try:

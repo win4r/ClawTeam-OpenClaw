@@ -6,7 +6,35 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from clawteam.fileutil import atomic_write_text
+
+
+class AgentProfile(BaseModel):
+    """Reusable agent runtime profile for spawn/launch."""
+
+    description: str = ""
+    agent: str = ""
+    command: list[str] = Field(default_factory=list)
+    model: str = ""
+    base_url: str = ""
+    base_url_env: str = ""
+    api_key_env: str = ""
+    api_key_target_env: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    env_map: dict[str, str] = Field(default_factory=dict)
+    args: list[str] = Field(default_factory=list)
+
+
+class AgentPreset(BaseModel):
+    """Shared preset input for generating client-scoped profiles."""
+
+    description: str = ""
+    auth_env: str = ""
+    base_url: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    client_overrides: dict[str, AgentProfile] = Field(default_factory=dict)
 
 
 class ClawTeamConfig(BaseModel):
@@ -38,12 +66,8 @@ def load_config() -> ClawTeamConfig:
 
 
 def save_config(cfg: ClawTeamConfig) -> None:
-    """Atomically write config to disk (tmp + rename)."""
-    p = config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(cfg.model_dump_json(indent=2), encoding="utf-8")
-    tmp.rename(p)
+    """Atomically write config to disk (mkstemp + replace)."""
+    atomic_write_text(config_path(), cfg.model_dump_json(indent=2))
 
 
 def get_effective(key: str) -> tuple[str, str]:
