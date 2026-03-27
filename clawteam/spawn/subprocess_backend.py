@@ -28,7 +28,14 @@ class SubprocessBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        openclaw_agent: str | None = None,
     ) -> str:
+        if openclaw_agent:
+            raise NotImplementedError(
+                f"openclaw_agent is not supported with subprocess backend "
+                f"(got {openclaw_agent!r}); use tmux backend instead."
+            )
+
         spawn_env = os.environ.copy()
         clawteam_bin = resolve_clawteam_executable()
         spawn_env.update({
