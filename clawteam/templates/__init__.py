@@ -53,6 +53,7 @@ class TemplateDef(BaseModel):
 
 
 from .launch import (
+    ALLOWED_EXECUTION_SHAPES,
     FeatureScope,
     LaunchBriefSections,
     LaunchExecutionResult,

@@ -12,6 +12,7 @@ from clawteam.templates import (
     LaunchTaskInput,
     LaunchTemplateError,
     NormalizedLaunchBrief,
+    ScopeTaskValidationError,
     PreparedTaskLaunchBrief,
     TaskDef,
     TaskLaunchBriefView,
@@ -214,7 +215,7 @@ Deliver only the minimal safe fix.
 - dashboard rewrite
 
 ## FEATURE_SCOPE
-{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup"}
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only"}
 """.strip(),
         )
 
@@ -236,7 +237,7 @@ Deliver only the minimal safe fix.
 - dashboard rewrite
 
 ## FEATURE_SCOPE
-{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup"}
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only"}
 """.strip(),
             normalized=normalized,
         )
@@ -250,7 +251,62 @@ Deliver only the minimal safe fix.
             out_of_scope=["dashboard rewrite"],
             risks_blockers=["Final prod env remains unverified."],
             recommended_next_step="setup",
+            execution_shape="backend-only",
         )
+
+    def test_parse_feature_scope_block_requires_execution_shape(self):
+        with pytest.raises(
+            ScopeTaskValidationError,
+            match=r"FEATURE_SCOPE\.execution_shape.*ui-only \| backend-only \| full-stack",
+        ):
+            parse_feature_scope_block(
+                """
+## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the minimal safe fix.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup"}
+""".strip(),
+            )
+
+    def test_parse_feature_scope_block_rejects_invalid_execution_shape(self):
+        with pytest.raises(
+            ScopeTaskValidationError,
+            match=r"FEATURE_SCOPE\.execution_shape.*ui-only \| backend-only \| full-stack",
+        ):
+            parse_feature_scope_block(
+                """
+## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the minimal safe fix.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"frontend-only"}
+""".strip(),
+            )
 
     def test_find_scope_inventions_flags_explicit_additive_entities_missing_from_source_request(self):
         inventions = find_scope_inventions(
@@ -718,6 +774,7 @@ Polish the member list UI using the existing tests are representative assumption
                     "out_of_scope": ["Billing redesign"],
                     "risks_blockers": ["Production deploy window not confirmed"],
                     "recommended_next_step": "setup",
+                    "execution_shape": "backend-only",
                 }
             }
         )
@@ -731,6 +788,7 @@ Polish the member list UI using the existing tests are representative assumption
             out_of_scope=["Billing redesign"],
             risks_blockers=["Production deploy window not confirmed"],
             recommended_next_step="setup",
+            execution_shape="backend-only",
         )
 
     def test_read_task_launch_brief_prefers_metadata_contract(self):
@@ -937,6 +995,9 @@ class TestLoadBuiltinTemplate:
         assert scope_task.stage == "scope"
         assert scope_task.feature_scope_required is True
         assert scope_task.owner == "leader"
+        assert "## FEATURE_SCOPE" in scope_task.description
+        assert "execution_shape" in scope_task.description
+        assert "ui-only | backend-only | full-stack" in scope_task.description
 
         assert setup_task.stage == "setup"
         assert setup_task.message_type == "SETUP_RESULT"

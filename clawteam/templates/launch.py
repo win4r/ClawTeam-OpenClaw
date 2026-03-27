@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -31,6 +32,9 @@ class ScopeTaskValidationError(LaunchTemplateError):
     """Raised when a scope-task completion payload is missing or invalid."""
 
 
+ALLOWED_EXECUTION_SHAPES: tuple[str, ...] = ("ui-only", "backend-only", "full-stack")
+
+
 class FeatureScope(BaseModel):
     version: str = "v1"
     source_request: str = ""
@@ -41,7 +45,7 @@ class FeatureScope(BaseModel):
     out_of_scope: list[str] = Field(default_factory=list)
     risks_blockers: list[str] = Field(default_factory=list)
     recommended_next_step: str = ""
-    execution_shape: str = ""
+    execution_shape: Literal["ui-only", "backend-only", "full-stack"]
 
 
 class LaunchBriefSections(BaseModel):
@@ -344,6 +348,13 @@ def parse_feature_scope_block(
         raise ScopeTaskValidationError(
             "Scope task completion FEATURE_SCOPE block must include a non-empty recommended_next_step value."
         )
+    raw_execution_shape = payload.get("execution_shape")
+    normalized_execution_shape = str(raw_execution_shape or "").strip().lower()
+    if normalized_execution_shape not in ALLOWED_EXECUTION_SHAPES:
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE.execution_shape must be explicitly set to ui-only | backend-only | full-stack."
+        )
+    payload["execution_shape"] = normalized_execution_shape
     if normalized is not None:
         _validate_feature_scope_matches_brief(payload=payload, normalized=normalized)
         payload.setdefault("source_request", normalized.sections.source_request)

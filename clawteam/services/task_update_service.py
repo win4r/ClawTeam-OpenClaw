@@ -42,6 +42,7 @@ def _build_dependency_completion_message(task, target) -> str:
 
 
 from clawteam.templates import (
+    ALLOWED_EXECUTION_SHAPES,
     ScopeTaskValidationError,
     find_scope_audit_warnings,
     inject_resolved_scope_context,
@@ -859,10 +860,10 @@ def _apply_triage_followup_resolution(
 
 def _infer_execution_shape(feature_scope: dict[str, Any]) -> str:
     explicit_shape = str(feature_scope.get("execution_shape") or "").strip().lower()
-    if explicit_shape in {"ui-only", "backend-only", "full-stack"}:
+    if explicit_shape in ALLOWED_EXECUTION_SHAPES:
         return explicit_shape
     raise TaskUpdateValidationError(
-        "post-scope materialization requires FEATURE_SCOPE.execution_shape to be explicitly set to ui-only, backend-only, or full-stack"
+        "post-scope materialization requires FEATURE_SCOPE.execution_shape to be explicitly set to ui-only | backend-only | full-stack"
     )
 
 
@@ -1372,10 +1373,7 @@ def execute_task_update(
         metadata["resolved_scope"] = validated_scope.model_dump(mode="json", exclude_none=True)
         metadata["scope_audit_warnings"] = [warning.model_dump(mode="json") for warning in scope_warnings]
         if validated_scope.feature_scope is not None:
-            feature_scope_payload = validated_scope.feature_scope.model_dump(mode="json")
-            if not feature_scope_payload.get("execution_shape"):
-                feature_scope_payload.pop("execution_shape", None)
-            metadata["feature_scope"] = feature_scope_payload
+            metadata["feature_scope"] = validated_scope.feature_scope.model_dump(mode="json")
         if materialization_mode == POST_SCOPE_MATERIALIZATION_MODE:
             metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_AWAITING_HOOK
             metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE

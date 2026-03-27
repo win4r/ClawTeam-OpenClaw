@@ -1780,7 +1780,7 @@ Ship the feature safely.
 - workflow redesign
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign."}
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign.","execution_shape":"backend-only"}
 '''
 
     result = execute_task_update(
@@ -1825,6 +1825,7 @@ Ship the feature safely.
         "out_of_scope": ["workflow redesign"],
         "risks_blockers": ["feature_scope_required consumers must fail closed on malformed scope"],
         "recommended_next_step": "Deliver strictly against this scoped brief without workflow redesign.",
+        "execution_shape": "backend-only",
     }
     refreshed_setup = store.get(setup.id)
     assert refreshed_setup.metadata["feature_scope"]["scoped_brief"] == "Ship the feature safely."
@@ -1943,7 +1944,7 @@ Ship the feature safely.
 - workflow redesign
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"]}
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"execution_shape":"backend-only"}
 '''
 
     with pytest.raises(TaskUpdateValidationError, match="recommended_next_step value"):
@@ -1962,6 +1963,82 @@ Ship the feature safely.
                 owner=None,
                 subject=None,
                 description=malformed_description,
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                execution_id=None,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+
+
+def test_execute_task_update_rejects_feature_delivery_scope_completion_without_execution_shape(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    store = TaskStore("demo")
+    scope = store.create(
+        "Scope the task into a minimal deliverable",
+        owner="leader",
+        metadata={
+            "template_stage": "scope",
+            "feature_scope_required": True,
+            "launch_brief": {
+                "format": "structured_sections",
+                "sections": {
+                    "source_request": "Ship the feature safely",
+                    "scoped_brief": "",
+                    "unknowns": [],
+                    "leader_assumptions": [],
+                    "out_of_scope": [],
+                },
+            },
+        },
+    )
+
+    missing_shape_description = '''## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Ship the feature safely.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing delivery lanes remain valid for phase 1
+
+## Out of Scope
+- workflow redesign
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign."}
+'''
+
+    with pytest.raises(TaskUpdateValidationError, match=r"FEATURE_SCOPE\.execution_shape"):
+        execute_task_update(
+            task_id=scope.id,
+            caller="leader",
+            ctx=TaskUpdateContext(
+                store=store,
+                team="demo",
+                runtime=RuntimeOrchestrator(team="demo"),
+                release_notifier=lambda team, task, caller, message: None,
+                failure_notifier=lambda team, task, caller: None,
+            ),
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description=missing_shape_description,
                 add_blocks=None,
                 add_blocked_by=None,
                 add_on_fail=None,
