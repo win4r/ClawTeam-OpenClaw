@@ -449,6 +449,8 @@ def validate_completion(existing: TaskItem, request: TaskUpdateRequest, *, all_t
     if message_type == "REVIEW_RESULT":
         _validate_review_completion(existing, request, all_tasks=all_tasks)
         return
+
+
 def plan_task_update(
     *,
     existing: TaskItem,
