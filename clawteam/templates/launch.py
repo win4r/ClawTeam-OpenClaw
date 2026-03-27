@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 class LaunchTemplateError(ValueError):
@@ -30,6 +31,18 @@ class ScopeTaskValidationError(LaunchTemplateError):
     """Raised when a scope-task completion payload is missing or invalid."""
 
 
+class FeatureScope(BaseModel):
+    version: str = "v1"
+    source_request: str = ""
+    scoped_brief: str = ""
+    in_scope: list[str] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
+    leader_assumptions: list[str] = Field(default_factory=list)
+    out_of_scope: list[str] = Field(default_factory=list)
+    risks_blockers: list[str] = Field(default_factory=list)
+    recommended_next_step: str = ""
+
+
 class LaunchBriefSections(BaseModel):
     version: str = "v1"
     source_request: str = ""
@@ -42,6 +55,7 @@ class LaunchBriefSections(BaseModel):
 class NormalizedLaunchBrief(BaseModel):
     format: str = "prose_fallback"
     sections: LaunchBriefSections = Field(default_factory=LaunchBriefSections)
+    feature_scope: FeatureScope | None = None
 
 
 class PreparedTaskLaunchBrief(BaseModel):
@@ -215,7 +229,114 @@ def find_scope_audit_warnings(*, source_request: str, normalized: NormalizedLaun
     return warnings
 
 
-def validate_scope_task_completion(*, source_request: str, leader_brief: str) -> NormalizedLaunchBrief:
+def _extract_feature_scope_block(text: str) -> str | None:
+    match = re.search(r"(?:^|\n)##\s*FEATURE_SCOPE\s*\n(.*?)(?=\n##\s+[A-Za-z]|\Z)", text.strip(), flags=re.DOTALL)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _validate_feature_scope_matches_brief(
+    *,
+    payload: dict[str, object],
+    normalized: NormalizedLaunchBrief,
+) -> None:
+    expected_sections = normalized.sections
+
+    scalar_pairs = (
+        ("source_request", expected_sections.source_request),
+        ("scoped_brief", expected_sections.scoped_brief),
+    )
+    for key, expected_value in scalar_pairs:
+        actual = payload.get(key)
+        if actual is None:
+            continue
+        if not isinstance(actual, str) or actual.strip() != expected_value.strip():
+            raise ScopeTaskValidationError(
+                f"FEATURE_SCOPE {key} must match the corresponding structured scope section."
+            )
+
+    list_pairs = (
+        ("unknowns", list(expected_sections.unknowns)),
+        ("leader_assumptions", list(expected_sections.leader_assumptions)),
+        ("out_of_scope", list(expected_sections.out_of_scope)),
+    )
+    for key, expected_values in list_pairs:
+        actual = payload.get(key)
+        if actual is None:
+            continue
+        if not isinstance(actual, list) or [str(item).strip() for item in actual] != expected_values:
+            raise ScopeTaskValidationError(
+                f"FEATURE_SCOPE {key} must match the corresponding structured scope section."
+            )
+
+
+def parse_feature_scope_block(
+    text: str,
+    *,
+    normalized: NormalizedLaunchBrief | None = None,
+) -> FeatureScope | None:
+    block = _extract_feature_scope_block(text)
+    if block is None:
+        return None
+    try:
+        payload = json.loads(block)
+    except json.JSONDecodeError as exc:
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must be valid JSON."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must decode to an object."
+        )
+    payload = dict(payload)
+    if "recommended_next_step" not in payload and "next_step" in payload:
+        payload["recommended_next_step"] = payload["next_step"]
+    raw_in_scope = payload.get("in_scope")
+    raw_scoped_brief = payload.get("scoped_brief")
+    has_raw_in_scope = isinstance(raw_in_scope, list) and any(str(item).strip() for item in raw_in_scope)
+    has_raw_scoped_brief = isinstance(raw_scoped_brief, str) and raw_scoped_brief.strip()
+    if not has_raw_in_scope and not has_raw_scoped_brief:
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must include non-empty in_scope or scoped_brief data."
+        )
+    raw_next_step = payload.get("recommended_next_step")
+    if not isinstance(raw_next_step, str) or not raw_next_step.strip():
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must include a non-empty recommended_next_step value."
+        )
+    if normalized is not None:
+        _validate_feature_scope_matches_brief(payload=payload, normalized=normalized)
+        payload.setdefault("source_request", normalized.sections.source_request)
+        payload.setdefault("scoped_brief", normalized.sections.scoped_brief)
+        payload.setdefault("unknowns", list(normalized.sections.unknowns))
+        payload.setdefault("leader_assumptions", list(normalized.sections.leader_assumptions))
+        payload.setdefault("out_of_scope", list(normalized.sections.out_of_scope))
+    if not payload.get("in_scope") and payload.get("scoped_brief"):
+        payload["in_scope"] = [payload["scoped_brief"]]
+    try:
+        feature_scope = FeatureScope.model_validate(payload)
+    except ValidationError as exc:
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block is malformed."
+        ) from exc
+    if not feature_scope.in_scope:
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must include non-empty in_scope or scoped_brief data."
+        )
+    if not feature_scope.scoped_brief.strip():
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE block must include a non-empty scoped_brief value."
+        )
+    return feature_scope
+
+
+def validate_scope_task_completion(
+    *,
+    source_request: str,
+    leader_brief: str,
+    require_feature_scope: bool = False,
+) -> NormalizedLaunchBrief:
     normalized = normalize_launch_brief(source_request=source_request, leader_brief=leader_brief)
     if normalized.format != "structured_sections":
         raise ScopeTaskValidationError(
@@ -241,7 +362,12 @@ def validate_scope_task_completion(*, source_request: str, leader_brief: str) ->
             "Scope task completion adds stricter requirements not present in the source request: "
             + ", ".join(tightened_requirements)
         )
-    return normalized
+    feature_scope = parse_feature_scope_block(leader_brief, normalized=normalized)
+    if require_feature_scope and feature_scope is None:
+        raise ScopeTaskValidationError(
+            "Scope task completion for feature delivery must include a valid FEATURE_SCOPE block."
+        )
+    return normalized.model_copy(update={"feature_scope": feature_scope})
 
 
 def _coerce_normalized_launch_brief(value: NormalizedLaunchBrief | dict[str, object]) -> NormalizedLaunchBrief:
@@ -318,6 +444,7 @@ def inject_resolved_scope_context(
 
 
 NormalizedLaunchBrief.model_rebuild()
+FeatureScope.model_rebuild()
 PreparedTaskLaunchBrief.model_rebuild()
 LaunchTaskInput.model_rebuild()
 LaunchExecutionResult.model_rebuild()
@@ -439,7 +566,7 @@ def prepare_task_launch_brief(task: str, *, render_task, **variables: str) -> Pr
     return PreparedTaskLaunchBrief(
         rendered_description=_render_normalized_launch_brief(normalized),
         normalized_brief=normalized,
-        metadata_patch={"launch_brief": normalized.model_dump(mode="json")},
+        metadata_patch={"launch_brief": normalized.model_dump(mode="json", exclude_none=True)},
     )
 
 
@@ -460,6 +587,20 @@ def read_launch_brief_metadata(metadata: dict[str, object] | None) -> Normalized
         raise LaunchTaskBuildError("Task launch_brief metadata must be a mapping.")
 
     return NormalizedLaunchBrief.model_validate(launch_brief)
+
+
+def read_feature_scope_metadata(metadata: dict[str, object] | None) -> FeatureScope | None:
+    """Read the canonical structured feature scope contract from task metadata only."""
+    if not metadata:
+        return None
+
+    feature_scope = metadata.get("feature_scope")
+    if feature_scope is None:
+        return None
+    if not isinstance(feature_scope, dict):
+        raise LaunchTaskBuildError("Task feature_scope metadata must be a mapping.")
+
+    return FeatureScope.model_validate(feature_scope)
 
 
 def read_task_launch_brief(task) -> TaskLaunchBriefView | None:
@@ -517,6 +658,8 @@ def build_launch_task_input(
         metadata["on_fail"] = [created_task_ids[name] for name in task_def.on_fail]
     if task_def.stage:
         metadata["template_stage"] = task_def.stage.strip().lower()
+        if metadata["template_stage"] == "scope":
+            metadata["feature_scope_required"] = True
     if task_def.message_type:
         metadata["message_type"] = task_def.message_type
     if task_def.required_sections:

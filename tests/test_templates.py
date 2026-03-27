@@ -4,6 +4,7 @@ import pytest
 
 from clawteam.templates import (
     AgentDef,
+    FeatureScope,
     LaunchBriefSections,
     LaunchExecutionResult,
     LaunchReferenceError,
@@ -26,8 +27,10 @@ from clawteam.templates import (
     render_resolved_scope_context,
     load_template,
     normalize_launch_brief,
+    parse_feature_scope_block,
     parse_launch_brief,
     prepare_task_launch_brief,
+    read_feature_scope_metadata,
     read_launch_brief_metadata,
     read_task_launch_brief,
     render_task,
@@ -190,6 +193,64 @@ Deliver the smallest safe change.
         assert parsed.unknowns == ["final prod env"]
         assert parsed.leader_assumptions == ["existing tests are representative"]
         assert parsed.out_of_scope == ["dashboard rewrite"]
+
+    def test_parse_feature_scope_block_merges_structured_scope_sections(self):
+        normalized = normalize_launch_brief(
+            source_request="Ship the feature safely",
+            leader_brief="""
+## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the minimal safe fix.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup"}
+""".strip(),
+        )
+
+        parsed = parse_feature_scope_block(
+            """
+## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the minimal safe fix.
+
+## Unknowns
+- final prod env
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup"}
+""".strip(),
+            normalized=normalized,
+        )
+
+        assert parsed == FeatureScope(
+            source_request="Ship the feature safely",
+            scoped_brief="Deliver only the minimal safe fix.",
+            in_scope=["Deliver only the minimal safe fix."],
+            unknowns=["final prod env"],
+            leader_assumptions=["existing tests are representative"],
+            out_of_scope=["dashboard rewrite"],
+            risks_blockers=["Final prod env remains unverified."],
+            recommended_next_step="setup",
+        )
 
     def test_find_scope_inventions_flags_explicit_additive_entities_missing_from_source_request(self):
         inventions = find_scope_inventions(
@@ -435,6 +496,22 @@ Polish the member list UI using the existing tests are representative assumption
         assert "## Source Request" in task_input.description
         assert "## Brief Format\nprose_fallback" in task_input.description
 
+    def test_build_launch_task_input_marks_scope_tasks_as_feature_scope_required(self):
+        task_input = build_launch_task_input(
+            TaskDef(
+                subject="Scope",
+                description="Clarify {goal} into a minimal deliverable.",
+                owner="leader",
+                stage="scope",
+            ),
+            goal="Ship the feature safely",
+            team_name="delivery-demo",
+            created_task_ids={},
+        )
+
+        assert task_input.metadata["template_stage"] == "scope"
+        assert task_input.metadata["feature_scope_required"] is True
+
     def test_build_launch_task_input_rejects_unknown_blocked_by_reference(self):
         with pytest.raises(LaunchReferenceError, match="blocked_by tasks: MissingScope") as exc:
             build_launch_task_input(
@@ -557,6 +634,34 @@ Polish the member list UI using the existing tests are representative assumption
                 leader_assumptions=["Existing auth can be reused"],
                 out_of_scope=["Billing redesign"],
             ),
+        )
+
+    def test_read_feature_scope_metadata_returns_structured_contract(self):
+        feature_scope = read_feature_scope_metadata(
+            {
+                "feature_scope": {
+                    "version": "v1",
+                    "source_request": "Ship the feature safely",
+                    "scoped_brief": "Deliver only the minimal safe fix.",
+                    "in_scope": ["Deliver only the minimal safe fix."],
+                    "unknowns": ["Final API timeout"],
+                    "leader_assumptions": ["Existing auth can be reused"],
+                    "out_of_scope": ["Billing redesign"],
+                    "risks_blockers": ["Production deploy window not confirmed"],
+                    "recommended_next_step": "setup",
+                }
+            }
+        )
+
+        assert feature_scope == FeatureScope(
+            source_request="Ship the feature safely",
+            scoped_brief="Deliver only the minimal safe fix.",
+            in_scope=["Deliver only the minimal safe fix."],
+            unknowns=["Final API timeout"],
+            leader_assumptions=["Existing auth can be reused"],
+            out_of_scope=["Billing redesign"],
+            risks_blockers=["Production deploy window not confirmed"],
+            recommended_next_step="setup",
         )
 
     def test_read_task_launch_brief_prefers_metadata_contract(self):

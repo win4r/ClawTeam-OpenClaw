@@ -624,6 +624,7 @@ def _propagate_resolved_scope_to_targets(
     scope_payload: dict[str, Any],
     scope_warnings: list[dict[str, Any]] | None = None,
     runtime_handoff: dict[str, Any] | None = None,
+    feature_scope: dict[str, Any] | None = None,
 ) -> None:
     for target_id in target_ids:
         target = store.get(target_id)
@@ -635,6 +636,8 @@ def _propagate_resolved_scope_to_targets(
             patched_metadata["resolved_scope"] = scope_payload
             if scope_warnings is not None:
                 patched_metadata["scope_audit_warnings"] = scope_warnings
+            if feature_scope is not None:
+                patched_metadata["feature_scope"] = feature_scope
             patched_description = inject_resolved_scope_context(
                 description=patched_description,
                 normalized=scope_payload,
@@ -846,6 +849,7 @@ def execute_task_update_effects(
     """Execute post-update side effects after the task store mutation succeeds."""
     scope_payload = _scope_payload(task)
     scope_warnings = task.metadata.get("scope_audit_warnings") if isinstance(task.metadata, dict) else None
+    feature_scope = task.metadata.get("feature_scope") if isinstance(task.metadata, dict) else None
     runtime_handoff = _setup_runtime_handoff_payload(task)
     if isinstance(task.metadata, dict) and task.metadata.get("message_type") == "SETUP_RESULT" and runtime_handoff:
         current_metadata = dict(task.metadata)
@@ -861,6 +865,7 @@ def execute_task_update_effects(
             scope_payload=scope_payload or {},
             scope_warnings=scope_warnings if isinstance(scope_warnings, list) else None,
             runtime_handoff=runtime_handoff,
+            feature_scope=feature_scope if isinstance(feature_scope, dict) else None,
         )
 
     wake = None
@@ -1130,6 +1135,7 @@ def execute_task_update(
 
     existing_launch_brief = existing.metadata.get("launch_brief") if isinstance(existing.metadata, dict) else None
     is_scope_task = (existing.metadata.get("template_stage") == "scope") if isinstance(existing.metadata, dict) else False
+    require_feature_scope = bool(existing.metadata.get("feature_scope_required")) if isinstance(existing.metadata, dict) else False
     if request.status == TaskStatus.completed and is_scope_task:
         final_scope_description = (request.description or existing.description or "").strip()
         if not final_scope_description:
@@ -1145,6 +1151,7 @@ def execute_task_update(
             validated_scope = validate_scope_task_completion(
                 source_request=source_request,
                 leader_brief=final_scope_description,
+                require_feature_scope=require_feature_scope,
             )
         except ScopeTaskValidationError as e:
             raise TaskTransitionValidationError(str(e)) from e
@@ -1153,9 +1160,11 @@ def execute_task_update(
             normalized=validated_scope,
         )
         metadata = dict(plan.metadata_to_apply or {})
-        metadata["launch_brief"] = validated_scope.model_dump(mode="json")
-        metadata["resolved_scope"] = validated_scope.model_dump(mode="json")
+        metadata["launch_brief"] = validated_scope.model_dump(mode="json", exclude_none=True)
+        metadata["resolved_scope"] = validated_scope.model_dump(mode="json", exclude_none=True)
         metadata["scope_audit_warnings"] = [warning.model_dump(mode="json") for warning in scope_warnings]
+        if validated_scope.feature_scope is not None:
+            metadata["feature_scope"] = validated_scope.feature_scope.model_dump(mode="json")
         plan = TaskUpdatePlan(
             metadata_to_apply=metadata,
             dependent_ids_to_wake=plan.dependent_ids_to_wake,
