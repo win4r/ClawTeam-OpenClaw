@@ -41,6 +41,7 @@ class FeatureScope(BaseModel):
     out_of_scope: list[str] = Field(default_factory=list)
     risks_blockers: list[str] = Field(default_factory=list)
     recommended_next_step: str = ""
+    execution_shape: str = ""
 
 
 class LaunchBriefSections(BaseModel):

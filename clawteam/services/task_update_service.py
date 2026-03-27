@@ -75,9 +75,19 @@ POST_SCOPE_MATERIALIZATION_MODE = "post-scope"
 DEFERRED_MATERIALIZATION_CASE = "deferred_post_scope_materialization"
 DEFERRED_MATERIALIZATION_HOOK = "post_scope_materialization"
 DEFERRED_MATERIALIZATION_AWAITING_HOOK = "awaiting_explicit_post_scope_hook"
+DEFERRED_MATERIALIZATION_MATERIALIZED = "materialized_post_scope"
 DEFERRED_MATERIALIZATION_REASON = (
     "Deferred topology materialization is not implemented; refusing legacy downstream auto-release."
 )
+
+_FIVE_STEP_SCOPE_SUBJECT = "Scope the task into a minimal deliverable"
+_FIVE_STEP_SETUP_SUBJECT = "Prepare repo, branch, env, and runnable baseline"
+_FIVE_STEP_IMPL_A_SUBJECT = "Implement assigned change slice A with real validation"
+_FIVE_STEP_IMPL_B_SUBJECT = "Implement assigned change slice B with real validation"
+_FIVE_STEP_QA_A_SUBJECT = "Run scoped QA pass A on the real change"
+_FIVE_STEP_QA_B_SUBJECT = "Run scoped QA pass B on the real change"
+_FIVE_STEP_REVIEW_SUBJECT = "Review code quality, maintainability, and release readiness"
+_FIVE_STEP_DELIVER_SUBJECT = "Prepare final delivery package and human decision summary"
 
 
 def _build_failure_repair_packet(task: TaskItem) -> str | None:
@@ -847,6 +857,167 @@ def _apply_triage_followup_resolution(
     )
 
 
+def _infer_execution_shape(feature_scope: dict[str, Any]) -> str:
+    explicit_shape = str(feature_scope.get("execution_shape") or "").strip().lower()
+    if explicit_shape in {"ui-only", "backend-only", "full-stack"}:
+        return explicit_shape
+
+    evidence = "\n".join(
+        [
+            str(feature_scope.get("scoped_brief") or ""),
+            "\n".join(str(item) for item in (feature_scope.get("in_scope") or [])),
+            str(feature_scope.get("recommended_next_step") or ""),
+        ]
+    ).lower()
+    backend_markers = ("backend", "api", "server", "schema", "database", "migration", "endpoint")
+    ui_markers = ("ui", "frontend", "front-end", "page", "screen", "component", "ux", "client")
+    has_backend = any(marker in evidence for marker in backend_markers)
+    has_ui = any(marker in evidence for marker in ui_markers)
+    if has_backend and has_ui:
+        return "full-stack"
+    if has_backend:
+        return "backend-only"
+    if has_ui:
+        return "ui-only"
+    raise TaskUpdateValidationError(
+        "post-scope materialization requires FEATURE_SCOPE to map cleanly to ui-only, backend-only, or full-stack"
+    )
+
+
+def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> tuple[TaskItem, TaskTransitionPlan, dict[str, Any]]:
+    metadata = scope_task.metadata if isinstance(scope_task.metadata, dict) else {}
+    workflow_definition = metadata.get("workflow_definition")
+    feature_scope = metadata.get("feature_scope")
+    launch_brief = metadata.get("launch_brief")
+    resolved_scope = metadata.get("resolved_scope")
+    scope_warnings = metadata.get("scope_audit_warnings")
+    if not isinstance(workflow_definition, dict):
+        raise TaskUpdateValidationError("post-scope materialization requires preserved workflow_definition metadata")
+    if not isinstance(feature_scope, dict):
+        raise TaskUpdateValidationError("post-scope materialization requires machine-readable feature_scope metadata")
+    tasks = workflow_definition.get("tasks")
+    if workflow_definition.get("template_name") != "five-step-delivery" or not isinstance(tasks, list):
+        raise TaskUpdateValidationError("post-scope materialization skeleton currently supports only five-step-delivery")
+
+    authored = {str(item.get("subject") or ""): item for item in tasks if isinstance(item, dict)}
+    required_subjects = {
+        _FIVE_STEP_SCOPE_SUBJECT,
+        _FIVE_STEP_SETUP_SUBJECT,
+        _FIVE_STEP_IMPL_A_SUBJECT,
+        _FIVE_STEP_IMPL_B_SUBJECT,
+        _FIVE_STEP_QA_A_SUBJECT,
+        _FIVE_STEP_QA_B_SUBJECT,
+        _FIVE_STEP_REVIEW_SUBJECT,
+        _FIVE_STEP_DELIVER_SUBJECT,
+    }
+    if set(authored) != required_subjects:
+        raise TaskUpdateValidationError("post-scope materialization requires the authored five-step-delivery workflow definition")
+
+    execution_shape = _infer_execution_shape(feature_scope)
+    selected_subjects = {
+        "ui-only": [
+            _FIVE_STEP_SETUP_SUBJECT,
+            _FIVE_STEP_IMPL_B_SUBJECT,
+            _FIVE_STEP_QA_B_SUBJECT,
+            _FIVE_STEP_REVIEW_SUBJECT,
+            _FIVE_STEP_DELIVER_SUBJECT,
+        ],
+        "backend-only": [
+            _FIVE_STEP_SETUP_SUBJECT,
+            _FIVE_STEP_IMPL_A_SUBJECT,
+            _FIVE_STEP_QA_A_SUBJECT,
+            _FIVE_STEP_REVIEW_SUBJECT,
+            _FIVE_STEP_DELIVER_SUBJECT,
+        ],
+        "full-stack": [
+            _FIVE_STEP_SETUP_SUBJECT,
+            _FIVE_STEP_IMPL_A_SUBJECT,
+            _FIVE_STEP_IMPL_B_SUBJECT,
+            _FIVE_STEP_QA_A_SUBJECT,
+            _FIVE_STEP_QA_B_SUBJECT,
+            _FIVE_STEP_REVIEW_SUBJECT,
+            _FIVE_STEP_DELIVER_SUBJECT,
+        ],
+    }[execution_shape]
+
+    created_ids_by_subject: dict[str, str] = {_FIVE_STEP_SCOPE_SUBJECT: scope_task.id}
+    root_ids_to_wake: list[str] = []
+    for subject in [s for s in workflow_definition.get("authored_task_order") or [] if s in selected_subjects]:
+        authored_task = authored[subject]
+        raw_blocked_by = [str(dep) for dep in authored_task.get("blocked_by") or []]
+        filtered_blocked_by = [dep for dep in raw_blocked_by if dep in selected_subjects or dep == _FIVE_STEP_SCOPE_SUBJECT]
+        if raw_blocked_by and not filtered_blocked_by and subject != _FIVE_STEP_SETUP_SUBJECT:
+            raise TaskUpdateValidationError(f"post-scope materialization could not map dependencies for '{subject}' cleanly")
+        blocked_by_ids = [created_ids_by_subject[dep] for dep in filtered_blocked_by if dep != _FIVE_STEP_SCOPE_SUBJECT]
+        on_fail_subjects = [str(dep) for dep in authored_task.get("on_fail") or [] if dep in selected_subjects]
+        task_metadata = {
+            "template_stage": str(authored_task.get("stage") or ""),
+            "materialization_origin": "post_scope_materialization",
+            "launch_brief": launch_brief,
+            "resolved_scope": resolved_scope,
+            "feature_scope": feature_scope,
+            "execution_shape": execution_shape,
+            "scope_task_id": scope_task.id,
+        }
+        if isinstance(scope_warnings, list):
+            task_metadata["scope_audit_warnings"] = scope_warnings
+        if authored_task.get("message_type"):
+            task_metadata["message_type"] = authored_task.get("message_type")
+        if authored_task.get("required_sections"):
+            task_metadata["required_sections"] = list(authored_task.get("required_sections") or [])
+        if on_fail_subjects:
+            task_metadata["on_fail"] = [created_ids_by_subject[dep] for dep in on_fail_subjects]
+
+        description = inject_resolved_scope_context(
+            description=str(authored_task.get("description") or ""),
+            normalized=resolved_scope or {},
+            scope_audit_warnings=scope_warnings if isinstance(scope_warnings, list) else None,
+        )
+        created = store.create(
+            subject=subject,
+            description=description,
+            owner=str(authored_task.get("owner") or ""),
+            blocked_by=blocked_by_ids,
+            metadata=task_metadata,
+        )
+        created_ids_by_subject[subject] = created.id
+        if not blocked_by_ids:
+            root_ids_to_wake.append(created.id)
+
+    updated_metadata = dict(metadata)
+    updated_metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_MATERIALIZED
+    updated_metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE
+    updated_metadata["execution_shape"] = execution_shape
+    updated_metadata["materialized_task_ids"] = {
+        subject: created_ids_by_subject[subject] for subject in selected_subjects if subject in created_ids_by_subject
+    }
+    updated_metadata["workflow_definition"] = {
+        **workflow_definition,
+        "materialized_subjects": [_FIVE_STEP_SCOPE_SUBJECT, *selected_subjects],
+        "deferred_subjects": [subject for subject in workflow_definition.get("authored_task_order") or [] if subject not in {_FIVE_STEP_SCOPE_SUBJECT, *selected_subjects}],
+    }
+    updated_scope = store.update(scope_task.id, metadata=updated_metadata)
+    if updated_scope is None:
+        raise TaskUpdateValidationError("post-scope materialization could not persist scope metadata")
+
+    return (
+        updated_scope,
+        TaskTransitionPlan(metadata_to_apply=None, dependent_ids_to_wake=root_ids_to_wake, failed_targets_to_wake=[]),
+        {
+            "case_name": DEFERRED_MATERIALIZATION_CASE,
+            "status": "materialized",
+            "mode": POST_SCOPE_MATERIALIZATION_MODE,
+            "hook": DEFERRED_MATERIALIZATION_HOOK,
+            "state": DEFERRED_MATERIALIZATION_MATERIALIZED,
+            "reason": "Downstream topology materialized explicitly from FEATURE_SCOPE after scope completion.",
+            "execution_shape": execution_shape,
+            "created_task_ids": {subject: created_ids_by_subject[subject] for subject in selected_subjects if subject in created_ids_by_subject},
+            "released_root_task_ids": list(root_ids_to_wake),
+            "deferred_subjects": list(updated_metadata["workflow_definition"]["deferred_subjects"]),
+        },
+    )
+
+
 def _resolve_deferred_materialization(
     *,
     task: TaskItem,
@@ -874,10 +1045,12 @@ def _resolve_deferred_materialization(
     )
     effect["status"] = str(effect.get("status") or "fail_closed")
     effect["reason"] = str(effect.get("reason") or DEFERRED_MATERIALIZATION_REASON)
-    effect["suppressed_dependent_ids"] = list(
-        effect.get("suppressed_dependent_ids") or dependent_ids_to_wake
-    )
-    return effect, []
+    if effect["status"] == "fail_closed":
+        effect["suppressed_dependent_ids"] = list(
+            effect.get("suppressed_dependent_ids") or dependent_ids_to_wake
+        )
+        return effect, []
+    return effect, dependent_ids_to_wake
 
 def execute_task_update_effects(
     *,
@@ -1217,27 +1390,13 @@ def execute_task_update(
         metadata["resolved_scope"] = validated_scope.model_dump(mode="json", exclude_none=True)
         metadata["scope_audit_warnings"] = [warning.model_dump(mode="json") for warning in scope_warnings]
         if validated_scope.feature_scope is not None:
-            metadata["feature_scope"] = validated_scope.feature_scope.model_dump(mode="json")
+            feature_scope_payload = validated_scope.feature_scope.model_dump(mode="json")
+            if not feature_scope_payload.get("execution_shape"):
+                feature_scope_payload.pop("execution_shape", None)
+            metadata["feature_scope"] = feature_scope_payload
         if materialization_mode == POST_SCOPE_MATERIALIZATION_MODE:
-            workflow_definition = existing.metadata.get("workflow_definition") if isinstance(existing.metadata, dict) else None
             metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_AWAITING_HOOK
             metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE
-            deferred_materialization_effect = {
-                "case_name": DEFERRED_MATERIALIZATION_CASE,
-                "status": "fail_closed",
-                "mode": materialization_mode,
-                "hook": DEFERRED_MATERIALIZATION_HOOK,
-                "state": DEFERRED_MATERIALIZATION_AWAITING_HOOK,
-                "reason": DEFERRED_MATERIALIZATION_REASON,
-                "suppressed_dependent_ids": list(plan.dependent_ids_to_wake),
-            }
-            if isinstance(workflow_definition, dict):
-                deferred_materialization_effect["workflow_definition_preserved"] = bool(
-                    workflow_definition.get("preserved_definition")
-                )
-                deferred_materialization_effect["deferred_subjects"] = list(
-                    workflow_definition.get("deferred_subjects") or []
-                )
             plan = TaskUpdatePlan(
                 metadata_to_apply=metadata,
                 dependent_ids_to_wake=[],
@@ -1374,6 +1533,23 @@ def execute_task_update(
             request=request,
             metadata_to_apply=plan.metadata_to_apply,
             metadata_keys_to_remove=metadata_keys_to_remove,
+        )
+
+    is_post_scope_completion = (
+        request.status == TaskStatus.completed
+        and isinstance(task.metadata, dict)
+        and str(task.metadata.get("template_stage") or "").strip().lower() == "scope"
+        and str(task.metadata.get("materialization_mode") or "immediate").strip().lower() == POST_SCOPE_MATERIALIZATION_MODE
+    )
+    if is_post_scope_completion:
+        task, materialization_plan, deferred_materialization_effect = _materialize_post_scope_tasks(
+            store=ctx.store,
+            scope_task=task,
+        )
+        plan = TaskUpdatePlan(
+            metadata_to_apply=plan.metadata_to_apply,
+            dependent_ids_to_wake=materialization_plan.dependent_ids_to_wake,
+            failed_targets_to_wake=plan.failed_targets_to_wake,
         )
 
     effects = execute_task_update_effects(

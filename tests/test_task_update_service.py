@@ -2478,36 +2478,57 @@ Deliver only the minimal safe fix.
     assert "Deliver only the minimal safe fix." in updated_setup.description
 
 
-def test_execute_task_update_post_scope_mode_fails_closed_without_releasing_legacy_dependents(monkeypatch, tmp_path):
-    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+def _five_step_workflow_definition() -> dict[str, object]:
+    return {
+        "template_name": "five-step-delivery",
+        "preserved_definition": True,
+        "materialized_subjects": ["Scope the task into a minimal deliverable"],
+        "deferred_subjects": [
+            "Prepare repo, branch, env, and runnable baseline",
+            "Implement assigned change slice A with real validation",
+            "Implement assigned change slice B with real validation",
+            "Run scoped QA pass A on the real change",
+            "Run scoped QA pass B on the real change",
+            "Review code quality, maintainability, and release readiness",
+            "Prepare final delivery package and human decision summary",
+        ],
+        "authored_task_order": [
+            "Scope the task into a minimal deliverable",
+            "Prepare repo, branch, env, and runnable baseline",
+            "Implement assigned change slice A with real validation",
+            "Implement assigned change slice B with real validation",
+            "Run scoped QA pass A on the real change",
+            "Run scoped QA pass B on the real change",
+            "Review code quality, maintainability, and release readiness",
+            "Prepare final delivery package and human decision summary",
+        ],
+        "tasks": [
+            {"subject": "Scope the task into a minimal deliverable", "owner": "leader", "stage": "scope", "blocked_by": [], "on_fail": [], "message_type": "", "required_sections": [], "description": "scope"},
+            {"subject": "Prepare repo, branch, env, and runnable baseline", "owner": "config1", "stage": "setup", "blocked_by": ["Scope the task into a minimal deliverable"], "on_fail": [], "message_type": "SETUP_RESULT", "required_sections": ["status"], "description": "setup brief"},
+            {"subject": "Implement assigned change slice A with real validation", "owner": "dev1", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"], "on_fail": [], "message_type": "DEV_RESULT", "required_sections": ["status"], "description": "impl A brief"},
+            {"subject": "Implement assigned change slice B with real validation", "owner": "dev2", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"], "on_fail": [], "message_type": "DEV_RESULT", "required_sections": ["status"], "description": "impl B brief"},
+            {"subject": "Run scoped QA pass A on the real change", "owner": "qa1", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"], "on_fail": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"], "message_type": "QA_RESULT", "required_sections": ["status"], "description": "qa A brief"},
+            {"subject": "Run scoped QA pass B on the real change", "owner": "qa2", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"], "on_fail": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"], "message_type": "QA_RESULT", "required_sections": ["status"], "description": "qa B brief"},
+            {"subject": "Review code quality, maintainability, and release readiness", "owner": "review1", "stage": "review", "blocked_by": ["Run scoped QA pass A on the real change", "Run scoped QA pass B on the real change"], "on_fail": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"], "message_type": "REVIEW_RESULT", "required_sections": ["decision"], "description": "review brief"},
+            {"subject": "Prepare final delivery package and human decision summary", "owner": "leader", "stage": "deliver", "blocked_by": ["Review code quality, maintainability, and release readiness"], "on_fail": [], "message_type": "", "required_sections": [], "description": "deliver brief"},
+        ],
+    }
 
+
+def _post_scope_context(store: TaskStore) -> tuple[TaskItem, TaskUpdateContext]:
     TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
-    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+    for name in ["config1", "dev1", "dev2", "qa1", "qa2", "review1"]:
+        TeamManager.add_member("demo", name, f"{name}-id", agent_type="general-purpose")
 
-    store = TaskStore("demo")
     scope = store.create(
         "Scope the task into a minimal deliverable",
         owner="leader",
         metadata={
             "template_stage": "scope",
+            "feature_scope_required": True,
             "materialization_mode": "post-scope",
             "deferred_materialization_state": "pending_scope_completion",
-            "workflow_definition": {
-                "template_name": "five-step-delivery",
-                "preserved_definition": True,
-                "materialized_subjects": ["Scope the task into a minimal deliverable"],
-                "deferred_subjects": ["Prepare repo, branch, env, and runnable baseline"],
-                "tasks": [
-                    {"subject": "Scope the task into a minimal deliverable", "stage": "scope", "blocked_by": []},
-                    {"subject": "Prepare repo, branch, env, and runnable baseline", "stage": "setup", "blocked_by": ["Scope the task into a minimal deliverable"]},
-                    {"subject": "Implement assigned change slice A with real validation", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"]},
-                    {"subject": "Implement assigned change slice B with real validation", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"]},
-                    {"subject": "Run scoped QA pass A on the real change", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"]},
-                    {"subject": "Run scoped QA pass B on the real change", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"]},
-                    {"subject": "Review code quality, maintainability, and release readiness", "stage": "review", "blocked_by": ["Run scoped QA pass A on the real change", "Run scoped QA pass B on the real change"]},
-                    {"subject": "Prepare final delivery package and human decision summary", "stage": "deliver", "blocked_by": ["Review code quality, maintainability, and release readiness"]},
-                ],
-            },
+            "workflow_definition": _five_step_workflow_definition(),
             "launch_brief": {
                 "format": "structured_sections",
                 "sections": {
@@ -2520,43 +2541,247 @@ def test_execute_task_update_post_scope_mode_fails_closed_without_releasing_lega
             },
         },
     )
-    setup = store.create(
-        "Prepare repo, branch, env, and runnable baseline",
-        owner="config1",
-        blocked_by=[scope.id],
-        metadata={"template_stage": "setup"},
-        description="Original setup brief",
+    ctx = TaskUpdateContext(
+        store=store,
+        team="demo",
+        runtime=RuntimeOrchestrator(team="demo"),
+        release_notifier=lambda team, task, caller, message: {"messageSent": True, "taskId": task.id, "message": message},
+        failure_notifier=lambda team, task, caller: None,
     )
+    return scope, ctx
 
-    wake_calls: list[dict[str, object]] = []
 
-    def fake_wake(team, target_ids, caller, message_builder, repo, store, runtime, release_notifier):
-        wake_calls.append(
-            {
-                "team": team,
-                "target_ids": list(target_ids),
-                "caller": caller,
-            }
-        )
-        return []
+def test_execute_task_update_materializes_full_stack_downstream_on_real_scope_completion(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
 
-    monkeypatch.setattr("clawteam.services.task_update_service.wake_tasks_to_pending", fake_wake)
+    wake_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: wake_calls.append(list(target_ids)) or [{"taskId": target_ids[0]}],
+    )
 
     result = execute_task_update(
         task_id=scope.id,
         caller="leader",
-        ctx=TaskUpdateContext(
-            store=store,
-            team="demo",
-            runtime=RuntimeOrchestrator(team="demo"),
-            release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
-            failure_notifier=lambda team, task, caller: None,
-        ),
+        ctx=ctx,
         request=TaskUpdateRequest(
             status=TaskStatus.completed,
             owner=None,
             subject=None,
             description="""## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver the backend API update and the member list UI update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver the backend API update and the member list UI update.","in_scope":["backend API update","member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack"}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    tasks = {task.subject: task for task in store.list_tasks()}
+    assert set(tasks) == {
+        "Scope the task into a minimal deliverable",
+        "Prepare repo, branch, env, and runnable baseline",
+        "Implement assigned change slice A with real validation",
+        "Implement assigned change slice B with real validation",
+        "Run scoped QA pass A on the real change",
+        "Run scoped QA pass B on the real change",
+        "Review code quality, maintainability, and release readiness",
+        "Prepare final delivery package and human decision summary",
+    }
+    assert tasks["Prepare repo, branch, env, and runnable baseline"].status == TaskStatus.pending
+    assert tasks["Implement assigned change slice A with real validation"].status == TaskStatus.blocked
+    assert tasks["Implement assigned change slice B with real validation"].status == TaskStatus.blocked
+    assert tasks["Run scoped QA pass A on the real change"].metadata["on_fail"] == [
+        tasks["Implement assigned change slice A with real validation"].id,
+        tasks["Implement assigned change slice B with real validation"].id,
+    ]
+    assert tasks["Prepare repo, branch, env, and runnable baseline"].metadata["feature_scope"]["execution_shape"] == "full-stack"
+    assert "## Resolved Scope Context" in tasks["Prepare repo, branch, env, and runnable baseline"].description
+    assert result.effects.deferred_materialization["status"] == "materialized"
+    assert result.effects.deferred_materialization["execution_shape"] == "full-stack"
+    assert wake_calls == [[tasks["Prepare repo, branch, env, and runnable baseline"].id]]
+
+
+def test_execute_task_update_materializes_backend_only_subset(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description="""## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the backend API update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the backend API update.","in_scope":["backend API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"backend-only"}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    subjects = {task.subject for task in store.list_tasks()}
+    assert "Implement assigned change slice A with real validation" in subjects
+    assert "Run scoped QA pass A on the real change" in subjects
+    assert "Implement assigned change slice B with real validation" not in subjects
+    assert "Run scoped QA pass B on the real change" not in subjects
+
+
+def test_execute_task_update_materializes_ui_only_subset(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description="""## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver only the member list UI update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- dashboard rewrite
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the member list UI update.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"ui-only"}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    subjects = {task.subject for task in store.list_tasks()}
+    assert "Implement assigned change slice B with real validation" in subjects
+    assert "Run scoped QA pass B on the real change" in subjects
+    assert "Implement assigned change slice A with real validation" not in subjects
+    assert "Run scoped QA pass A on the real change" not in subjects
+
+
+def test_execute_task_update_post_scope_mode_fails_closed_when_feature_scope_shape_does_not_map_cleanly(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    with pytest.raises(TaskUpdateValidationError, match="map cleanly"):
+        execute_task_update(
+            task_id=scope.id,
+            caller="leader",
+            ctx=ctx,
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description="""## Source Request
 Ship the feature safely
 
 ## Scoped Brief
@@ -2575,50 +2800,27 @@ Deliver only the minimal safe fix.
 - none
 
 ## Recommended Next Step
-- materialize downstream topology explicitly
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the minimal safe fix.","in_scope":["minimal safe fix"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization"}
 """,
-            add_blocks=None,
-            add_blocked_by=None,
-            add_on_fail=None,
-            failure_kind=None,
-            failure_note=None,
-            failure_root_cause=None,
-            failure_evidence=None,
-            failure_recommended_next_owner=None,
-            failure_recommended_action=None,
-            execution_id=None,
-            wake_owner=False,
-            message="",
-            force=False,
-        ),
-    )
-
-    refreshed_scope = store.get(scope.id)
-    refreshed_setup = store.get(setup.id)
-
-    assert result.task.status == TaskStatus.completed
-    assert refreshed_scope is not None
-    assert refreshed_setup is not None
-    assert refreshed_scope.metadata["resolved_scope"]["sections"]["scoped_brief"] == "Deliver only the minimal safe fix."
-    assert refreshed_scope.metadata["deferred_materialization_state"] == "awaiting_explicit_post_scope_hook"
-    assert refreshed_scope.metadata["deferred_materialization_case"] == "deferred_post_scope_materialization"
-    assert result.plan.dependent_ids_to_wake == []
-    assert result.effects.auto_releases == []
-    assert result.effects.deferred_materialization == {
-        "case_name": "deferred_post_scope_materialization",
-        "status": "fail_closed",
-        "mode": "post-scope",
-        "hook": "post_scope_materialization",
-        "state": "awaiting_explicit_post_scope_hook",
-        "reason": "Deferred topology materialization is not implemented; refusing legacy downstream auto-release.",
-        "suppressed_dependent_ids": [setup.id],
-        "workflow_definition_preserved": True,
-        "deferred_subjects": ["Prepare repo, branch, env, and runnable baseline"],
-    }
-    assert wake_calls == []
-    assert refreshed_setup.status == TaskStatus.blocked
-    assert refreshed_setup.metadata.get("resolved_scope") is None
-    assert "## Resolved Scope Context" not in refreshed_setup.description
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                execution_id=None,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+    assert {task.subject for task in store.list_tasks()} == {"Scope the task into a minimal deliverable"}
 
 
 def test_execute_task_update_records_and_propagates_scope_audit_warnings(monkeypatch, tmp_path):
