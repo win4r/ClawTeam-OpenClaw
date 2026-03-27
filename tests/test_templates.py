@@ -911,76 +911,90 @@ class TestLoadBuiltinTemplate:
             if task.owner:
                 assert task.owner in agent_names, f"Task owner '{task.owner}' not in agents"
 
-    def test_five_step_delivery_parallel_structure(self):
+    def test_five_step_delivery_post_scope_only_preserves_workflow_definition(self):
+        """Test five-step-delivery preserves full workflow DAG but uses post-scope materialization."""
         tmpl = load_template("five-step-delivery")
-        assert tmpl.topology_mode == "delivery-default"
+        assert tmpl.topology_mode == "post-scope-only"
+        assert tmpl.materialization_mode == "post-scope"
+        assert tmpl.name == "five-step-delivery"
+
+        # Verify full workflow definition is preserved (not deleted)
         agent_names = {tmpl.leader.name} | {a.name for a in tmpl.agents}
         assert {"config1", "dev1", "dev2", "qa1", "qa2", "review1"}.issubset(agent_names)
 
+        # Verify all stage tasks exist in template definition
         by_subject = {task.subject: task for task in tmpl.tasks}
-        assert by_subject["Scope the task into a minimal deliverable"].stage == "scope"
-        assert by_subject["Scope the task into a minimal deliverable"].feature_scope_required is True
-        assert by_subject["Prepare repo, branch, env, and runnable baseline"].stage == "setup"
-        assert by_subject["Review code quality, maintainability, and release readiness"].stage == "review"
-        assert by_subject["Implement assigned change slice A with real validation"].blocked_by == [
-            "Prepare repo, branch, env, and runnable baseline"
-        ]
-        assert by_subject["Implement assigned change slice B with real validation"].blocked_by == [
-            "Prepare repo, branch, env, and runnable baseline"
-        ]
-        assert by_subject["Run scoped QA pass A on the real change"].blocked_by == [
-            "Implement assigned change slice A with real validation",
-            "Implement assigned change slice B with real validation",
-        ]
-        assert by_subject["Run scoped QA pass B on the real change"].blocked_by == [
-            "Implement assigned change slice A with real validation",
-            "Implement assigned change slice B with real validation",
-        ]
-        assert by_subject["Review code quality, maintainability, and release readiness"].blocked_by == [
-            "Run scoped QA pass A on the real change",
-            "Run scoped QA pass B on the real change",
-        ]
-        assert by_subject["Run scoped QA pass A on the real change"].on_fail == [
-            "Implement assigned change slice A with real validation",
-            "Implement assigned change slice B with real validation",
-        ]
-        assert by_subject["Run scoped QA pass B on the real change"].on_fail == [
-            "Implement assigned change slice A with real validation",
-            "Implement assigned change slice B with real validation",
-        ]
-        assert by_subject["Review code quality, maintainability, and release readiness"].on_fail == [
-            "Implement assigned change slice A with real validation",
-            "Implement assigned change slice B with real validation",
-        ]
-        assert by_subject["Prepare repo, branch, env, and runnable baseline"].message_type == "SETUP_RESULT"
-        assert by_subject["Prepare repo, branch, env, and runnable baseline"].required_sections == [
-            "status",
-            "remote_status",
-            "remote_head",
-            "detached_worktree",
-            "detached_head",
-            "install",
-            "baseline_validation",
-            "known_limitations",
-            "next_action",
-        ]
-        assert "Remote gate" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
-        assert "不要依赖 Linux 专属 `timeout`" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
-        assert "SETUP_RESULT" in by_subject["Prepare repo, branch, env, and runnable baseline"].description
-        assert by_subject["Implement assigned change slice A with real validation"].message_type == "DEV_RESULT"
-        assert by_subject["Implement assigned change slice B with real validation"].message_type == "DEV_RESULT"
-        assert by_subject["Run scoped QA pass A on the real change"].message_type == "QA_RESULT"
-        assert by_subject["Run scoped QA pass B on the real change"].message_type == "QA_RESULT"
-        assert by_subject["Review code quality, maintainability, and release readiness"].message_type == "REVIEW_RESULT"
-        assert by_subject["Review code quality, maintainability, and release readiness"].required_sections == [
-            "decision",
-            "summary",
-            "architecture_review",
-            "required_fixes",
-            "evidence",
-            "validation",
-            "next_action",
-        ]
+        
+        # Scope task
+        scope_task = by_subject["Scope the task into a minimal deliverable"]
+        assert scope_task.stage == "scope"
+        assert scope_task.feature_scope_required is True
+        assert scope_task.owner == "leader"
+        
+        # Setup task
+        setup_task = by_subject["Prepare repo, branch, env, and runnable baseline"]
+        assert setup_task.stage == "setup"
+        assert setup_task.message_type == "SETUP_RESULT"
+        assert setup_task.blocked_by == ["Scope the task into a minimal deliverable"]
+        
+        # Implementation tasks
+        impl_a = by_subject["Implement assigned change slice A with real validation"]
+        impl_b = by_subject["Implement assigned change slice B with real validation"]
+        assert impl_a.stage == "implement"
+        assert impl_b.stage == "implement"
+        assert impl_a.message_type == "DEV_RESULT"
+        assert impl_b.message_type == "DEV_RESULT"
+        assert impl_a.blocked_by == ["Prepare repo, branch, env, and runnable baseline"]
+        assert impl_b.blocked_by == ["Prepare repo, branch, env, and runnable baseline"]
+        
+        # QA tasks
+        qa_a = by_subject["Run scoped QA pass A on the real change"]
+        qa_b = by_subject["Run scoped QA pass B on the real change"]
+        assert qa_a.stage == "qa"
+        assert qa_b.stage == "qa"
+        assert qa_a.message_type == "QA_RESULT"
+        assert qa_b.message_type == "QA_RESULT"
+        assert impl_a.subject in qa_a.blocked_by
+        assert impl_b.subject in qa_a.blocked_by
+        
+        # Review task
+        review_task = by_subject["Review code quality, maintainability, and release readiness"]
+        assert review_task.stage == "review"
+        assert review_task.message_type == "REVIEW_RESULT"
+        
+        # Deliver task
+        deliver_task = by_subject["Prepare final delivery package and human decision summary"]
+        assert deliver_task.stage == "deliver"
+        assert deliver_task.blocked_by == [review_task.subject]
+
+    def test_five_step_delivery_launch_creates_only_scope_task_in_post_scope_mode(self):
+        """Verify five-step-delivery launch creates only scope task, deferring downstream DAG."""
+        from clawteam.templates import execute_template_launch, load_template
+        from tests.test_templates import _FakeTaskStore
+
+        tmpl = load_template("five-step-delivery")
+        assert tmpl.materialization_mode == "post-scope"
+        assert tmpl.topology_mode == "post-scope-only"
+
+        # Execute launch with post-scope materialization
+        store = _FakeTaskStore()
+        result = execute_template_launch(
+            store,
+            tmpl.tasks,
+            materialization_mode=tmpl.materialization_mode,
+            goal="Test goal for five-step-delivery",
+            team_name="test-team",
+        )
+
+        # Verify only entry tasks (no blocked_by) are created
+        assert len(store.calls) == 1, f"Expected 1 task (scope only), got {len(store.calls)}: {[c['subject'] for c in store.calls]}"
+        
+        scope_call = store.calls[0]
+        assert scope_call["subject"] == "Scope the task into a minimal deliverable"
+        
+        # Verify metadata indicates deferred materialization
+        assert scope_call["metadata"]["materialization_mode"] == "post-scope"
+        assert scope_call["metadata"]["deferred_materialization_state"] == "pending_scope_completion"
 
 
 class TestLoadTemplateNotFound:
