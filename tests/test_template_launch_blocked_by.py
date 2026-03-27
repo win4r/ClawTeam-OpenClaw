@@ -27,7 +27,7 @@ class FailingBackend:
         return []
 
 
-def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
+def test_launch_template_post_scope_only_materializes_scope_root(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: DummyBackend())
 
@@ -50,72 +50,31 @@ def test_launch_template_creates_blocked_by_chain(monkeypatch, tmp_path):
 
     store = TaskStore("delivery-demo")
     tasks = store.list_tasks()
-    by_subject = {task.subject: task for task in tasks}
+    assert len(tasks) == 1
 
-    scope = by_subject["Scope the task into a minimal deliverable"]
-    setup = by_subject["Prepare repo, branch, env, and runnable baseline"]
-    backend = by_subject["Implement assigned change slice A with real validation"]
-    frontend = by_subject["Implement assigned change slice B with real validation"]
-    qa_main = by_subject["Run scoped QA pass A on the real change"]
-    qa_reg = by_subject["Run scoped QA pass B on the real change"]
-    review = by_subject["Review code quality, maintainability, and release readiness"]
-    deliver = by_subject["Prepare final delivery package and human decision summary"]
-
+    scope = tasks[0]
+    assert scope.subject == "Scope the task into a minimal deliverable"
     assert scope.blocked_by == []
-    assert setup.blocked_by == [scope.id]
-    assert backend.blocked_by == [setup.id]
-    assert frontend.blocked_by == [setup.id]
-    assert qa_main.blocked_by == [backend.id, frontend.id]
-    assert qa_reg.blocked_by == [backend.id, frontend.id]
-    assert review.blocked_by == [qa_main.id, qa_reg.id]
-    assert deliver.blocked_by == [review.id]
-    assert qa_main.metadata.get("on_fail") == [backend.id, frontend.id]
     assert scope.metadata.get("template_stage") == "scope"
     assert scope.metadata.get("feature_scope_required") is True
-    assert setup.metadata.get("template_stage") == "setup"
+    assert scope.metadata.get("materialization_mode") == "post-scope"
+    assert scope.metadata.get("deferred_materialization_state") == "pending_scope_completion"
     assert "Ship the feature safely" in scope.description
     assert "{goal}" not in scope.description
-
-    assert qa_reg.metadata.get("on_fail") == [backend.id, frontend.id]
-    assert review.metadata.get("on_fail") == [backend.id, frontend.id]
-    assert setup.metadata.get("template_stage") == "setup"
-    assert setup.metadata.get("message_type") == "SETUP_RESULT"
-    assert setup.metadata.get("required_sections") == [
-        "status",
-        "remote_status",
-        "remote_head",
-        "detached_worktree",
-        "detached_head",
-        "install",
-        "baseline_validation",
-        "known_limitations",
-        "next_action",
-    ]
-
-    for task in [scope, setup, backend, frontend, qa_main, qa_reg, review, deliver]:
-        assert "## Source Request" in task.description
-        assert "## Scoped Brief" in task.description
-        assert "## Unknowns" in task.description
-        assert "## Leader Assumptions" in task.description
-        assert "## Out of Scope" in task.description
-        assert "## Brief Format" in task.description
-        assert "## Interpretation Rules" in task.description
-        assert task.metadata.get("launch_brief", {}).get("format") in {"structured_sections", "prose_fallback", "empty"}
-        assert task.metadata.get("launch_brief", {}).get("sections", {}).get("source_request") == "Ship the feature safely"
-
+    assert "## Source Request" in scope.description
+    assert "## Scoped Brief" in scope.description
+    assert "## Unknowns" in scope.description
+    assert "## Leader Assumptions" in scope.description
+    assert "## Out of Scope" in scope.description
+    assert "## Brief Format" in scope.description
+    assert "## Interpretation Rules" in scope.description
+    assert scope.metadata.get("launch_brief", {}).get("format") in {"structured_sections", "prose_fallback", "empty"}
+    assert scope.metadata.get("launch_brief", {}).get("sections", {}).get("source_request") == "Ship the feature safely"
     assert scope.status.value == "pending"
-    assert setup.status.value == "blocked"
-    assert backend.status.value == "blocked"
-    assert frontend.status.value == "blocked"
-    assert qa_main.status.value == "blocked"
-    assert qa_reg.status.value == "blocked"
-    assert review.status.value == "blocked"
-    assert deliver.status.value == "blocked"
 
     leader_mail = MailboxManager("delivery-demo").peek("leader")
     wake_keys = {msg.key for msg in leader_mail}
-    assert f"task-wake:{scope.id}" in wake_keys
-    assert all(f"task-wake:{task.id}" not in wake_keys for task in [setup, backend, frontend, qa_main, qa_reg, review, deliver])
+    assert wake_keys == {f"task-wake:{scope.id}"}
 
 
 def test_launch_template_fails_closed_when_agent_spawn_errors(monkeypatch, tmp_path):
@@ -143,7 +102,7 @@ def test_launch_template_fails_closed_when_agent_spawn_errors(monkeypatch, tmp_p
 
     store = TaskStore("launch-fail-demo")
     tasks = store.list_tasks()
-    assert len(tasks) == 8
+    assert len(tasks) == 1
     leader_mail = MailboxManager("launch-fail-demo").peek("leader")
     assert leader_mail == []
 
