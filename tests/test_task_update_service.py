@@ -1780,7 +1780,7 @@ Ship the feature safely.
 - workflow redesign
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign.","execution_shape":"backend-only"}
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign.","execution_shape":"backend-only","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 '''
 
     result = execute_task_update(
@@ -1826,6 +1826,19 @@ Ship the feature safely.
         "risks_blockers": ["feature_scope_required consumers must fail closed on malformed scope"],
         "recommended_next_step": "Deliver strictly against this scoped brief without workflow redesign.",
         "execution_shape": "backend-only",
+        "change_budget": {
+            "allowed_layers": ["backend", "api"],
+            "allowed_operations": ["edit-existing", "add-backend-module"],
+            "allowed_roots": ["server/"],
+            "forbidden_layers": ["web-ui", "mobile-ui"],
+        },
+        "initial_targets": [{
+            "kind": "api-handler",
+            "path": "server/src/routes/member.ts",
+            "exists": True,
+            "why_in_scope": "member API change required by scoped brief",
+            "evidence": ["rg hit: server/src/routes/member.ts"],
+        }],
     }
     refreshed_setup = store.get(setup.id)
     assert refreshed_setup.metadata["feature_scope"]["scoped_brief"] == "Ship the feature safely."
@@ -1944,7 +1957,7 @@ Ship the feature safely.
 - workflow redesign
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"execution_shape":"backend-only"}
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"execution_shape":"backend-only","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 '''
 
     with pytest.raises(TaskUpdateValidationError, match="recommended_next_step value"):
@@ -2020,7 +2033,7 @@ Ship the feature safely.
 - workflow redesign
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign."}
+{"source_request":"Ship the feature safely","scoped_brief":"Ship the feature safely.","in_scope":["Ship the feature safely."],"unknowns":["none"],"leader_assumptions":["existing delivery lanes remain valid for phase 1"],"out_of_scope":["workflow redesign"],"risks_blockers":["feature_scope_required consumers must fail closed on malformed scope"],"recommended_next_step":"Deliver strictly against this scoped brief without workflow redesign.","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 '''
 
     with pytest.raises(TaskUpdateValidationError, match=r"FEATURE_SCOPE\.execution_shape"):
@@ -2039,6 +2052,82 @@ Ship the feature safely.
                 owner=None,
                 subject=None,
                 description=missing_shape_description,
+                add_blocks=None,
+                add_blocked_by=None,
+                add_on_fail=None,
+                failure_kind=None,
+                failure_note=None,
+                failure_root_cause=None,
+                failure_evidence=None,
+                failure_recommended_next_owner=None,
+                failure_recommended_action=None,
+                execution_id=None,
+                wake_owner=False,
+                message="",
+                force=False,
+            ),
+        )
+
+
+def test_execute_task_update_rejects_ui_scope_completion_without_validated_initial_target(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    store = TaskStore("demo")
+    scope = store.create(
+        "Scope the task into a minimal deliverable",
+        owner="leader",
+        metadata={
+            "template_stage": "scope",
+            "feature_scope_required": True,
+            "launch_brief": {
+                "format": "structured_sections",
+                "sections": {
+                    "source_request": "Polish the member list page UI only",
+                    "scoped_brief": "",
+                    "unknowns": [],
+                    "leader_assumptions": [],
+                    "out_of_scope": ["backend changes"],
+                },
+            },
+        },
+    )
+
+    missing_target_description = '''## Source Request
+Polish the member list page UI only
+
+## Scoped Brief
+Polish the member list page UI only.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing web route should already exist
+
+## Out of Scope
+- backend changes
+
+## FEATURE_SCOPE
+{"source_request":"Polish the member list page UI only","scoped_brief":"Polish the member list page UI only.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing web route should already exist"],"out_of_scope":["backend changes"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[]}
+'''
+
+    with pytest.raises(TaskUpdateValidationError, match="validated web target"):
+        execute_task_update(
+            task_id=scope.id,
+            caller="leader",
+            ctx=TaskUpdateContext(
+                store=store,
+                team="demo",
+                runtime=RuntimeOrchestrator(team="demo"),
+                release_notifier=lambda team, task, caller, message: None,
+                failure_notifier=lambda team, task, caller: None,
+            ),
+            request=TaskUpdateRequest(
+                status=TaskStatus.completed,
+                owner=None,
+                subject=None,
+                description=missing_target_description,
                 add_blocks=None,
                 add_blocked_by=None,
                 add_on_fail=None,
@@ -2669,7 +2758,7 @@ Deliver the backend API update and the member list UI update.
 - explicit post-scope materialization
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Deliver the backend API update and the member list UI update.","in_scope":["backend API update","member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack"}
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver the backend API update and the member list UI update.","in_scope":["backend API update","member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack","change_budget":{"allowed_layers":["web-ui","backend","api"],"allowed_operations":["edit-existing","add-ui-component","add-backend-module"],"allowed_roots":["dashboard/","server/"],"forbidden_layers":["mobile-ui"]},"initial_targets":[{"kind":"web-page","path":"dashboard/src/pages/members.tsx","exists":true,"why_in_scope":"member list UI exists","evidence":["rg hit: dashboard/src/pages/members.tsx"]},{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API exists","evidence":["rg hit: server/src/routes/member.ts"]}]}
 """,
             add_blocks=None,
             add_blocked_by=None,
@@ -2751,7 +2840,7 @@ Deliver only the backend API update.
 - explicit post-scope materialization
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the backend API update.","in_scope":["backend API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"backend-only"}
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the backend API update.","in_scope":["backend API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"backend-only","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 """,
             add_blocks=None,
             add_blocked_by=None,
@@ -2815,7 +2904,7 @@ Deliver only the member list UI update.
 - explicit post-scope materialization
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the member list UI update.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"ui-only"}
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the member list UI update.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component","add-ui-style-file"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[{"kind":"web-page","path":"dashboard/src/pages/members.tsx","exists":true,"why_in_scope":"member list UI exists","evidence":["rg hit: dashboard/src/pages/members.tsx"]}]}
 """,
             add_blocks=None,
             add_blocked_by=None,
@@ -2940,7 +3029,7 @@ Deliver only the backend API update.
 - explicit post-scope materialization
 
 ## FEATURE_SCOPE
-{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the backend API update.","in_scope":["backend API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"frontend-only"}
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver only the backend API update.","in_scope":["backend API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["dashboard rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"frontend-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend"]}}
 """,
                 add_blocks=None,
                 add_blocked_by=None,

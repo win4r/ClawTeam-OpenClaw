@@ -4,7 +4,7 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 class LaunchTemplateError(ValueError):
@@ -33,6 +33,61 @@ class ScopeTaskValidationError(LaunchTemplateError):
 
 
 ALLOWED_EXECUTION_SHAPES: tuple[str, ...] = ("ui-only", "backend-only", "full-stack")
+ALLOWED_SCOPE_LAYERS: tuple[str, ...] = ("web-ui", "backend", "mobile-ui", "api", "schema", "db", "crawler", "auth")
+ALLOWED_SCOPE_OPERATIONS: tuple[str, ...] = (
+    "edit-existing",
+    "add-ui-component",
+    "add-ui-style-file",
+    "add-backend-module",
+    "edit-config",
+)
+
+
+class ChangeBudget(BaseModel):
+    allowed_layers: list[str] = Field(default_factory=list)
+    allowed_operations: list[str] = Field(default_factory=list)
+    allowed_roots: list[str] = Field(default_factory=list)
+    forbidden_layers: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_budget(self) -> "ChangeBudget":
+        if not self.allowed_layers:
+            raise ValueError("change_budget.allowed_layers must be non-empty")
+        if not self.allowed_operations:
+            raise ValueError("change_budget.allowed_operations must be non-empty")
+        if not self.allowed_roots:
+            raise ValueError("change_budget.allowed_roots must be non-empty")
+        invalid_allowed_layers = [item for item in self.allowed_layers if item not in ALLOWED_SCOPE_LAYERS]
+        invalid_forbidden_layers = [item for item in self.forbidden_layers if item not in ALLOWED_SCOPE_LAYERS]
+        invalid_operations = [item for item in self.allowed_operations if item not in ALLOWED_SCOPE_OPERATIONS]
+        if invalid_allowed_layers:
+            raise ValueError(f"change_budget.allowed_layers contains unsupported values: {', '.join(invalid_allowed_layers)}")
+        if invalid_forbidden_layers:
+            raise ValueError(f"change_budget.forbidden_layers contains unsupported values: {', '.join(invalid_forbidden_layers)}")
+        if invalid_operations:
+            raise ValueError(f"change_budget.allowed_operations contains unsupported values: {', '.join(invalid_operations)}")
+        overlap = sorted(set(self.allowed_layers) & set(self.forbidden_layers))
+        if overlap:
+            raise ValueError(f"change_budget cannot allow and forbid the same layer: {', '.join(overlap)}")
+        return self
+
+
+class InitialTarget(BaseModel):
+    kind: str
+    path: str
+    exists: bool
+    why_in_scope: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_initial_target(self) -> "InitialTarget":
+        if not self.kind.strip():
+            raise ValueError("initial_targets.kind must be non-empty")
+        if not self.path.strip():
+            raise ValueError("initial_targets.path must be non-empty")
+        if self.exists and not self.evidence:
+            raise ValueError("initial_targets.evidence must be non-empty when exists=true")
+        return self
 
 
 class FeatureScope(BaseModel):
@@ -46,6 +101,8 @@ class FeatureScope(BaseModel):
     risks_blockers: list[str] = Field(default_factory=list)
     recommended_next_step: str = ""
     execution_shape: Literal["ui-only", "backend-only", "full-stack"]
+    change_budget: ChangeBudget
+    initial_targets: list[InitialTarget] = Field(default_factory=list)
 
 
 class LaunchBriefSections(BaseModel):
@@ -355,6 +412,11 @@ def parse_feature_scope_block(
             "Scope task completion FEATURE_SCOPE.execution_shape must be explicitly set to ui-only | backend-only | full-stack."
         )
     payload["execution_shape"] = normalized_execution_shape
+    raw_change_budget = payload.get("change_budget")
+    if not isinstance(raw_change_budget, dict):
+        raise ScopeTaskValidationError(
+            "Scope task completion FEATURE_SCOPE.change_budget must be a valid object with allowed_layers, allowed_operations, allowed_roots, and forbidden_layers."
+        )
     if normalized is not None:
         _validate_feature_scope_matches_brief(payload=payload, normalized=normalized)
         payload.setdefault("source_request", normalized.sections.source_request)
@@ -370,6 +432,7 @@ def parse_feature_scope_block(
         raise ScopeTaskValidationError(
             "Scope task completion FEATURE_SCOPE block is malformed."
         ) from exc
+    _validate_feature_scope_change_budget(feature_scope)
     if not feature_scope.in_scope:
         raise ScopeTaskValidationError(
             "Scope task completion FEATURE_SCOPE block must include non-empty in_scope or scoped_brief data."
@@ -379,6 +442,53 @@ def parse_feature_scope_block(
             "Scope task completion FEATURE_SCOPE block must include a non-empty scoped_brief value."
         )
     return feature_scope
+
+
+def _validate_feature_scope_change_budget(feature_scope: FeatureScope) -> None:
+    budget = feature_scope.change_budget
+    allowed_layers = set(budget.allowed_layers)
+    forbidden_layers = set(budget.forbidden_layers)
+
+    validated_targets = [target for target in feature_scope.initial_targets if target.exists]
+    ui_targets = [target for target in validated_targets if target.kind in {"web-page", "web-component", "web-route"}]
+    backend_targets = [target for target in validated_targets if target.kind in {"backend-module", "api-handler", "db-query", "schema-file"}]
+
+    if feature_scope.execution_shape == "ui-only":
+        if not allowed_layers <= {"web-ui", "mobile-ui"}:
+            raise ScopeTaskValidationError(
+                "Scope task completion FEATURE_SCOPE.change_budget.allowed_layers must stay within web-ui/mobile-ui for ui-only execution_shape."
+            )
+        forbidden_required = {"backend", "api", "schema", "db", "crawler", "auth"}
+        if not forbidden_required.issubset(forbidden_layers):
+            raise ScopeTaskValidationError(
+                "ui-only FEATURE_SCOPE.change_budget.forbidden_layers must explicitly forbid backend/api/schema/db/crawler/auth."
+            )
+        if "web-ui" in allowed_layers and not ui_targets:
+            raise ScopeTaskValidationError(
+                "ui-only FEATURE_SCOPE.initial_targets must include at least one validated web target with exists=true and evidence."
+            )
+    if feature_scope.execution_shape == "backend-only":
+        if allowed_layers & {"web-ui", "mobile-ui"}:
+            raise ScopeTaskValidationError(
+                "backend-only FEATURE_SCOPE.change_budget.allowed_layers cannot include web-ui/mobile-ui."
+            )
+        if (allowed_layers & {"backend", "api", "schema", "db"}) and not backend_targets:
+            raise ScopeTaskValidationError(
+                "backend-only FEATURE_SCOPE.initial_targets must include at least one validated backend target with exists=true and evidence."
+            )
+    if feature_scope.execution_shape == "full-stack":
+        if not (allowed_layers & {"web-ui", "backend", "api"}):
+            raise ScopeTaskValidationError(
+                "full-stack FEATURE_SCOPE.change_budget.allowed_layers must include at least one frontend/backend execution layer."
+            )
+        if "web-ui" in allowed_layers and not ui_targets:
+            raise ScopeTaskValidationError(
+                "full-stack FEATURE_SCOPE.initial_targets must include at least one validated web target with exists=true and evidence when web-ui is allowed."
+            )
+        if (allowed_layers & {"backend", "api", "schema", "db"}) and not backend_targets:
+            raise ScopeTaskValidationError(
+                "full-stack FEATURE_SCOPE.initial_targets must include at least one validated backend target with exists=true and evidence when backend/api layers are allowed."
+            )
 
 
 def validate_scope_task_completion(

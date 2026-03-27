@@ -215,7 +215,7 @@ Deliver only the minimal safe fix.
 - dashboard rewrite
 
 ## FEATURE_SCOPE
-{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only"}
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 """.strip(),
         )
 
@@ -237,7 +237,7 @@ Deliver only the minimal safe fix.
 - dashboard rewrite
 
 ## FEATURE_SCOPE
-{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only"}
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"backend-only","change_budget":{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui"]},"initial_targets":[{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts"]}]}
 """.strip(),
             normalized=normalized,
         )
@@ -252,6 +252,8 @@ Deliver only the minimal safe fix.
             risks_blockers=["Final prod env remains unverified."],
             recommended_next_step="setup",
             execution_shape="backend-only",
+            change_budget={"allowed_layers": ["backend", "api"], "allowed_operations": ["edit-existing", "add-backend-module"], "allowed_roots": ["server/"], "forbidden_layers": ["web-ui", "mobile-ui"]},
+            initial_targets=[{"kind": "api-handler", "path": "server/src/routes/member.ts", "exists": True, "why_in_scope": "member API change required by scoped brief", "evidence": ["rg hit: server/src/routes/member.ts"]}],
         )
 
     def test_parse_feature_scope_block_requires_execution_shape(self):
@@ -304,7 +306,34 @@ Deliver only the minimal safe fix.
 - dashboard rewrite
 
 ## FEATURE_SCOPE
-{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"frontend-only"}
+{"scoped_brief":"Deliver only the minimal safe fix.","in_scope":["Deliver only the minimal safe fix."],"risks_blockers":["Final prod env remains unverified."],"recommended_next_step":"setup","execution_shape":"frontend-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend"]},"initial_targets":[{"kind":"web-page","path":"dashboard/src/pages/members.tsx","exists":true,"why_in_scope":"member list UI exists","evidence":["rg hit: dashboard/src/pages/members.tsx"]}]}
+""".strip(),
+            )
+
+    def test_parse_feature_scope_block_rejects_ui_scope_without_validated_initial_target(self):
+        with pytest.raises(
+            ScopeTaskValidationError,
+            match="initial_targets must include at least one validated web target",
+        ):
+            parse_feature_scope_block(
+                """
+## Source Request
+Polish the member list page UI only
+
+## Scoped Brief
+Deliver only the member list UI update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing web route should already exist
+
+## Out of Scope
+- backend rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the member list UI update.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing web route should already exist"],"out_of_scope":["backend rewrite"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[]}
 """.strip(),
             )
 
@@ -775,6 +804,21 @@ Polish the member list UI using the existing tests are representative assumption
                     "risks_blockers": ["Production deploy window not confirmed"],
                     "recommended_next_step": "setup",
                     "execution_shape": "backend-only",
+                    "change_budget": {
+                        "allowed_layers": ["backend", "api"],
+                        "allowed_operations": ["edit-existing", "add-backend-module"],
+                        "allowed_roots": ["server/"],
+                        "forbidden_layers": ["web-ui", "mobile-ui"],
+                    },
+                    "initial_targets": [
+                        {
+                            "kind": "api-handler",
+                            "path": "server/src/routes/member.ts",
+                            "exists": True,
+                            "why_in_scope": "member API change required by scoped brief",
+                            "evidence": ["rg hit: server/src/routes/member.ts"],
+                        }
+                    ],
                 }
             }
         )
@@ -789,6 +833,8 @@ Polish the member list UI using the existing tests are representative assumption
             risks_blockers=["Production deploy window not confirmed"],
             recommended_next_step="setup",
             execution_shape="backend-only",
+            change_budget={"allowed_layers": ["backend", "api"], "allowed_operations": ["edit-existing", "add-backend-module"], "allowed_roots": ["server/"], "forbidden_layers": ["web-ui", "mobile-ui"]},
+            initial_targets=[{"kind": "api-handler", "path": "server/src/routes/member.ts", "exists": True, "why_in_scope": "member API change required by scoped brief", "evidence": ["rg hit: server/src/routes/member.ts"]}],
         )
 
     def test_read_task_launch_brief_prefers_metadata_contract(self):
@@ -1053,6 +1099,8 @@ class TestLoadBuiltinTemplate:
         assert scope_call["metadata"]["template_stage"] == "scope"
         assert scope_call["metadata"]["feature_scope_required"] is True
         assert scope_call["metadata"]["materialization_mode"] == "post-scope"
+        assert "change_budget" in scope_call["description"]
+        assert "initial_targets" in scope_call["description"]
         assert scope_call["metadata"]["deferred_materialization_state"] == "pending_scope_completion"
 
         workflow_definition = scope_call["metadata"]["workflow_definition"]

@@ -47,6 +47,7 @@ from clawteam.templates import (
     find_scope_audit_warnings,
     inject_resolved_scope_context,
     validate_scope_task_completion,
+    read_feature_scope_metadata,
 )
 from clawteam.task.transition import (
     ReopenTaskEvent,
@@ -867,6 +868,17 @@ def _infer_execution_shape(feature_scope: dict[str, Any]) -> str:
     )
 
 
+def _validate_materialization_budget(feature_scope: dict[str, Any]) -> None:
+    parsed = read_feature_scope_metadata({"feature_scope": feature_scope})
+    if parsed is None:
+        raise TaskUpdateValidationError("post-scope materialization requires machine-readable feature_scope metadata")
+    budget = parsed.change_budget
+    if not budget.allowed_layers or not budget.allowed_operations or not budget.allowed_roots:
+        raise TaskUpdateValidationError(
+            "post-scope materialization requires FEATURE_SCOPE.change_budget with allowed_layers, allowed_operations, and allowed_roots"
+        )
+
+
 def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> tuple[TaskItem, TaskTransitionPlan, dict[str, Any]]:
     metadata = scope_task.metadata if isinstance(scope_task.metadata, dict) else {}
     workflow_definition = metadata.get("workflow_definition")
@@ -897,6 +909,7 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
         raise TaskUpdateValidationError("post-scope materialization requires the authored five-step-delivery workflow definition")
 
     execution_shape = _infer_execution_shape(feature_scope)
+    _validate_materialization_budget(feature_scope)
     selected_subjects = {
         "ui-only": [
             _FIVE_STEP_SETUP_SUBJECT,

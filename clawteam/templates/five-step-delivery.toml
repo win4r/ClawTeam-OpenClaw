@@ -235,6 +235,8 @@ Done when:
 4. 明确主要风险和依赖
 5. 明确建议下一步为 Setup
 6. 明确 execution_shape，且只能是 ui-only / backend-only / full-stack 之一
+7. 明确 change_budget：允许改动的层、允许新增/编辑的操作、允许触达的根目录、以及明确禁止的层
+8. 明确 initial_targets：至少给出本次已验证存在的候选目标（不是穷举所有文件），并附 evidence；不要把 assumption 直接当 release authority
 
 Do not:
 - 不要开始写代码
@@ -244,6 +246,8 @@ Do not:
 Before marking this task completed:
 - 必须先把本任务 description 更新为你的最终 structured brief
 - 必须追加一个 `## FEATURE_SCOPE` JSON block，且 `execution_shape` 必须明确填写为 `ui-only`、`backend-only` 或 `full-stack` 之一
+- `FEATURE_SCOPE.change_budget` 必须明确填写 allowed_layers / allowed_operations / allowed_roots / forbidden_layers；不要靠 prose 猜可改范围
+- `FEATURE_SCOPE.initial_targets` 必须列出至少一个已验证存在的候选目标；每个目标至少包含 kind / path / exists / evidence；不要要求穷举所有将被修改的文件
 - 不要直接 completed 而不写回最终 scope 结果
 
 Report as exact sections:
@@ -258,10 +262,14 @@ Report as exact sections:
 
 FEATURE_SCOPE JSON contract:
 - 必须是有效 JSON object
-- 必须包含: source_request, scoped_brief, in_scope, unknowns, leader_assumptions, out_of_scope, risks_blockers, recommended_next_step, execution_shape
+- 必须包含: source_request, scoped_brief, in_scope, unknowns, leader_assumptions, out_of_scope, risks_blockers, recommended_next_step, execution_shape, change_budget, initial_targets
 - execution_shape 只能是: ui-only | backend-only | full-stack
+- change_budget 必须包含: allowed_layers, allowed_operations, allowed_roots, forbidden_layers
+- initial_targets 必须是数组；每项至少包含: kind, path, exists, evidence
+- allowed_layers 只能使用: web-ui | backend | mobile-ui | api | schema | db | crawler | auth
+- allowed_operations 只能使用: edit-existing | add-ui-component | add-ui-style-file | add-backend-module | edit-config
 - 示例:
-  {{"source_request":"{goal}","scoped_brief":"<confirmed scope>","in_scope":["<deliverable>"],"unknowns":["none"],"leader_assumptions":["none"],"out_of_scope":["<excluded item>"],"risks_blockers":["<risk or none>"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"backend-only"}}
+  {{"source_request":"{goal}","scoped_brief":"<confirmed scope>","in_scope":["<deliverable>"],"unknowns":["none"],"leader_assumptions":["none"],"out_of_scope":["<excluded item>"],"risks_blockers":["<risk or none>"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"backend-only","change_budget":{{"allowed_layers":["backend","api"],"allowed_operations":["edit-existing","add-backend-module"],"allowed_roots":["server/"],"forbidden_layers":["web-ui","mobile-ui","schema"]}},"initial_targets":[{{"kind":"api-handler","path":"server/src/routes/member.ts","exists":true,"why_in_scope":"member API change required by scoped brief","evidence":["rg hit: server/src/routes/member.ts","route imported by server bootstrap"]}}]}}
 """
 
 [[template.tasks]]
