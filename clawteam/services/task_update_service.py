@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any, Callable
 
 
@@ -135,6 +136,46 @@ def _looks_like_command_evidence_block(value: str) -> bool:
     return any(line.startswith("-") and ("->" in line or ":" in line) for line in lines)
 
 
+def _normalize_bullet_block(value: str) -> list[str]:
+    text = (value or "").strip()
+    if not text:
+        return []
+    normalized: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not line.startswith("-"):
+            continue
+        entry = line[1:].strip()
+        if entry:
+            normalized.append(entry)
+    return normalized
+
+
+def _has_meaningful_bullets(value: str) -> bool:
+    entries = _normalize_bullet_block(value)
+    if not entries:
+        return False
+    blacklist = {
+        "none",
+        "n/a",
+        "na",
+        "no",
+        "no change",
+        "no changes",
+        "unchanged",
+        "no-op",
+        "noop",
+    }
+    for entry in entries:
+        normalized = entry.strip().lower()
+        if normalized in blacklist:
+            continue
+        if normalized.startswith("none"):
+            continue
+        return True
+    return False
+
+
 def _normalize_command_evidence_block(value: str) -> list[str]:
     text = (value or "").strip()
     if not text:
@@ -193,6 +234,46 @@ def _infer_runtime_handoff_from_setup_sections(sections: dict[str, str]) -> dict
     }
 
 
+def _parse_required_structured_result(
+    *,
+    existing: TaskItem,
+    request: TaskUpdateRequest,
+    message_type: str,
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    metadata = existing.metadata or {}
+    description = (request.description if request.description is not None else existing.description or "").strip()
+    if not description:
+        raise TaskTransitionValidationError(
+            f"{message_type.lower()} completion requires {message_type} via --description"
+        )
+    lines = description.splitlines()
+    header = (lines[0].strip() if lines else "")
+    if header != message_type:
+        raise TaskTransitionValidationError(
+            f"{message_type.lower()} completion requires {message_type} header via --description"
+        )
+
+    sections = _extract_structured_sections(description)
+    required_sections = [str(s).strip().lower() for s in (metadata.get("required_sections") or []) if str(s).strip()]
+    missing = [section for section in required_sections if section not in sections or not sections[section].strip()]
+    if missing:
+        raise TaskTransitionValidationError(
+            f"{message_type.lower()} completion missing required {message_type} sections: " + ", ".join(missing)
+        )
+    return description, sections, metadata
+
+
+def _git_changed_paths_since_head(*, repo_path: Path, base_head: str) -> set[str]:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{base_head}..HEAD"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
 def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
     if request.status != TaskStatus.completed:
         return
@@ -200,21 +281,11 @@ def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -
     if metadata.get("message_type") != "SETUP_RESULT":
         return
 
-    description = (request.description if request.description is not None else existing.description or "").strip()
-    if not description:
-        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT via --description")
-    lines = description.splitlines()
-    header = (lines[0].strip() if lines else "")
-    if header != "SETUP_RESULT":
-        raise TaskTransitionValidationError("setup completion requires SETUP_RESULT header via --description")
-
-    sections = _extract_structured_sections(description)
-    required_sections = [str(s).strip().lower() for s in (metadata.get("required_sections") or []) if str(s).strip()]
-    missing = [section for section in required_sections if section not in sections or not sections[section].strip()]
-    if missing:
-        raise TaskTransitionValidationError(
-            "setup completion missing required SETUP_RESULT sections: " + ", ".join(missing)
-        )
+    description, sections, _ = _parse_required_structured_result(
+        existing=existing,
+        request=request,
+        message_type="SETUP_RESULT",
+    )
 
     remote_status = sections.get("remote_status", "").strip().lower()
     if remote_status not in {"confirmed_latest", "cached_only", "unreachable"}:
@@ -250,6 +321,58 @@ def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -
     if remote_status == "confirmed_latest" and "ls-remote" not in description:
         raise TaskTransitionValidationError(
             "setup completion with remote_status=confirmed_latest requires explicit `git ls-remote` evidence"
+        )
+
+
+def _validate_dev_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
+    if request.status != TaskStatus.completed:
+        return
+    metadata = existing.metadata or {}
+    if metadata.get("message_type") != "DEV_RESULT":
+        return
+
+    _, sections, _ = _parse_required_structured_result(
+        existing=existing,
+        request=request,
+        message_type="DEV_RESULT",
+    )
+
+    changed_files = [line[1:].strip() for line in sections.get("changed_files", "").splitlines() if line.strip().startswith("-")]
+    if not changed_files:
+        raise TaskTransitionValidationError("DEV_RESULT completion requires changed_files evidence as a non-empty bullet list")
+    placeholder_values = {"none", "n/a", "na", "unchanged", "no changes"}
+    if any(item.lower() in placeholder_values for item in changed_files):
+        raise TaskTransitionValidationError("DEV_RESULT completion requires real changed_files evidence; placeholders are not allowed")
+
+    validation_block = sections.get("validation", "")
+    if not _looks_like_command_evidence_block(validation_block):
+        raise TaskTransitionValidationError("DEV_RESULT completion requires validation evidence in `- <command> -> <result>` form")
+
+    runtime_handoff = metadata.get("setup_runtime_handoff") if isinstance(metadata, dict) else None
+    detached_worktree = str((runtime_handoff or {}).get("detached_worktree") or "").strip()
+    detached_head = str((runtime_handoff or {}).get("detached_head") or "").strip()
+    if not detached_worktree or not detached_head:
+        raise TaskTransitionValidationError("DEV_RESULT completion requires setup_runtime_handoff with detached_worktree and detached_head")
+    if not _looks_like_sha(detached_head):
+        raise TaskTransitionValidationError("DEV_RESULT completion requires setup_runtime_handoff.detached_head to look like a git sha")
+
+    repo_path = Path(detached_worktree)
+    if not repo_path.exists():
+        raise TaskTransitionValidationError(
+            f"DEV_RESULT completion requires detached_worktree to exist for validation: {detached_worktree}"
+        )
+    try:
+        changed_since_base = _git_changed_paths_since_head(repo_path=repo_path, base_head=detached_head)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise TaskTransitionValidationError(
+            f"DEV_RESULT completion requires git diff evidence from detached_worktree: {exc}"
+        ) from exc
+
+    declared_changed_files = {Path(item).as_posix() for item in changed_files}
+    substantive_matches = sorted(path for path in changed_since_base if path in declared_changed_files)
+    if not substantive_matches:
+        raise TaskTransitionValidationError(
+            "DEV_RESULT completion requires at least one declared changed_file to differ from setup detached_head in detached_worktree"
         )
 
 
@@ -996,6 +1119,7 @@ def execute_task_update(
         )
 
     _validate_setup_completion(existing, request)
+    _validate_dev_completion(existing, request)
 
     generic_patch = _build_generic_task_patch(
         request=request,

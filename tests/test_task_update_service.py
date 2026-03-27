@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +24,23 @@ from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus
 from clawteam.team.tasks import TaskStore, TransitionApplyResult
 from clawteam.workspace.git import probe_remote_head
+
+
+def _git_run(repo: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def _init_repo_with_baseline(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_run(repo, "init")
+    _git_run(repo, "config", "user.name", "Test User")
+    _git_run(repo, "config", "user.email", "test@example.com")
+    (repo / "app.py").write_text("print('baseline')\n", encoding="utf-8")
+    _git_run(repo, "add", "app.py")
+    _git_run(repo, "commit", "-m", "baseline")
+    return repo, _git_run(repo, "rev-parse", "HEAD")
 
 
 def test_task_update_result_explicit_transition_case_wins_over_apply_result(monkeypatch, tmp_path):
@@ -694,6 +713,99 @@ next_action: handoff to implement
 
     assert result.task.status == TaskStatus.completed
     assert result.task.description.startswith("SETUP_RESULT")
+
+
+def test_execute_task_update_rejects_dev_completion_without_substantive_repo_change(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    repo, detached_head = _init_repo_with_baseline(tmp_path)
+    store = TaskStore("demo")
+    task = store.create(
+        "Implement backend/data changes with real validation",
+        owner="dev1",
+        metadata={
+            "template_stage": "implement",
+            "message_type": "DEV_RESULT",
+            "required_sections": ["status", "summary", "changed_files", "validation", "known_issues", "next_action"],
+            "setup_runtime_handoff": {
+                "detached_worktree": str(repo),
+                "detached_head": detached_head,
+            },
+        },
+    )
+    claimed = store.update(task.id, status=TaskStatus.in_progress, caller="dev1")
+
+    bad = """DEV_RESULT
+status: completed
+summary: rechecked the repo and baseline
+changed_files:
+- app.py
+validation:
+- pytest -q -> baseline still passes
+known_issues:
+- none
+next_action: handoff to qa
+"""
+
+    with pytest.raises(TaskUpdateValidationError, match="declared changed_file"):
+        execute_task_update(
+            task_id=task.id,
+            caller="dev1",
+            ctx=TaskUpdateContext(store=store, team="demo", runtime=RuntimeOrchestrator(team="demo"), release_notifier=lambda *a, **k: None, failure_notifier=lambda *a, **k: None),
+            request=TaskUpdateRequest(status=TaskStatus.completed, owner=None, subject=None, description=bad, add_blocks=None, add_blocked_by=None, add_on_fail=None, failure_kind=None, failure_note=None, failure_root_cause=None, failure_evidence=None, failure_recommended_next_owner=None, failure_recommended_action=None, execution_id=claimed.active_execution_id, wake_owner=False, message="", force=False),
+        )
+
+
+def test_execute_task_update_accepts_dev_completion_with_real_repo_change(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    repo, detached_head = _init_repo_with_baseline(tmp_path)
+    (repo / "app.py").write_text("print('implemented change')\n", encoding="utf-8")
+    _git_run(repo, "commit", "-am", "implement change")
+
+    store = TaskStore("demo")
+    task = store.create(
+        "Implement backend/data changes with real validation",
+        owner="dev1",
+        metadata={
+            "template_stage": "implement",
+            "message_type": "DEV_RESULT",
+            "required_sections": ["status", "summary", "changed_files", "validation", "known_issues", "next_action"],
+            "setup_runtime_handoff": {
+                "detached_worktree": str(repo),
+                "detached_head": detached_head,
+            },
+        },
+    )
+    claimed = store.update(task.id, status=TaskStatus.in_progress, caller="dev1")
+
+    good = """DEV_RESULT
+status: completed
+summary: implemented the backend change
+changed_files:
+- app.py
+validation:
+- python app.py -> implemented change
+known_issues:
+- none
+next_action: handoff to qa
+"""
+
+    result = execute_task_update(
+        task_id=task.id,
+        caller="dev1",
+        ctx=TaskUpdateContext(store=store, team="demo", runtime=RuntimeOrchestrator(team="demo"), release_notifier=lambda *a, **k: None, failure_notifier=lambda *a, **k: None),
+        request=TaskUpdateRequest(status=TaskStatus.completed, owner=None, subject=None, description=good, add_blocks=None, add_blocked_by=None, add_on_fail=None, failure_kind=None, failure_note=None, failure_root_cause=None, failure_evidence=None, failure_recommended_next_owner=None, failure_recommended_action=None, execution_id=claimed.active_execution_id, wake_owner=False, message="", force=False),
+    )
+
+    assert result.task.status == TaskStatus.completed
+    assert result.task.description.startswith("DEV_RESULT")
 
 
 def test_probe_remote_head_classifies_timeout_as_cached_only(monkeypatch, tmp_path):
