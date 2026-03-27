@@ -513,11 +513,31 @@ def team_cleanup(
         _output({"status": "not_found", "team": team}, lambda d: console.print(f"[yellow]Team '{team}' not found[/yellow]"))
 
 
+def _workspace_cwd_from_info(repo: str | None, ws_info) -> str:
+    from pathlib import Path as _Path
+
+    cwd = ws_info.worktree_path
+    subpath = getattr(ws_info, "repo_subpath", "") or ""
+    if subpath:
+        return str((_Path(ws_info.worktree_path) / subpath).resolve())
+    if repo:
+        requested_repo = _Path(repo).expanduser().resolve()
+        repo_root = _Path(ws_info.repo_root).resolve()
+        try:
+            relative_repo = requested_repo.relative_to(repo_root)
+        except ValueError:
+            relative_repo = None
+        if relative_repo and str(relative_repo) != ".":
+            return str((_Path(ws_info.worktree_path) / relative_repo).resolve())
+    return cwd
+
+
 @team_app.command("status")
 def team_status(
     team: str = typer.Argument(..., help="Team name"),
 ):
     """Show team status and members."""
+    from clawteam.spawn.registry import is_agent_alive
     from clawteam.team.manager import TeamManager
 
     config = TeamManager.get_team(team)
@@ -530,7 +550,13 @@ def team_status(
         "description": config.description,
         "leadAgentId": config.lead_agent_id,
         "createdAt": config.created_at,
-        "members": [m.model_dump(by_alias=True) for m in config.members],
+        "members": [
+            {
+                **m.model_dump(by_alias=True),
+                "alive": is_agent_alive(team, m.name),
+            }
+            for m in config.members
+        ],
     }
 
     def _human(d):
@@ -545,14 +571,18 @@ def team_status(
             table.add_column("User", style="magenta")
         table.add_column("ID", style="dim")
         table.add_column("Type")
+        table.add_column("Alive")
         table.add_column("Joined", style="dim")
         for m in d["members"]:
             row = [m.get("name", "")]
             if has_user:
                 row.append(m.get("user", ""))
+            alive = m.get("alive")
+            alive_label = "yes" if alive is True else "no" if alive is False else "unknown"
             row.extend([
                 m.get("agentId", ""),
                 m.get("agentType", ""),
+                alive_label,
                 (m.get("joinedAt") or "")[:19],
             ])
             table.add_row(*row)
@@ -1552,6 +1582,9 @@ def lifecycle_on_exit(
 
     This is called automatically as a post-exit hook when an agent process terminates.
     """
+    import subprocess
+
+    from clawteam.spawn.registry import get_agent_info
     from clawteam.spawn.sessions import SessionStore
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
@@ -1578,6 +1611,24 @@ def lifecycle_on_exit(
     for t in abandoned:
         store.update(t.id, status=TaskStatus.pending)
 
+    exit_detail = ""
+    info = get_agent_info(team, agent)
+    if info and info.get("backend") == "tmux" and info.get("tmux_target"):
+        try:
+            pane = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", info["tmux_target"], "-S", "-80"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if pane.returncode == 0 and pane.stdout.strip():
+                lines = [line.rstrip() for line in pane.stdout.splitlines() if line.strip()]
+                tail = " | ".join(lines[-6:])
+                if tail:
+                    exit_detail = f" Last output: {tail[:700]}"
+        except (subprocess.TimeoutExpired, OSError):
+            exit_detail = ""
+
     # Notify leader
     leader_name = TeamManager.get_leader_name(team)
     if leader_name:
@@ -1587,7 +1638,7 @@ def lifecycle_on_exit(
             from_agent=agent,
             to=leader_name,
             content=f"Agent '{agent}' exited unexpectedly. "
-                    f"Reset {len(abandoned)} task(s) to pending: {task_subjects}",
+                    f"Reset {len(abandoned)} task(s) to pending: {task_subjects}.{exit_detail}",
         )
 
     _output(
@@ -1710,7 +1761,7 @@ def spawn_agent(
                 raise typer.Exit(1)
         else:
             ws_info = ws_mgr.create_workspace(team_name=_team, agent_name=_name, agent_id=_id)
-            cwd = ws_info.worktree_path
+            cwd = _workspace_cwd_from_info(repo, ws_info)
             ws_branch = ws_info.branch_name
             console.print(f"[dim]Workspace: {cwd} (branch: {ws_branch})[/dim]")
 
@@ -2293,7 +2344,7 @@ def launch_team(
             ws_info = ws_mgr.create_workspace(
                 team_name=t_name, agent_name=agent.name, agent_id=a_id,
             )
-            cwd = ws_info.worktree_path
+            cwd = _workspace_cwd_from_info(repo, ws_info)
             ws_branch = ws_info.branch_name
 
         # Build prompt

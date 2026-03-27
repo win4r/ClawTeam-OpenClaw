@@ -40,6 +40,13 @@ def get_registry(team_name: str) -> dict[str, dict]:
     return _load(_registry_path(team_name))
 
 
+def get_agent_info(team_name: str, agent_name: str) -> dict | None:
+    """Return persisted spawn info for a single agent, if any."""
+    registry = get_registry(team_name)
+    info = registry.get(agent_name)
+    return info if isinstance(info, dict) else None
+
+
 def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
     """Check if a spawned agent process is still alive.
 
