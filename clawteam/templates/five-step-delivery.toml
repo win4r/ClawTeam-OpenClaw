@@ -1,9 +1,10 @@
 [template]
 name = "five-step-delivery"
-description = "Reusable delivery workflow: Scope -> Setup -> parallel implementation passes -> parallel verification passes -> Review -> Deliver"
+description = "Reusable delivery workflow: Scope -> Setup -> parallel implementation passes -> parallel verification passes -> Review -> Deliver (post-scope-only materialization)"
 command = ["openclaw"]
 backend = "tmux"
-topology_mode = "delivery-default"
+topology_mode = "post-scope-only"
+materialization_mode = "post-scope"
 
 [template.leader]
 name = "leader"
