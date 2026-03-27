@@ -132,6 +132,48 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
     assert "--execution-id" not in prompt
 
 
+def test_build_worker_task_prompt_includes_machine_runtime_handoff(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("CLAWTEAM_AGENT_TYPE", "general-purpose")
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    task = TaskStore("demo").create(
+        subject="Fix thing",
+        description="Real task",
+        owner="qa1",
+        metadata={
+            "setup_runtime_handoff": {
+                "detached_worktree": "/tmp/demo/.worktrees/setup-123",
+                "detached_head": "9e8f87f",
+                "remote_status": "cached_only",
+                "remote_head": "03bdc8f",
+                "venv_path": ".venv",
+                "activation_commands": [
+                    "source .venv/bin/activate",
+                    "cd /tmp/demo/.worktrees/setup-123 && source .venv/bin/activate",
+                ],
+                "baseline_commands": ["source .venv/bin/activate && pytest -q -> 336 passed in 2.30s"],
+                "install_commands": ["python3 -m venv .venv && source .venv/bin/activate && python -m pip install -e '.[dev]' -> success"],
+            }
+        },
+    )
+
+    prompt = build_worker_task_prompt(
+        team_name="demo",
+        agent_name="qa1",
+        leader_name="leader",
+        task=task,
+    )
+
+    assert "## Machine Runtime Handoff" in prompt
+    assert "Use detached worktree from setup: `/tmp/demo/.worktrees/setup-123`" in prompt
+    assert "Required virtualenv path: `.venv`" in prompt
+    assert "Activation command(s) proven in setup:" in prompt
+    assert "Baseline command(s) proven in setup:" in prompt
+    assert "Reuse this environment before inventing your own validation path." in prompt
+
+
 def test_infer_terminal_status_from_transcript_tail_accepts_qa_pass_with_risk():
     transcript = """
 QA_RESULT

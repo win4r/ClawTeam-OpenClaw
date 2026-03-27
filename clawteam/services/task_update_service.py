@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import PurePath
 from typing import Any, Callable
 
 
@@ -132,6 +133,64 @@ def _looks_like_command_evidence_block(value: str) -> bool:
         return False
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return any(line.startswith("-") and ("->" in line or ":" in line) for line in lines)
+
+
+def _normalize_command_evidence_block(value: str) -> list[str]:
+    text = (value or "").strip()
+    if not text:
+        return []
+    normalized: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not line.startswith("-"):
+            continue
+        normalized.append(line[1:].strip())
+    return normalized
+
+
+def _infer_runtime_handoff_from_setup_sections(sections: dict[str, str]) -> dict[str, Any]:
+    detached_worktree = sections.get("detached_worktree", "").strip()
+    detached_head = sections.get("detached_head", "").strip()
+    remote_status = sections.get("remote_status", "").strip().lower()
+    remote_head = sections.get("remote_head", "").strip()
+    install_commands = _normalize_command_evidence_block(sections.get("install", ""))
+    baseline_commands = _normalize_command_evidence_block(sections.get("baseline_validation", ""))
+
+    venv_path = ""
+    for entry in [*install_commands, *baseline_commands]:
+        match = re.search(r"(?:^|[\s'\"])\.venv(?:/|['\"]|\s|$)", entry)
+        if match:
+            venv_path = ".venv"
+            break
+
+    activation_commands: list[str] = []
+    if venv_path:
+        activation_commands.append(f"source {venv_path}/bin/activate")
+        if detached_worktree and detached_worktree.lower() != "none":
+            activation_commands.append(
+                f"cd {detached_worktree} && source {venv_path}/bin/activate"
+            )
+
+    detached_worktree_name = ""
+    if detached_worktree and detached_worktree.lower() != "none":
+        try:
+            detached_worktree_name = PurePath(detached_worktree).name
+        except Exception:
+            detached_worktree_name = ""
+
+    return {
+        "version": 1,
+        "source_task_stage": "setup",
+        "remote_status": remote_status,
+        "remote_head": remote_head,
+        "detached_worktree": detached_worktree,
+        "detached_worktree_name": detached_worktree_name,
+        "detached_head": detached_head,
+        "install_commands": install_commands,
+        "baseline_commands": baseline_commands,
+        "venv_path": venv_path,
+        "activation_commands": activation_commands,
+    }
 
 
 def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
@@ -309,26 +368,84 @@ def _scope_payload(task: TaskItem) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _setup_runtime_handoff_payload(task: TaskItem) -> dict[str, Any] | None:
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    existing = metadata.get("runtime_handoff")
+    if isinstance(existing, dict):
+        return existing
+    if metadata.get("message_type") != "SETUP_RESULT":
+        return None
+    description = (task.description or "").strip()
+    if not description.startswith("SETUP_RESULT"):
+        return None
+    sections = _extract_structured_sections(description)
+    if not sections:
+        return None
+    return _infer_runtime_handoff_from_setup_sections(sections)
+
+
+def _render_runtime_handoff_context(payload: dict[str, Any]) -> str:
+    detached_worktree = str(payload.get("detached_worktree") or "").strip()
+    detached_head = str(payload.get("detached_head") or "").strip()
+    remote_status = str(payload.get("remote_status") or "").strip()
+    remote_head = str(payload.get("remote_head") or "").strip()
+    venv_path = str(payload.get("venv_path") or "").strip()
+    activation_commands = [str(item).strip() for item in (payload.get("activation_commands") or []) if str(item).strip()]
+    baseline_commands = [str(item).strip() for item in (payload.get("baseline_commands") or []) if str(item).strip()]
+    install_commands = [str(item).strip() for item in (payload.get("install_commands") or []) if str(item).strip()]
+
+    lines = ["## Setup Runtime Handoff"]
+    if detached_worktree:
+        lines.append(f"- Detached worktree: `{detached_worktree}`")
+    if detached_head:
+        lines.append(f"- Detached HEAD: `{detached_head}`")
+    if remote_status:
+        remote_line = f"- Remote status: `{remote_status}`"
+        if remote_head:
+            remote_line += f" (`{remote_head}`)"
+        lines.append(remote_line)
+    if venv_path:
+        lines.append(f"- Expected virtualenv: `{venv_path}`")
+    if activation_commands:
+        lines.append("- Activation commands:")
+        lines.extend(f"  - `{item}`" for item in activation_commands)
+    if baseline_commands:
+        lines.append("- Baseline commands proven in setup:")
+        lines.extend(f"  - `{item}`" for item in baseline_commands)
+    if install_commands:
+        lines.append("- Install commands observed in setup:")
+        lines.extend(f"  - `{item}`" for item in install_commands)
+    lines.append("- Treat this handoff as runtime contract, not optional advice.")
+    return "\n".join(lines)
+
+
 def _propagate_resolved_scope_to_targets(
     *,
     store: TaskStore,
     target_ids: list[str],
     scope_payload: dict[str, Any],
     scope_warnings: list[dict[str, Any]] | None = None,
+    runtime_handoff: dict[str, Any] | None = None,
 ) -> None:
     for target_id in target_ids:
         target = store.get(target_id)
         if target is None:
             continue
         patched_metadata = dict(getattr(target, "metadata", {}) or {})
-        patched_metadata["resolved_scope"] = scope_payload
-        if scope_warnings is not None:
-            patched_metadata["scope_audit_warnings"] = scope_warnings
-        patched_description = inject_resolved_scope_context(
-            description=getattr(target, "description", "") or "",
-            normalized=scope_payload,
-            scope_audit_warnings=scope_warnings,
-        )
+        patched_description = getattr(target, "description", "") or ""
+        if scope_payload:
+            patched_metadata["resolved_scope"] = scope_payload
+            if scope_warnings is not None:
+                patched_metadata["scope_audit_warnings"] = scope_warnings
+            patched_description = inject_resolved_scope_context(
+                description=patched_description,
+                normalized=scope_payload,
+                scope_audit_warnings=scope_warnings,
+            )
+        if runtime_handoff is not None:
+            patched_metadata["setup_runtime_handoff"] = runtime_handoff
+        if runtime_handoff is not None and "## Setup Runtime Handoff" not in patched_description:
+            patched_description = (patched_description.rstrip() + "\n\n" + _render_runtime_handoff_context(runtime_handoff)).strip()
         store.update(
             target_id,
             description=patched_description,
@@ -528,12 +645,21 @@ def execute_task_update_effects(
     """Execute post-update side effects after the task store mutation succeeds."""
     scope_payload = _scope_payload(task)
     scope_warnings = task.metadata.get("scope_audit_warnings") if isinstance(task.metadata, dict) else None
-    if scope_payload and dependent_ids_to_wake:
+    runtime_handoff = _setup_runtime_handoff_payload(task)
+    if isinstance(task.metadata, dict) and task.metadata.get("message_type") == "SETUP_RESULT" and runtime_handoff:
+        current_metadata = dict(task.metadata)
+        if current_metadata.get("runtime_handoff") != runtime_handoff:
+            current_metadata["runtime_handoff"] = runtime_handoff
+            updated_task = ctx.store.update(task.id, metadata=current_metadata)
+            if updated_task is not None:
+                task = updated_task
+    if dependent_ids_to_wake and (scope_payload or runtime_handoff):
         _propagate_resolved_scope_to_targets(
             store=ctx.store,
             target_ids=dependent_ids_to_wake,
-            scope_payload=scope_payload,
+            scope_payload=scope_payload or {},
             scope_warnings=scope_warnings if isinstance(scope_warnings, list) else None,
+            runtime_handoff=runtime_handoff,
         )
 
     wake = None

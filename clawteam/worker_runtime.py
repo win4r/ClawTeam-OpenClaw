@@ -93,6 +93,52 @@ def load_startup_prompt(path: str | None) -> str:
         return ""
 
 
+def _render_setup_runtime_handoff_prompt_block(task: Any) -> list[str]:
+    metadata = getattr(task, "metadata", None)
+    if not isinstance(metadata, dict):
+        return []
+    payload = metadata.get("setup_runtime_handoff")
+    if not isinstance(payload, dict) or not payload:
+        return []
+
+    lines = ["", "## Machine Runtime Handoff"]
+    detached_worktree = str(payload.get("detached_worktree") or "").strip()
+    detached_head = str(payload.get("detached_head") or "").strip()
+    remote_status = str(payload.get("remote_status") or "").strip()
+    remote_head = str(payload.get("remote_head") or "").strip()
+    venv_path = str(payload.get("venv_path") or "").strip()
+    activation_commands = [str(item).strip() for item in (payload.get("activation_commands") or []) if str(item).strip()]
+    baseline_commands = [str(item).strip() for item in (payload.get("baseline_commands") or []) if str(item).strip()]
+    install_commands = [str(item).strip() for item in (payload.get("install_commands") or []) if str(item).strip()]
+
+    if detached_worktree:
+        lines.append(f"- Use detached worktree from setup: `{detached_worktree}`")
+    if detached_head:
+        lines.append(f"- Detached HEAD proven by setup: `{detached_head}`")
+    if remote_status:
+        remote_line = f"- Remote status from setup: `{remote_status}`"
+        if remote_head:
+            remote_line += f" (`{remote_head}`)"
+        lines.append(remote_line)
+    if venv_path:
+        lines.append(f"- Required virtualenv path: `{venv_path}`")
+    if activation_commands:
+        lines.append("- Activation command(s) proven in setup:")
+        lines.extend(f"  - `{item}`" for item in activation_commands)
+    if baseline_commands:
+        lines.append("- Baseline command(s) proven in setup:")
+        lines.extend(f"  - `{item}`" for item in baseline_commands)
+    if install_commands:
+        lines.append("- Install command(s) observed in setup:")
+        lines.extend(f"  - `{item}`" for item in install_commands)
+    lines.extend([
+        "- This handoff is machine-derived from SETUP_RESULT.",
+        "- Reuse this environment before inventing your own validation path.",
+        "- If this contract is unusable, report that exact mismatch as the blocker.",
+    ])
+    return lines
+
+
 def build_worker_task_prompt(
     *,
     team_name: str,
@@ -123,6 +169,7 @@ def build_worker_task_prompt(
         ])
     if task.description:
         lines.extend(["", "## Description", task.description])
+    lines.extend(_render_setup_runtime_handoff_prompt_block(task))
     clawteam_bin = resolve_clawteam_executable()
     shell_exports = [
         ("CLAWTEAM_AGENT_NAME", agent_name),

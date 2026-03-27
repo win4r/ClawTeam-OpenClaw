@@ -14,6 +14,7 @@ from clawteam.services.task_update_service import (
     TaskUpdateResult,
     TaskUpdateValidationError,
     _build_dependency_completion_message,
+    _infer_runtime_handoff_from_setup_sections,
     execute_task_update,
     execute_task_update_effects,
 )
@@ -1276,6 +1277,102 @@ def test_build_dependency_completion_message_includes_structured_qa_context(monk
     assert "- status: pass_with_risk" in message
     assert "- summary: Main goal validated" in message
     assert "- risk: - failed branch remains unvalidated" in message
+
+
+def test_infer_runtime_handoff_from_setup_sections_extracts_venv_and_baseline_commands():
+    payload = _infer_runtime_handoff_from_setup_sections(
+        {
+            "remote_status": "cached_only",
+            "remote_head": "03bdc8f",
+            "detached_worktree": "/tmp/demo/.worktrees/setup-123",
+            "detached_head": "9e8f87f",
+            "install": (
+                "- python3 -m pip install -e '.[dev]' -> failed: PEP 668\n"
+                "- python3 -m venv .venv && source .venv/bin/activate && python -m pip install -e '.[dev]' -> success"
+            ),
+            "baseline_validation": "- source .venv/bin/activate && pytest -q -> 336 passed in 2.30s",
+        }
+    )
+
+    assert payload["version"] == 1
+    assert payload["source_task_stage"] == "setup"
+    assert payload["venv_path"] == ".venv"
+    assert payload["detached_worktree"] == "/tmp/demo/.worktrees/setup-123"
+    assert payload["detached_worktree_name"] == "setup-123"
+    assert payload["activation_commands"] == [
+        "source .venv/bin/activate",
+        "cd /tmp/demo/.worktrees/setup-123 && source .venv/bin/activate",
+    ]
+    assert payload["baseline_commands"] == ["source .venv/bin/activate && pytest -q -> 336 passed in 2.30s"]
+
+
+def test_execute_task_update_effects_propagates_setup_runtime_handoff_to_dependents(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    setup = store.create(
+        "Prepare repo, branch, env, and runnable baseline",
+        owner="config1",
+        metadata={"message_type": "SETUP_RESULT"},
+    )
+    setup = store.update(
+        setup.id,
+        status=TaskStatus.completed,
+        caller="config1",
+        description=(
+            "SETUP_RESULT\n"
+            "status: completed\n"
+            "remote_status: cached_only\n"
+            "remote_head: 03bdc8f\n"
+            "detached_worktree: /tmp/demo/.worktrees/setup-123\n"
+            "detached_head: 9e8f87f\n"
+            "install:\n"
+            "- python3 -m venv .venv && source .venv/bin/activate && python -m pip install -e '.[dev]' -> success\n"
+            "baseline_validation:\n"
+            "- source .venv/bin/activate && pytest -q -> 336 passed in 2.30s\n"
+            "known_limitations:\n"
+            "- none\n"
+            "next_action: handoff to implement"
+        ),
+    )
+    assert setup is not None
+    impl = store.create("Implement fix", owner="dev1", description="Original implement brief")
+
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda *args, **kwargs: [{"taskId": impl.id, "owner": "dev1", "respawned": False}],
+    )
+
+    execute_task_update_effects(
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        task=setup,
+        caller="config1",
+        wake_owner=False,
+        message="",
+        dependent_ids_to_wake=[impl.id],
+        failed_targets_to_wake=[],
+    )
+
+    updated_setup = store.get(setup.id)
+    updated_impl = store.get(impl.id)
+    assert updated_setup is not None and updated_impl is not None
+    assert updated_setup.metadata["runtime_handoff"]["venv_path"] == ".venv"
+    assert updated_impl.metadata["setup_runtime_handoff"]["detached_worktree"] == "/tmp/demo/.worktrees/setup-123"
+    assert updated_impl.metadata["setup_runtime_handoff"]["baseline_commands"] == [
+        "source .venv/bin/activate && pytest -q -> 336 passed in 2.30s"
+    ]
+    assert "## Setup Runtime Handoff" in updated_impl.description
+    assert "Treat this handoff as runtime contract" in updated_impl.description
 
 
 def test_execute_task_update_rejects_scope_completion_without_structured_description(monkeypatch, tmp_path):
