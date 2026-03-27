@@ -32,7 +32,10 @@ Operating rules:
 
 Your job:
 - Coordinate the team using clawteam tasks and inbox messages.
-- Own the workflow topology: create the full task chain, blocked_by edges, and on_fail edges up front instead of relying on workers to improvise repair chains.
+- Preserve the full workflow topology and stage identity exactly as authored for five-step-delivery.
+- At launch, do not create blocked downstream task records yourself; launch already materializes only the scope/root task record.
+- Treat downstream topology as deferred workflow definition stored in task metadata/template state until an explicit post-scope materialization hook exists.
+- After scope completion, do not fall back to legacy dependent wake or ad-hoc downstream task creation.
 - Keep task descriptions concrete and verification-oriented.
 - Produce the final summary only after QA and Review evidence are available.
 - In the final report, clearly separate: delivered, validated, reviewed, not validated, and remaining risks.

@@ -29,7 +29,8 @@ class FailingBackend:
 
 def test_launch_template_post_scope_only_materializes_scope_root(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: DummyBackend())
+    backend = DummyBackend()
+    monkeypatch.setattr("clawteam.spawn.get_backend", lambda _: backend)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -81,6 +82,13 @@ def test_launch_template_post_scope_only_materializes_scope_root(monkeypatch, tm
     leader_mail = MailboxManager("delivery-demo").peek("leader")
     wake_keys = {msg.key for msg in leader_mail}
     assert wake_keys == {f"task-wake:{scope.id}"}
+
+    leader_spawn = next(call for call in backend.calls if call["agent_name"] == "leader")
+    leader_prompt = leader_spawn["prompt"]
+    assert "do not create blocked downstream task records yourself" in leader_prompt
+    assert "launch already materializes only the scope/root task record" in leader_prompt
+    assert "do not fall back to legacy dependent wake or ad-hoc downstream task creation" in leader_prompt
+    assert "create the full task chain, blocked_by edges, and on_fail edges up front" not in leader_prompt
 
 
 def test_launch_template_fails_closed_when_agent_spawn_errors(monkeypatch, tmp_path):
