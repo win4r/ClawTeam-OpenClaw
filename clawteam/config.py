@@ -20,6 +20,7 @@ class ClawTeamConfig(BaseModel):
     auto_respawn: bool = True
     respawn_backoff_seconds: int = 30
     max_respawns_per_agent: int = 2
+    max_parallel_agents: int = 4
 
 
 def config_path() -> Path:
@@ -64,6 +65,7 @@ def get_effective(key: str) -> tuple[str, str]:
         "auto_respawn": "CLAWTEAM_AUTO_RESPAWN",
         "respawn_backoff_seconds": "CLAWTEAM_RESPAWN_BACKOFF_SECONDS",
         "max_respawns_per_agent": "CLAWTEAM_MAX_RESPAWNS_PER_AGENT",
+        "max_parallel_agents": "CLAWTEAM_MAX_PARALLEL_AGENTS",
     }
     defaults = ClawTeamConfig()
     cfg = load_config()

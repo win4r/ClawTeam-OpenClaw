@@ -6,6 +6,7 @@ from clawteam.team.leader_loop import LeaderLoop, LeaderLoopConfig
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 from clawteam.team.tasks import TaskStore
+from clawteam.team.models import TaskStatus
 
 
 class _FakeBackend:
@@ -104,6 +105,52 @@ def test_leader_loop_stops_after_retry_budget_exhausted():
     assert len(first["failed"]) == 1
     assert any(item["reason"] in ("retry_exhausted", "permanent_failure") for item in second["skipped"])
     assert len(fake_backend.calls) == 1
+
+
+def test_leader_loop_respects_max_parallel_agents_limit():
+    TeamManager.create_team(name="team-loop-parallel", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member(team_name="team-loop-parallel", member_name="worker1", agent_id="worker001")
+    TeamManager.add_member(team_name="team-loop-parallel", member_name="worker2", agent_id="worker002")
+
+    store = TaskStore("team-loop-parallel")
+    store.create(subject="task1", owner="worker1")
+    task2 = store.create(subject="task2", owner="worker2")
+    store.update(task2.id, status=TaskStatus.in_progress, caller="worker2", force=True)
+
+    mailbox = MailboxManager("team-loop-parallel")
+    fake_backend = _FakeBackend("Agent 'worker1' spawned as subprocess")
+
+    loop = LeaderLoop(
+        "team-loop-parallel",
+        mailbox,
+        config=LeaderLoopConfig(auto_respawn=True, respawn_backoff_seconds=0, max_respawns_per_agent=2, max_parallel_agents=1),
+    )
+
+    with patch("clawteam.team.leader_loop.list_dead_agents", return_value=["worker1"]), patch(
+        "clawteam.team.leader_loop.get_registry",
+        return_value={"worker1": {"backend": "subprocess", "command": ["openclaw"]}},
+    ), patch("clawteam.team.leader_loop.get_backend", return_value=fake_backend):
+        result = loop.run_once()
+
+    assert len(result["respawned"]) == 0
+    assert any(item["reason"] == "parallel_limit" for item in result["skipped"])
+    assert len(fake_backend.calls) == 0
+
+
+def test_leader_loop_run_forever_stops_when_done():
+    TeamManager.create_team(name="team-loop-done", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member(team_name="team-loop-done", member_name="worker1", agent_id="worker001")
+    store = TaskStore("team-loop-done")
+    task = store.create(subject="done", owner="worker1")
+    store.update(task.id, status=TaskStatus.completed, caller="worker1", force=True)
+
+    mailbox = MailboxManager("team-loop-done")
+    loop = LeaderLoop("team-loop-done", mailbox)
+
+    with patch.object(loop, "run_once", return_value={}) as run_once:
+        loop.run_forever(interval_seconds=0.01, stop_when_done=True)
+
+    assert run_once.call_count == 1
 
 
 def test_leader_loop_switching_backend_policy_resets_permanent_failure_and_uses_default_backend():

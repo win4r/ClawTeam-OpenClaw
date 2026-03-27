@@ -25,6 +25,7 @@ class LeaderLoopConfig:
     auto_respawn: bool = True
     respawn_backoff_seconds: int = 30
     max_respawns_per_agent: int = 2
+    max_parallel_agents: int = 4
 
 
 class LeaderLoop:
@@ -38,6 +39,13 @@ class LeaderLoop:
     def run_once(self) -> dict:
         released = self.task_store.release_stale_locks()
         dead_agents = list_dead_agents(self.team_name)
+
+        in_progress = self.task_store.list_tasks(status=TaskStatus.in_progress)
+        active_agents = {
+            t.owner
+            for t in in_progress
+            if t.owner
+        }
 
         # Bootstrap: treat members with no registry entry as "dead" so the
         # loop spawns them without manual intervention.
@@ -53,6 +61,7 @@ class LeaderLoop:
             "team": self.team_name,
             "released_locks": released,
             "dead_agents": dead_agents,
+            "active_agents": sorted(active_agents),
             "respawned": [],
             "skipped": [],
             "failed": [],
@@ -102,6 +111,11 @@ class LeaderLoop:
                 result["skipped"].append({"agent": agent_name, "reason": "backoff"})
                 continue
 
+            # Resource guard: cap active workers to reduce OOM / overload cascades.
+            if self.config.max_parallel_agents > 0 and len(active_agents) >= self.config.max_parallel_agents:
+                result["skipped"].append({"agent": agent_name, "reason": "parallel_limit"})
+                continue
+
             ok, info = self._respawn_agent(agent_name)
             agent_state["last_attempt"] = now
             agent_state["attempts"] = int(agent_state.get("attempts", 0)) + 1
@@ -109,6 +123,7 @@ class LeaderLoop:
             if ok:
                 agent_state["last_error"] = ""
                 result["respawned"].append({"agent": agent_name, **info})
+                active_agents.add(agent_name)
                 self._notify_leader(
                     f"Auto-respawned '{agent_name}' via {info.get('backend')} backend. "
                     f"Task: {info.get('task_id', '-')}."
@@ -126,9 +141,11 @@ class LeaderLoop:
         self._save_state(state)
         return result
 
-    def run_forever(self, interval_seconds: float = 10.0) -> None:
+    def run_forever(self, interval_seconds: float = 10.0, stop_when_done: bool = False) -> None:
         while True:
             self.run_once()
+            if stop_when_done and self._all_tasks_completed():
+                return
             time.sleep(interval_seconds)
 
     def _respawn_agent(self, agent_name: str) -> tuple[bool, dict]:
@@ -195,6 +212,12 @@ class LeaderLoop:
             content=content,
         )
 
+    def _all_tasks_completed(self) -> bool:
+        tasks = self.task_store.list_tasks()
+        if not tasks:
+            return False
+        return all(t.status == TaskStatus.completed for t in tasks)
+
     def _load_state(self) -> dict:
         if not self._state_path.exists():
             return {"agents": {}}
@@ -214,6 +237,7 @@ def _load_config_from_effective() -> LeaderLoopConfig:
     auto_raw, _ = get_effective("auto_respawn")
     backoff_raw, _ = get_effective("respawn_backoff_seconds")
     max_raw, _ = get_effective("max_respawns_per_agent")
+    parallel_raw, _ = get_effective("max_parallel_agents")
 
     auto_respawn = str(auto_raw).lower() not in ("false", "0", "no", "")
     try:
@@ -224,11 +248,16 @@ def _load_config_from_effective() -> LeaderLoopConfig:
         max_respawns = int(float(max_raw))
     except (TypeError, ValueError):
         max_respawns = 2
+    try:
+        max_parallel = int(float(parallel_raw))
+    except (TypeError, ValueError):
+        max_parallel = 4
 
     return LeaderLoopConfig(
         auto_respawn=auto_respawn,
         respawn_backoff_seconds=max(backoff, 0),
         max_respawns_per_agent=max(max_respawns, 0),
+        max_parallel_agents=max(max_parallel, 0),
     )
 
 

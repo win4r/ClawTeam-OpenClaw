@@ -15,6 +15,7 @@ class TestClawTeamConfig:
         assert cfg.auto_respawn is True
         assert cfg.respawn_backoff_seconds == 30
         assert cfg.max_respawns_per_agent == 2
+        assert cfg.max_parallel_agents == 4
 
     def test_custom_values(self):
         cfg = ClawTeamConfig(user="alice", default_backend="subprocess", workspace="never")
@@ -99,6 +100,12 @@ class TestGetEffective:
         val, source = get_effective("respawn_backoff_seconds")
         assert val == "45"
         assert source == "file"
+
+    def test_max_parallel_agents_env(self, monkeypatch):
+        monkeypatch.setenv("CLAWTEAM_MAX_PARALLEL_AGENTS", "6")
+        val, source = get_effective("max_parallel_agents")
+        assert val == "6"
+        assert source == "env"
 
     def test_unknown_key_returns_empty(self):
         val, source = get_effective("nonexistent_key")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import time
 import uuid
@@ -96,7 +98,7 @@ def config_show():
     keys = [
         "data_dir", "user", "default_team",
         "transport", "workspace", "default_backend", "skip_permissions",
-        "auto_respawn", "respawn_backoff_seconds", "max_respawns_per_agent",
+        "auto_respawn", "respawn_backoff_seconds", "max_respawns_per_agent", "max_parallel_agents",
     ]
     data = {}
     for k in keys:
@@ -118,7 +120,7 @@ def config_show():
 
 @config_app.command("set")
 def config_set(
-    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent)"),
+    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent, max_parallel_agents)"),
     value: str = typer.Argument(..., help="Config value"),
 ):
     """Persistently set a configuration value."""
@@ -146,7 +148,7 @@ def config_set(
 
 @config_app.command("get")
 def config_get(
-    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent)"),
+    key: str = typer.Argument(..., help="Config key (e.g. data_dir, user, transport, workspace, default_backend, skip_permissions, auto_respawn, respawn_backoff_seconds, max_respawns_per_agent, max_parallel_agents)"),
 ):
     """Get the effective value of a config key."""
     from clawteam.config import ClawTeamConfig, get_effective
@@ -245,6 +247,9 @@ def team_spawn_team(
     description: str = typer.Option("", "--description", "-d", help="Team description"),
     agent_name: str = typer.Option("leader", "--agent-name", "-n", help="Leader agent name"),
     agent_type: str = typer.Option("leader", "--agent-type", help="Leader agent type"),
+    auto_loop: bool = typer.Option(False, "--auto-loop", help="Start leader-loop in background for this team"),
+    loop_interval: float = typer.Option(10.0, "--loop-interval", help="Leader-loop interval seconds"),
+    loop_stop_when_done: bool = typer.Option(True, "--loop-stop-when-done/--no-loop-stop-when-done", help="Auto-stop loop when all tasks are completed"),
 ):
     """Create a new team and register the leader (spawnTeam)."""
     from clawteam.identity import AgentIdentity
@@ -270,9 +275,51 @@ def team_spawn_team(
         }
         if identity.user:
             result["user"] = identity.user
+
+        if auto_loop:
+            from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
+            from clawteam.team.models import get_data_dir
+
+            clawteam_bin = resolve_clawteam_executable()
+            cmd = [
+                clawteam_bin,
+                "lifecycle",
+                "leader-loop",
+                "--team",
+                name,
+                "--interval",
+                str(loop_interval),
+            ]
+            if loop_stop_when_done:
+                cmd.append("--stop-when-done")
+
+            env = os.environ.copy()
+            env["PATH"] = build_spawn_path(env.get("PATH"))
+
+            # Detached background process; keep a pid file for observability.
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+            pid_file = get_data_dir() / "teams" / name / "leader_loop.pid"
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
+            result["leaderLoop"] = {
+                "status": "started",
+                "pid": proc.pid,
+                "interval": loop_interval,
+                "stopWhenDone": loop_stop_when_done,
+            }
+
         _output(result, lambda d: (
             console.print(f"[green]OK[/green] Team '{name}' created"),
             console.print(f"  Leader: {leader_name} (id: {leader_id})"),
+            console.print(
+                f"  Leader-loop: started (pid: {d['leaderLoop']['pid']}, interval: {d['leaderLoop']['interval']}s, stop-when-done: {d['leaderLoop']['stopWhenDone']})"
+            ) if d.get("leaderLoop") else None,
         ))
     except ValueError as e:
         if _json_output:
@@ -1674,6 +1721,7 @@ def lifecycle_leader_loop(
     team: str = typer.Option(..., "--team", "-t", help="Team name"),
     once: bool = typer.Option(False, "--once", help="Run one loop iteration and exit"),
     interval: float = typer.Option(10.0, "--interval", help="Loop interval seconds (when not --once)"),
+    stop_when_done: bool = typer.Option(False, "--stop-when-done", help="Auto-exit when all team tasks are completed"),
 ):
     """Run leader self-healing loop.
 
@@ -1702,7 +1750,7 @@ def lifecycle_leader_loop(
             f"Starting leader loop for [cyan]{team}[/cyan] "
             f"(interval={interval}s). Press Ctrl+C to stop."
         )
-    loop.run_forever(interval_seconds=interval)
+    loop.run_forever(interval_seconds=interval, stop_when_done=stop_when_done)
 
 
 # ============================================================================
@@ -2258,6 +2306,10 @@ def launch_team(
     workspace: bool = typer.Option(False, "--workspace/--no-workspace", "-w"),
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path"),
     command_override: Optional[list[str]] = typer.Option(None, "--command", help="Override agent command"),
+    autospawn: bool = typer.Option(True, "--autospawn/--no-autospawn", help="Spawn template agents immediately after creating team/tasks"),
+    auto_loop: bool = typer.Option(False, "--auto-loop", help="Start leader-loop in background for this team"),
+    loop_interval: float = typer.Option(10.0, "--loop-interval", help="Leader-loop interval seconds"),
+    loop_stop_when_done: bool = typer.Option(True, "--loop-stop-when-done/--no-loop-stop-when-done", help="Auto-stop loop when all tasks are completed"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
@@ -2316,78 +2368,111 @@ def launch_team(
             owner=task_def.owner,
         )
 
-    # 6. Get backend
-    try:
-        be = get_backend(be_name)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
-
-    # 7. Workspace setup (optional)
-    ws_mgr = None
-    if workspace:
-        from clawteam.workspace import get_workspace_manager
-        ws_mgr = get_workspace_manager(repo)
-        if ws_mgr is None:
-            console.print("[red]Not in a git repository. Use --repo or cd into a repo.[/red]")
-            raise typer.Exit(1)
-
-    # 8. Spawn all agents (leader first, then workers)
-    all_agents = [tmpl.leader] + list(tmpl.agents)
     spawned: list[dict[str, str]] = []
 
-    for agent in all_agents:
-        a_id = agent_ids[agent.name]
-        a_cmd = agent.command or cmd
+    if autospawn:
+        # 6. Get backend
+        try:
+            be = get_backend(be_name)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
 
-        # Variable substitution
-        rendered = render_task(
-            agent.task,
-            goal=goal,
-            team_name=t_name,
-            agent_name=agent.name,
-        )
+        # 7. Workspace setup (optional)
+        ws_mgr = None
+        if workspace:
+            from clawteam.workspace import get_workspace_manager
+            ws_mgr = get_workspace_manager(repo)
+            if ws_mgr is None:
+                console.print("[red]Not in a git repository. Use --repo or cd into a repo.[/red]")
+                raise typer.Exit(1)
 
-        # Workspace
-        cwd = None
-        ws_branch = ""
-        if ws_mgr:
-            ws_info = ws_mgr.create_workspace(
-                team_name=t_name, agent_name=agent.name, agent_id=a_id,
+        # 8. Spawn all agents (leader first, then workers)
+        all_agents = [tmpl.leader] + list(tmpl.agents)
+
+        for agent in all_agents:
+            a_id = agent_ids[agent.name]
+            a_cmd = agent.command or cmd
+
+            # Variable substitution
+            rendered = render_task(
+                agent.task,
+                goal=goal,
+                team_name=t_name,
+                agent_name=agent.name,
             )
-            cwd = ws_info.worktree_path
-            ws_branch = ws_info.branch_name
 
-        # Build prompt
-        prompt = build_agent_prompt(
-            agent_name=agent.name,
-            agent_id=a_id,
-            agent_type=agent.type,
-            team_name=t_name,
-            leader_name=tmpl.leader.name,
-            task=rendered,
-            user=_os.environ.get("CLAWTEAM_USER", ""),
-            workspace_dir=cwd or "",
-            workspace_branch=ws_branch,
-            memory_scope=f"custom:team-{t_name}",
+            # Workspace
+            cwd = None
+            ws_branch = ""
+            if ws_mgr:
+                ws_info = ws_mgr.create_workspace(
+                    team_name=t_name, agent_name=agent.name, agent_id=a_id,
+                )
+                cwd = ws_info.worktree_path
+                ws_branch = ws_info.branch_name
+
+            # Build prompt
+            prompt = build_agent_prompt(
+                agent_name=agent.name,
+                agent_id=a_id,
+                agent_type=agent.type,
+                team_name=t_name,
+                leader_name=tmpl.leader.name,
+                task=rendered,
+                user=_os.environ.get("CLAWTEAM_USER", ""),
+                workspace_dir=cwd or "",
+                workspace_branch=ws_branch,
+                memory_scope=f"custom:team-{t_name}",
+            )
+
+            # Resolve skip_permissions from config
+            from clawteam.config import get_effective
+            sp_val, _ = get_effective("skip_permissions")
+            _skip = str(sp_val).lower() not in ("false", "0", "no", "")
+
+            result = be.spawn(
+                command=a_cmd,
+                agent_name=agent.name,
+                agent_id=a_id,
+                agent_type=agent.type,
+                team_name=t_name,
+                prompt=prompt,
+                cwd=cwd,
+                skip_permissions=_skip,
+            )
+            spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
+
+    if auto_loop:
+        from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
+        from clawteam.team.models import get_data_dir
+
+        clawteam_bin = resolve_clawteam_executable()
+        loop_cmd = [
+            clawteam_bin,
+            "lifecycle",
+            "leader-loop",
+            "--team",
+            t_name,
+            "--interval",
+            str(loop_interval),
+        ]
+        if loop_stop_when_done:
+            loop_cmd.append("--stop-when-done")
+
+        env = _os.environ.copy()
+        env["PATH"] = build_spawn_path(env.get("PATH"))
+
+        proc = subprocess.Popen(
+            loop_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=env,
         )
-
-        # Resolve skip_permissions from config
-        from clawteam.config import get_effective
-        sp_val, _ = get_effective("skip_permissions")
-        _skip = str(sp_val).lower() not in ("false", "0", "no", "")
-
-        result = be.spawn(
-            command=a_cmd,
-            agent_name=agent.name,
-            agent_id=a_id,
-            agent_type=agent.type,
-            team_name=t_name,
-            prompt=prompt,
-            cwd=cwd,
-            skip_permissions=_skip,
-        )
-        spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
+        pid_file = Path(get_data_dir()) / "teams" / t_name / "leader_loop.pid"
+        pid_file.write_text(str(proc.pid), encoding="utf-8")
 
     # 9. Output summary
     out = {
@@ -2395,21 +2480,32 @@ def launch_team(
         "team": t_name,
         "template": tmpl.name,
         "backend": be_name,
+        "autospawn": autospawn,
+        "autoLoop": auto_loop,
         "agents": [{"name": s["name"], "id": s["id"], "type": s["type"]} for s in spawned],
     }
 
     def _human(_data):
         console.print(f"\n[green bold]Team '{t_name}' launched from template '{tmpl.name}'[/green bold]\n")
-        table = Table(title="Agents")
-        table.add_column("Name", style="cyan")
-        table.add_column("Type")
-        table.add_column("ID", style="dim")
-        for s in spawned:
-            table.add_row(s["name"], s["type"], s["id"])
-        console.print(table)
-        console.print()
-        if be_name == "tmux":
+        if spawned:
+            table = Table(title="Agents")
+            table.add_column("Name", style="cyan")
+            table.add_column("Type")
+            table.add_column("ID", style="dim")
+            for s in spawned:
+                table.add_row(s["name"], s["type"], s["id"])
+            console.print(table)
+            console.print()
+        else:
+            console.print("[yellow]No agents were spawned (--no-autospawn).[/yellow]")
+            console.print()
+        if be_name == "tmux" and spawned:
             console.print(f"[bold]Attach:[/bold] tmux attach -t clawteam-{t_name}")
+        if auto_loop:
+            console.print(
+                f"[bold]Leader-loop:[/bold] started in background "
+                f"(interval={loop_interval}s, stop-when-done={loop_stop_when_done})"
+            )
         console.print(f"[bold]Board:[/bold]  clawteam board show {t_name}")
         console.print(f"[bold]Inbox:[/bold]  clawteam inbox peek {t_name} --agent <name>")
 
