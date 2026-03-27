@@ -1168,7 +1168,8 @@ def run_worker_iteration(
                         recovery_metadata["qa_result_risk"] = structured_sections.get("risk", "")
                         recovery_metadata["qa_result_summary"] = structured_sections.get("summary", "")
                 if (
-                    result_type == "QA_RESULT"
+                    recovery_source == COMPLETION_SIGNAL_TEMPORARY_FALLBACK_SOURCE
+                    and result_type == "QA_RESULT"
                     and inferred_status == TaskStatus.completed
                     and (
                         not structured_sections
@@ -1183,34 +1184,30 @@ def run_worker_iteration(
                         "evidence": transcript_tail,
                         "rejectionReason": "qa_result_missing_evidence_or_validation",
                         "terminalStatus": claimed.status.value,
-                        "intentSource": (
-                            "completion_envelope"
-                            if recovery_source == COMPLETION_SIGNAL_PRIMARY_SOURCE
-                            else "transcript_result_block_temporary_compatibility"
-                        ),
+                        "intentSource": "transcript_result_block_temporary_compatibility",
                     }
                 else:
                     recovered = apply_terminal_intent(
-                    team_name=team_name,
-                    agent_name=agent_name,
-                    intent=TerminalIntent(
-                        task_id=claimed.id,
-                        execution_id=claimed.active_execution_id,
-                        terminal_status=inferred_status,
-                        reason=f"runtime terminal recovered from {recovery_source}",
-                        evidence=transcript_tail,
-                        source=(
-                            "completion_envelope"
-                            if recovery_source == COMPLETION_SIGNAL_PRIMARY_SOURCE
-                            else "transcript_result_block_temporary_compatibility"
+                        team_name=team_name,
+                        agent_name=agent_name,
+                        intent=TerminalIntent(
+                            task_id=claimed.id,
+                            execution_id=claimed.active_execution_id,
+                            terminal_status=inferred_status,
+                            reason=f"runtime terminal recovered from {recovery_source}",
+                            evidence=transcript_tail,
+                            source=(
+                                "completion_envelope"
+                                if recovery_source == COMPLETION_SIGNAL_PRIMARY_SOURCE
+                                else "transcript_result_block_temporary_compatibility"
+                            ),
+                            metadata=recovery_metadata,
+                            session_key=session_key,
+                            result_type=result_type,
+                            authoritative=recovery_source == COMPLETION_SIGNAL_PRIMARY_SOURCE,
+                            fallback_case_name="worker_runtime_transcript_terminal_recovery",
                         ),
-                        metadata=recovery_metadata,
-                        session_key=session_key,
-                        result_type=result_type,
-                        authoritative=recovery_source == COMPLETION_SIGNAL_PRIMARY_SOURCE,
-                        fallback_case_name="worker_runtime_transcript_terminal_recovery",
-                    ),
-                )
+                    )
                 if recovered["status"] in {"terminal_applied", "already_terminal"}:
                     return {
                         "status": "recovered_terminal",

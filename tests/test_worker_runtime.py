@@ -988,7 +988,7 @@ def test_parse_runtime_completion_envelope_rejects_invalid_schema():
 
 
 
-def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal(monkeypatch, tmp_path):
+def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal_without_transcript_reconstruction(monkeypatch, tmp_path):
     _seed_team(tmp_path, monkeypatch)
     monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
     monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
@@ -999,14 +999,18 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal
     task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
     mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
 
-    signal_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
-    signal_dir.mkdir(parents=True, exist_ok=True)
+    session_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
     claimed = {"execution_id": None}
 
     def fake_run(*args, **kwargs):
         claimed["execution_id"] = kwargs["env"]["CLAWTEAM_TASK_EXECUTION_ID"]
-        (signal_dir / "clawteam-demo-qa1.completion.json").write_text(
-            '{"version":1,"task_id":"' + task.id + '","execution_id":"' + claimed["execution_id"] + '","terminal_status":"completed","result_type":"DEV_RESULT","result_payload":{"status":"completed"}}\n',
+        (session_dir / "clawteam-demo-qa1.completion.json").write_text(
+            '{"version":1,"task_id":"' + task.id + '","execution_id":"' + claimed["execution_id"] + '","terminal_status":"completed","result_type":"QA_RESULT","result_payload":{"status":"pass"}}\n',
+            encoding="utf-8",
+        )
+        (session_dir / "clawteam-demo-qa1.jsonl").write_text(
+            '{"type":"message","message":{"role":"assistant","content":"unstructured assistant text without QA_RESULT headings"}}\n',
             encoding="utf-8",
         )
         return _Completed(returncode=0, stdout="", stderr="")
@@ -1023,7 +1027,7 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal
     assert result["status"] == "recovered_terminal"
     assert result["taskId"] == task.id
     assert result["recoveredStatus"] == "completed"
-    assert result["recoveredFrom"] == "DEV_RESULT"
+    assert result["recoveredFrom"] == "QA_RESULT"
     assert result["recoverySource"] == "runtime_completion_envelope"
 
     updated = TaskStore("demo").get(task.id)
@@ -1031,9 +1035,10 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal
     assert updated.status.value == "completed"
     assert updated.locked_by == ""
     assert updated.metadata["runtime_terminal_recovery"] == "runtime_completion_envelope"
-    assert updated.metadata["runtime_terminal_recovery_result_type"] == "DEV_RESULT"
+    assert updated.metadata["runtime_terminal_recovery_result_type"] == "QA_RESULT"
     assert updated.metadata["runtime_terminal_recovery_terminal_status"] == "completed"
     assert updated.metadata["runtime_terminal_recovery_signal_version"] == "1"
+    assert "runtime_terminal_recovery_compatibility_fallback" not in updated.metadata
     assert updated.last_terminal_status == "completed"
 
 
@@ -1080,6 +1085,55 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_transcript_result
     assert updated.metadata["runtime_terminal_recovery_terminal_status"] == "completed"
     assert updated.metadata["runtime_terminal_recovery_compatibility_fallback"] == "true"
     assert updated.last_terminal_status == "completed"
+
+
+def test_run_worker_iteration_uses_transcript_only_when_completion_envelope_is_unusable(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(subject="Fix thing", description="Real task", owner="qa1")
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    session_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    claimed = {"execution_id": None}
+
+    def fake_run(*args, **kwargs):
+        claimed["execution_id"] = kwargs["env"]["CLAWTEAM_TASK_EXECUTION_ID"]
+        (session_dir / "clawteam-demo-qa1.completion.json").write_text(
+            '{"version":1,"task_id":"' + task.id + '","execution_id":"wrong-execution","terminal_status":"completed","result_type":"DEV_RESULT","result_payload":{"status":"completed"}}\n',
+            encoding="utf-8",
+        )
+        (session_dir / "clawteam-demo-qa1.jsonl").write_text(
+            '{"type":"message","message":{"role":"assistant","content":"DEV_RESULT\nstatus: completed\nsummary: done\nchanged_files:\n- foo\nvalidation:\n- pytest ok\nknown_issues:\n- none\nnext_action: handoff to qa"}}\n',
+            encoding="utf-8",
+        )
+        return _Completed(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
+    monkeypatch.setattr(
+        worker_runtime,
+        "_wait_for_post_exit_settle",
+        lambda **kwargs: (TaskStore("demo").get(task.id), False),
+    )
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "recovered_terminal"
+    assert result["taskId"] == task.id
+    assert result["recoverySource"] == "transcript_result_block_temporary_compatibility"
+    assert result["recoveredFrom"] == "DEV_RESULT"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status.value == "completed"
+    assert updated.metadata["runtime_terminal_recovery"] == "transcript_result_block_temporary_compatibility"
+    assert updated.metadata["runtime_terminal_recovery_compatibility_fallback"] == "true"
+
 
 
 def test_run_worker_iteration_recovers_qa_blocked_result_block_as_blocked(monkeypatch, tmp_path):
