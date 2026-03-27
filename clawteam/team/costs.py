@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from clawteam.fileutil import atomic_write_text, file_locked
+from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import get_data_dir
 
 
@@ -73,7 +74,7 @@ class _CostSummaryCache(BaseModel):
 
 
 def _costs_root(team_name: str) -> Path:
-    d = get_data_dir() / "costs" / team_name
+    d = ensure_within_root(get_data_dir() / "costs", validate_identifier(team_name, "team name"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 

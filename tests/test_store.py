@@ -63,6 +63,10 @@ class TestFactory:
         store = get_task_store(team_name, backend="nonexistent")
         assert isinstance(store, FileTaskStore)
 
+    def test_invalid_team_name_is_rejected(self):
+        with pytest.raises(ValueError, match="Invalid team name"):
+            get_task_store("../escape")
+
 
 class TestBaseTaskStoreABC:
     """Verify the ABC can't be instantiated directly and get_stats has a

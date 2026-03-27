@@ -8,11 +8,16 @@ import time
 from pathlib import Path
 
 from clawteam.fileutil import atomic_write_text, file_locked
+from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import get_data_dir
 
 
 def _registry_path(team_name: str) -> Path:
-    return get_data_dir() / "teams" / team_name / "spawn_registry.json"
+    return ensure_within_root(
+        get_data_dir() / "teams",
+        validate_identifier(team_name, "team name"),
+        "spawn_registry.json",
+    )
 
 
 def register_agent(

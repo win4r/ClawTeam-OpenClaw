@@ -1,447 +1,851 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ClawTeam</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawTeam Nexus</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            color-scheme: dark;
+            /* Premium Dark Theme */
+            --bg-color: #050505;
+            --surface-color: rgba(20, 20, 20, 0.6);
+            --surface-hover: rgba(35, 35, 35, 0.7);
+            --surface-active: rgba(45, 45, 45, 0.8);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.15);
+            /* Typography */
+            --text-primary: #ffffff;
+            --text-secondary: #9ca3af;
+            --text-tertiary: #6b7280;
+            /* Accents */
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --color-pending: #f59e0b;
+            --color-progress: #3b82f6;
+            --color-completed: #10b981;
+            --color-blocked: #ef4444;
+            --color-broadcast: #a855f7;
+            /* Metrics */
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --radius-sm: 8px;
+            --blur: blur(20px);
+        }
 
-  :root {
-    --bg: #000000;
-    --surface: #0a0a0a;
-    --surface2: #111111;
-    --surface3: #1a1a1a;
-    --border: rgba(255,255,255,0.08);
-    --border-hover: rgba(255,255,255,0.15);
-    --text: #f5f5f7;
-    --text-secondary: #86868b;
-    --text-tertiary: #6e6e73;
-    --accent: #ffffff;
-    --green: #30d158;
-    --orange: #ff9f0a;
-    --red: #ff453a;
-    --blue: #0a84ff;
-    --purple: #bf5af2;
-    --radius: 12px;
-    --radius-sm: 8px;
-  }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
 
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-  }
-</style>
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+        /* Animated Ambient Background */
+        .ambient-bg {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(140px);
+            opacity: 0.15;
+            animation: float 25s infinite alternate ease-in-out;
+        }
+        .orb-1 {
+            width: 500px; height: 500px;
+            background: var(--color-progress);
+            top: -100px; left: -100px;
+        }
+        .orb-2 {
+            width: 600px; height: 600px;
+            background: var(--color-broadcast);
+            bottom: -200px; right: -100px;
+            animation-delay: -10s;
+        }
+        
+        @keyframes float {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(120px, 80px) scale(1.1); }
+        }
+
+        /* Glassmorphism Classes */
+        .glass-panel {
+            background: var(--surface-color);
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .glass-panel:hover {
+            border-color: var(--border-hover);
+        }
+
+        /* Layout */
+        .app-layout {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar Nav */
+        .sidebar {
+            width: 280px;
+            padding: 32px 24px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--border-color);
+            background: rgba(10, 10, 10, 0.5);
+            backdrop-filter: var(--blur);
+            z-index: 10;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 48px;
+            background: linear-gradient(135deg, #fff, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .team-selector {
+            margin-bottom: auto;
+        }
+        
+        .team-selector label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 600;
+        }
+
+        .custom-select {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        .custom-select:hover { border-color: var(--border-hover); background: rgba(255, 255, 255, 0.08); }
+        .custom-select:focus { border-color: var(--color-progress); box-shadow: 0 0 0 2px var(--accent-glow); }
+        .custom-select option {
+            background-color: #111111;
+            color: #ffffff;
+            padding: 12px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: rgba(0,0,0,0.3);
+            border-radius: var(--radius-sm);
+            margin-top: 24px;
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--color-blocked);
+            transition: all 0.3s ease;
+        }
+        .status-dot.live {
+            background: var(--color-completed);
+            box-shadow: 0 0 12px var(--color-completed);
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        /* Main Content Area */
+        .main-content {
+            flex: 1;
+            padding: 48px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        /* Header Info */
+        .header-info { margin-bottom: 40px; }
+        .header-title { font-size: 42px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.02em; }
+        .header-meta { font-size: 16px; color: var(--text-secondary); }
+
+        /* Summary Grid */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        
+        .stat-card {
+            padding: 32px 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            cursor: default;
+        }
+
+        .stat-card.pending { border-bottom: 3px solid var(--color-pending); }
+        .stat-card.progress { border-bottom: 3px solid var(--color-progress); }
+        .stat-card.completed { border-bottom: 3px solid var(--color-completed); }
+        .stat-card.blocked { border-bottom: 3px solid var(--color-blocked); }
+
+        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 16px 40px rgba(0,0,0,0.4); }
+        
+        .stat-value { font-size: 48px; font-weight: 700; line-height: 1; margin-bottom: 12px; }
+        .stat-label { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; }
+
+        /* Dynamic Grids */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+        
+        @media (max-width: 1300px) {
+            .content-grid { grid-template-columns: 1fr; }
+        }
+
+        .section-panel {
+            display: flex;
+            flex-direction: column;
+            height: 500px;
+        }
+
+        .panel-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .panel-title { font-size: 18px; font-weight: 600; }
+        .badge {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .panel-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        /* Members List */
+        .members-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        
+        .member-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .member-card:hover { background: rgba(255, 255, 255, 0.06); transform: scale(1.01); border-color: rgba(255,255,255,0.2); }
+        .member-name { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+        .member-role { font-size: 14px; color: var(--color-progress); margin-bottom: 16px; display: inline-block; background: rgba(59,130,246,0.1); padding: 4px 10px; border-radius: 6px;}
+        .member-inbox { 
+            display: inline-flex; align-items: center; gap: 8px;
+            font-size: 13px; font-weight: 500; 
+            padding: 6px 12px; border-radius: 12px; background: rgba(255,255,255,0.05); color: var(--text-secondary);
+        }
+        .member-inbox.has-msgs { background: rgba(239, 68, 68, 0.15); color: var(--red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);}
+
+        /* Message Stream */
+        .msg-list { display: flex; flex-direction: column; gap: 16px; }
+        
+        .msg-item {
+            padding: 20px;
+            border-radius: var(--radius-md);
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            animation: slideIn 0.4s ease forwards;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .msg-meta {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+            font-size: 14px; margin-bottom: 12px;
+        }
+        .msg-tag { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+        .msg-tag-event { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+        .msg-tag-message { background: rgba(59, 130, 246, 0.2); color: var(--color-progress); }
+        .msg-tag-broadcast { background: rgba(168, 85, 247, 0.2); color: var(--color-broadcast); }
+
+        .msg-time { color: var(--text-tertiary); margin-left: auto; font-size: 13px; }
+        .msg-flow { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); }
+        .msg-party { color: var(--text-primary); font-weight: 500; }
+        .msg-arrow { color: var(--text-tertiary); }
+        
+        .msg-content {
+            font-size: 15px; color: var(--text-secondary); line-height: 1.6;
+            background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-sm);
+            white-space: pre-wrap; word-break: break-word; font-family: 'SF Mono', Consolas, monospace;
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+
+        /* Kanban Board */
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .kanban-col {
+            background: rgba(15, 15, 15, 0.6);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+            display: flex; flex-direction: column;
+            min-height: 400px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        .k-head {
+            padding: 20px;
+            font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(0,0,0,0.2);
+        }
+        
+        .k-head-pending { border-top: 3px solid var(--color-pending); color: var(--color-pending); border-radius: var(--radius-md) var(--radius-md) 0 0;}
+        .k-head-progress { border-top: 3px solid var(--color-progress); color: var(--color-progress); border-radius: var(--radius-md) var(--radius-md) 0 0;}
+        .k-head-completed { border-top: 3px solid var(--color-completed); color: var(--color-completed); border-radius: var(--radius-md) var(--radius-md) 0 0;}
+        .k-head-blocked { border-top: 3px solid var(--color-blocked); color: var(--color-blocked); border-radius: var(--radius-md) var(--radius-md) 0 0;}
+
+        .k-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;}
+
+        .task-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .task-card:hover { 
+            background: rgba(255, 255, 255, 0.09); 
+            transform: translateY(-2px); 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border-color: rgba(255,255,255,0.2);
+        }
+        .task-id { font-size: 12px; font-family: 'SF Mono', Consolas, monospace; color: var(--text-tertiary); margin-bottom: 8px; }
+        .task-subj { font-size: 15px; font-weight: 500; line-height: 1.5; color: var(--text-primary); }
+        .task-own { font-size: 13px; color: var(--text-secondary); margin-top: 12px; display: flex; align-items: center; gap: 8px;}
+        .task-own::before { content: ''; display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--color-progress); }
+        .task-card.blocked-card .task-own::before { background: var(--color-blocked); }
+        
+        .blocked-label { color:var(--color-blocked); font-size:12px; margin-top:10px; background: rgba(239,68,68,0.1); padding:4px 8px; border-radius:4px; display: inline-block;}
+
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-tertiary); }
+        .empty-icon { opacity: 0.5; margin-bottom: 20px; }
+        .empty-title { font-size: 28px; font-weight: 600; color: var(--text-primary); margin-bottom: 16px; letter-spacing: -0.01em;}
+
+        /* Modal Styles */
+        .action-btn { background: rgba(59, 130, 246, 0.2); border: 1px solid var(--color-progress); color: var(--color-progress); padding: 10px 20px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s; font-family: inherit; }
+        .action-btn:hover { background: rgba(59, 130, 246, 0.4); box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 100; display: none; align-items: center; justify-content: center; }
+        .modal-content { background: var(--surface-color); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 32px; width: 400px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        .modal-content h3 { font-size: 20px; font-weight: 600; margin-bottom: 24px; }
+        .modal-input { width: 100%; padding: 12px; margin-bottom: 16px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: white; font-family: inherit; font-size: 14px; }
+        .modal-input:focus { border-color: var(--color-progress); outline: none; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px; }
+        .btn-cancel { background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 10px 20px; border-radius: var(--radius-sm); cursor: pointer; transition: 0.2s;}
+        .btn-cancel:hover { background: rgba(255,255,255,0.1); color: white; }
+
+    </style>
 </head>
 <body>
-<div id="root"></div>
-<script type="text/babel">
-const { useState, useEffect, useRef, useMemo } = React;
 
-// ─── Styles ────────────────────────────────────────────────────────────────
-
-const S = {
-  nav: {
-    position: 'sticky', top: 0, zIndex: 100,
-    background: 'rgba(0,0,0,0.72)',
-    backdropFilter: 'saturate(180%) blur(20px)',
-    WebkitBackdropFilter: 'saturate(180%) blur(20px)',
-    borderBottom: '1px solid var(--border)',
-    padding: '0 32px', height: 52,
-    display: 'flex', alignItems: 'center', gap: 16,
-  },
-  navTitle: {
-    fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-    color: 'var(--text)',
-  },
-  select: {
-    background: 'var(--surface2)', color: 'var(--text)',
-    border: '1px solid var(--border)', borderRadius: 8,
-    padding: '6px 12px', fontSize: 13, outline: 'none',
-    cursor: 'pointer',
-  },
-  statusDot: (connected) => ({
-    width: 8, height: 8, borderRadius: '50%', marginLeft: 'auto',
-    background: connected ? 'var(--green)' : 'var(--red)',
-    boxShadow: connected ? '0 0 8px var(--green)' : 'none',
-  }),
-  statusText: {
-    fontSize: 12, color: 'var(--text-tertiary)', marginLeft: 6,
-  },
-  container: {
-    maxWidth: 1200, margin: '0 auto', padding: '24px 32px',
-  },
-
-  // Summary cards
-  summaryGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: 12, marginBottom: 24,
-  },
-  summaryCard: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    padding: '20px 16px', textAlign: 'center',
-    transition: 'border-color 0.2s',
-  },
-  summaryNum: (color) => ({
-    fontSize: 32, fontWeight: 700, letterSpacing: '-0.02em',
-    color: color, lineHeight: 1,
-  }),
-  summaryLabel: {
-    fontSize: 11, fontWeight: 500, color: 'var(--text-tertiary)',
-    textTransform: 'uppercase', letterSpacing: '0.06em',
-    marginTop: 6,
-  },
-
-  // Section
-  section: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    marginBottom: 20, overflow: 'hidden',
-  },
-  sectionHeader: {
-    padding: '14px 20px',
-    borderBottom: '1px solid var(--border)',
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  },
-  sectionTitle: {
-    fontSize: 13, fontWeight: 600, color: 'var(--text)',
-    letterSpacing: '-0.01em',
-  },
-  sectionBadge: {
-    fontSize: 11, fontWeight: 500, color: 'var(--text-tertiary)',
-    background: 'var(--surface3)', borderRadius: 10,
-    padding: '2px 8px',
-  },
-
-  // Members
-  membersGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-    gap: 1, background: 'var(--border)',
-  },
-  memberCard: {
-    background: 'var(--surface)', padding: '14px 20px',
-  },
-  memberName: {
-    fontSize: 14, fontWeight: 600, color: 'var(--text)',
-  },
-  memberType: {
-    fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2,
-  },
-  inboxBadge: (count) => ({
-    display: 'inline-block', marginTop: 6,
-    fontSize: 11, fontWeight: 500,
-    padding: '2px 8px', borderRadius: 10,
-    background: count > 0 ? 'rgba(255,69,58,0.15)' : 'var(--surface3)',
-    color: count > 0 ? 'var(--red)' : 'var(--text-tertiary)',
-  }),
-
-  // Messages
-  msgList: {
-    maxHeight: 360, overflowY: 'auto',
-  },
-  msgItem: {
-    padding: '12px 20px',
-    borderBottom: '1px solid var(--border)',
-    transition: 'background 0.15s',
-  },
-  msgMeta: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    fontSize: 12, marginBottom: 4,
-  },
-  msgTag: {
-    fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    padding: '2px 6px', borderRadius: 4,
-    background: 'var(--surface3)', color: 'var(--text-tertiary)',
-  },
-  msgFrom: { color: 'var(--text)', fontWeight: 500 },
-  msgTo: { color: 'var(--text-tertiary)' },
-  msgTime: { color: 'var(--text-tertiary)', marginLeft: 'auto', fontSize: 11 },
-  msgContent: {
-    fontSize: 13, color: 'var(--text-secondary)',
-    lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-  },
-  msgEmpty: {
-    padding: 32, textAlign: 'center',
-    fontSize: 13, color: 'var(--text-tertiary)',
-  },
-
-  // Kanban
-  kanban: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: 12,
-  },
-  kanbanCol: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    minHeight: 200, overflow: 'hidden',
-  },
-  kanbanHeader: (color) => ({
-    padding: '12px 16px',
-    borderBottom: `2px solid ${color}`,
-    fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
-    letterSpacing: '0.06em', color: color,
-    display: 'flex', justifyContent: 'space-between',
-  }),
-  kanbanBody: { padding: 8 },
-  taskCard: {
-    background: 'var(--surface2)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-sm)',
-    padding: '10px 12px', marginBottom: 6,
-    transition: 'border-color 0.15s',
-    cursor: 'default',
-  },
-  taskId: {
-    fontSize: 11, fontFamily: 'SF Mono, Menlo, monospace',
-    color: 'var(--text-tertiary)',
-  },
-  taskSubject: {
-    fontSize: 13, fontWeight: 500, color: 'var(--text)',
-    marginTop: 2, lineHeight: 1.4,
-  },
-  taskOwner: {
-    fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4,
-  },
-  taskBlocked: {
-    fontSize: 11, color: 'var(--red)', marginTop: 2,
-  },
-  emptyCol: {
-    padding: 24, textAlign: 'center',
-    fontSize: 12, color: 'var(--text-tertiary)',
-  },
-
-  // Team header
-  teamInfo: {
-    display: 'flex', alignItems: 'baseline', gap: 16,
-    marginBottom: 20,
-  },
-  teamName: {
-    fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em',
-    color: 'var(--text)',
-  },
-  teamMeta: {
-    fontSize: 13, color: 'var(--text-tertiary)',
-  },
-};
-
-// ─── Components ────────────────────────────────────────────────────────────
-
-function SummaryCards({ summary }) {
-  const items = [
-    { key: 'pending', label: 'Pending', color: 'var(--orange)' },
-    { key: 'in_progress', label: 'In Progress', color: 'var(--blue)' },
-    { key: 'completed', label: 'Completed', color: 'var(--green)' },
-    { key: 'blocked', label: 'Blocked', color: 'var(--red)' },
-  ];
-  return (
-    <div style={S.summaryGrid}>
-      {items.map(it => (
-        <div key={it.key} style={S.summaryCard}>
-          <div style={S.summaryNum(it.color)}>{summary[it.key] || 0}</div>
-          <div style={S.summaryLabel}>{it.label}</div>
-        </div>
-      ))}
+    <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
     </div>
-  );
-}
 
-function Members({ members }) {
-  return (
-    <div style={S.section}>
-      <div style={S.sectionHeader}>
-        <span style={S.sectionTitle}>Members</span>
-        <span style={S.sectionBadge}>{members.length}</span>
-      </div>
-      <div style={S.membersGrid}>
-        {members.map(m => (
-          <div key={m.name} style={S.memberCard}>
-            <div style={S.memberName}>{m.name}</div>
-            {m.user && <div style={{fontSize: 12, color: 'var(--purple)'}}>{m.user}</div>}
-            <div style={S.memberType}>{m.agentType}</div>
-            <span style={S.inboxBadge(m.inboxCount)}>
-              {m.inboxCount > 0 ? `${m.inboxCount} message${m.inboxCount > 1 ? 's' : ''}` : 'inbox empty'}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Messages({ messages }) {
-  const sorted = useMemo(() => {
-    return [...messages].sort((a, b) =>
-      (b.timestamp || '').localeCompare(a.timestamp || '')
-    );
-  }, [messages]);
-
-  return (
-    <div style={S.section}>
-      <div style={S.sectionHeader}>
-        <span style={S.sectionTitle}>Messages</span>
-        <span style={S.sectionBadge}>{messages.length}</span>
-      </div>
-      <div style={S.msgList}>
-        {sorted.length === 0 ? (
-          <div style={S.msgEmpty}>No pending messages</div>
-        ) : sorted.map((msg, i) => {
-          const time = (msg.timestamp || '').slice(11, 19);
-          const date = (msg.timestamp || '').slice(5, 10);
-          return (
-            <div key={i} style={S.msgItem}>
-              <div style={S.msgMeta}>
-                <span style={S.msgTag}>{msg.type || 'message'}</span>
-                <span style={S.msgFrom}>{msg.from || ''}</span>
-                <span style={S.msgTo}>{msg.to || ''}</span>
-                <span style={S.msgTime}>{date} {time}</span>
-              </div>
-              <div style={S.msgContent}>{msg.content || ''}</div>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar glass-panel" style="border-radius: 0; box-shadow: 2px 0 20px rgba(0,0,0,0.5); border-top: none; border-bottom: none; border-left: none;">
+            <div class="brand">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                    <path d="M2 17l10 5 10-5"></path>
+                    <path d="M2 12l10 5 10-5"></path>
+                </svg>
+                ClawTeam
             </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
-function TaskCard({ task, status }) {
-  return (
-    <div style={S.taskCard}
-      onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}>
-      <div style={S.taskId}>#{(task.id || '').slice(0, 8)}</div>
-      <div style={S.taskSubject}>{task.subject || ''}</div>
-      <div style={S.taskOwner}>{task.owner || '-'}</div>
-      {status === 'blocked' && task.blockedBy && task.blockedBy.length > 0 && (
-        <div style={S.taskBlocked}>blocked by: {task.blockedBy.join(', ')}</div>
-      )}
-    </div>
-  );
-}
-
-function Kanban({ tasks }) {
-  const cols = [
-    { key: 'pending', label: 'Pending', color: 'var(--orange)' },
-    { key: 'in_progress', label: 'In Progress', color: 'var(--blue)' },
-    { key: 'completed', label: 'Completed', color: 'var(--green)' },
-    { key: 'blocked', label: 'Blocked', color: 'var(--red)' },
-  ];
-  return (
-    <div style={S.kanban}>
-      {cols.map(col => {
-        const items = tasks[col.key] || [];
-        return (
-          <div key={col.key} style={S.kanbanCol}>
-            <div style={S.kanbanHeader(col.color)}>
-              <span>{col.label}</span>
-              <span>{items.length}</span>
+            <div class="team-selector">
+                <label for="team-select">Active Swarm</label>
+                <select id="team-select" class="custom-select">
+                    <option value="">Initializing Core...</option>
+                </select>
             </div>
-            <div style={S.kanbanBody}>
-              {items.length === 0 ? (
-                <div style={S.emptyCol}>&mdash;</div>
-              ) : items.map(t => (
-                <TaskCard key={t.id} task={t} status={col.key} />
-              ))}
+
+            <div class="connection-status">
+                <div class="status-dot" id="status-dot"></div>
+                <div class="status-text" id="status-text">Disconnected</div>
             </div>
-          </div>
-        );
-      })}
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-content" id="main-view">
+            <div class="empty-state" style="margin-top:10vh;">
+                <svg class="empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <div class="empty-title">Welcome to ClawTeam Nexus</div>
+                <p style="font-size: 16px;">Select a highly-intelligent swarm to begin real-time monitoring.</p>
+            </div>
+        </main>
     </div>
-  );
-}
 
-function Dashboard({ data }) {
-  const { team, members = [], tasks = {}, taskSummary = {}, messages = [] } = data;
-  return (
-    <div style={S.container}>
-      <div style={S.teamInfo}>
-        <span style={S.teamName}>{team.name}</span>
-        <span style={S.teamMeta}>
-          led by {team.leaderName || '?'} &middot; {members.length} member{members.length !== 1 ? 's' : ''}
-          {team.description ? ` \u2014 ${team.description}` : ''}
-        </span>
-      </div>
-      <SummaryCards summary={taskSummary} />
-      <Members members={members} />
-      <Messages messages={messages} />
-      <Kanban tasks={tasks} />
+    <!-- Task Modal -->
+    <div class="modal-overlay" id="task-modal">
+        <div class="modal-content glass-panel">
+            <h3>Inject New Task</h3>
+            <input type="text" id="task-subj" class="modal-input" placeholder="Task description..." autocomplete="off">
+            <input type="text" id="task-owner" class="modal-input" placeholder="Agent Owner (e.g. tech-lead)" autocomplete="off">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeTaskModal()">Cancel</button>
+                <button class="action-btn" onclick="submitTask(event)">Deploy Task</button>
+            </div>
+        </div>
     </div>
-  );
-}
 
-function App() {
-  const [teams, setTeams] = useState([]);
-  const [current, setCurrent] = useState('');
-  const [data, setData] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const evtRef = useRef(null);
-
-  useEffect(() => {
-    fetch('/api/overview').then(r => r.json()).then(list => {
-      setTeams(list);
-      if (list.length === 1) setCurrent(list[0].name);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (evtRef.current) { evtRef.current.close(); evtRef.current = null; }
-    if (!current) { setData(null); setConnected(false); return; }
-
-    const src = new EventSource('/api/events/' + encodeURIComponent(current));
-    src.onmessage = e => {
-      const d = JSON.parse(e.data);
-      if (!d.error) { setData(d); setConnected(true); }
-    };
-    src.onerror = () => setConnected(false);
-    evtRef.current = src;
-    return () => src.close();
-  }, [current]);
-
-  return (
-    <>
-      <nav style={S.nav}>
-        <span style={S.navTitle}>ClawTeam</span>
-        <select style={S.select} value={current} onChange={e => setCurrent(e.target.value)}>
-          <option value="">Select Team</option>
-          {teams.map(t => (
-            <option key={t.name} value={t.name}>
-              {t.name}{t.description ? ` \u2014 ${t.description}` : ''}
-            </option>
-          ))}
-        </select>
-        <div style={{display:'flex',alignItems:'center',marginLeft:'auto'}}>
-          <div style={S.statusDot(connected)} />
-          <span style={S.statusText}>{connected ? 'Live' : 'Disconnected'}</span>
+    <!-- Context Modal -->
+    <div class="modal-overlay" id="context-modal">
+        <div class="modal-content glass-panel" style="width: 600px;">
+            <h3>Set Mission Context</h3>
+            <p style="color:var(--text-secondary); margin-bottom:16px;">Feed a massive project specification or a GitHub README directly to the Lead Agent.</p>
+            
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Raw URL (e.g. GitHub raw.githubusercontent.com)</label>
+            <input type="text" id="ctx-url" class="modal-input" placeholder="https://raw.githubusercontent.com/..." autocomplete="off">
+            
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Or Direct Text Input</label>
+            <textarea id="ctx-text" class="modal-input" placeholder="Paste your detailed project requirements here..." rows="6" style="resize:vertical;"></textarea>
+            
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Assign To Agent</label>
+            <input type="text" id="ctx-owner" class="modal-input" value="tech-lead" autocomplete="off">
+            
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeContextModal()">Cancel</button>
+                <button class="action-btn" onclick="submitContext(event)" style="background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);">Initialize Protocol</button>
+            </div>
         </div>
-      </nav>
-      {data ? <Dashboard data={data} /> : (
-        <div style={{...S.container, textAlign:'center', paddingTop:120}}>
-          <div style={{fontSize:48, fontWeight:700, letterSpacing:'-0.04em', color:'var(--text)'}}>
-            ClawTeam
-          </div>
-          <div style={{fontSize:15, color:'var(--text-tertiary)', marginTop:8}}>
-            Select a team to get started
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
+    </div>
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+<script>
+    // Elements
+    const teamSelect = document.getElementById('team-select');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const mainView = document.getElementById('main-view');
+
+    let currentEventSource = null;
+    let currentTeam = '';
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // Initialize
+    async function init() {
+        try {
+            const res = await fetch('/api/overview');
+            const teams = await res.json();
+
+            teamSelect.replaceChildren();
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = 'Select Team';
+            teamSelect.appendChild(defaultOption);
+            teams.forEach((t) => {
+                const option = document.createElement('option');
+                option.value = t.name || '';
+                option.textContent = `${t.name || ''}${t.description ? ` - ${t.description}` : ''}`;
+                teamSelect.appendChild(option);
+            });
+            
+            if (teams.length > 0) {
+                teamSelect.value = teams[0].name;
+                switchTeam(teams[0].name);
+            }
+            
+            teamSelect.addEventListener('change', (e) => switchTeam(e.target.value));
+        } catch (e) {
+            console.error("Failed to load overview", e);
+            teamSelect.innerHTML = '<option value="">Error loading teams</option>';
+        }
+    }
+
+    function switchTeam(teamName) {
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+        currentTeam = teamName;
+        
+        if (!teamName) {
+            setConnectionStatus(false);
+            mainView.innerHTML = `
+                <div class="empty-state" style="margin-top:10vh;">
+                    <svg class="empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <div class="empty-title">ClawTeam Nexus</div>
+                    <p style="font-size: 16px;">Select a swarm to begin real-time monitoring.</p>
+                </div>`;
+            return;
+        }
+
+        setConnectionStatus(false);
+        renderDashboardSkeleton();
+
+        currentEventSource = new EventSource('/api/events/' + encodeURIComponent(teamName));
+        
+        currentEventSource.onmessage = (e) => {
+            setConnectionStatus(true);
+            try {
+                const data = JSON.parse(e.data);
+                if (data.error) {
+                    console.error("Server Error:", data.error);
+                } else {
+                    updateDashboard(data);
+                }
+            } catch (err) {
+                console.error("Parse Error:", err);
+            }
+        };
+
+        currentEventSource.onerror = () => {
+            setConnectionStatus(false);
+        };
+    }
+
+    function setConnectionStatus(live) {
+        if (live) {
+            statusDot.className = 'status-dot live';
+            statusText.innerText = 'Receiving Live Data';
+        } else {
+            statusDot.className = 'status-dot';
+            statusText.innerText = 'Disconnected / Reconnecting...';
+        }
+    }
+
+    // Rendering Skeleton
+    function renderDashboardSkeleton() {
+        mainView.innerHTML = `
+            <div class="header-info" style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <div class="header-title" id="ui-title">Syncing Swarm Data...</div>
+                    <div class="header-meta" id="ui-meta">Establishing neural connection...</div>
+                </div>
+                <div style="display:flex; gap:12px;">
+                    <button onclick="openContextModal()" style="display:none; background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);" id="btn-provide-context" class="action-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                        Set Context
+                    </button>
+                    <button onclick="openTaskModal()" style="display:none;" id="btn-create-task" class="action-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        New Task
+                    </button>
+                </div>
+            </div>
+
+            <div class="summary-grid" id="ui-summary"></div>
+
+            <div class="content-grid">
+                <div class="section-panel glass-panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Active Protocol Stream</span>
+                        <span class="badge" id="ui-msg-count">0 messages</span>
+                    </div>
+                    <div class="panel-body" id="ui-msg-list"></div>
+                </div>
+                <div class="section-panel glass-panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Agent Registry</span>
+                        <span class="badge" id="ui-member-count">0 active</span>
+                    </div>
+                    <div class="panel-body" id="ui-members"></div>
+                </div>
+            </div>
+
+            <div class="header-info" style="margin-bottom: 24px;">
+                <div class="header-title" style="font-size: 28px;">Mission Control</div>
+                <div class="header-meta">Real-time distributed task execution</div>
+            </div>
+
+            <div class="kanban-board" id="ui-kanban">
+                <div class="kanban-col"><div class="k-head k-head-pending"><span>Pending Intake</span><span id="c-pending">0</span></div><div class="k-body" id="col-pending"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-progress"><span>In Progress</span><span id="c-progress">0</span></div><div class="k-body" id="col-progress"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-completed"><span>Completed</span><span id="c-completed">0</span></div><div class="k-body" id="col-completed"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-blocked"><span>Blocked / Anomalies</span><span id="c-blocked">0</span></div><div class="k-body" id="col-blocked"></div></div>
+            </div>
+        `;
+    }
+
+    let lastDataStr = "";
+
+    function updateDashboard(data) {
+        // Differential updates conceptually - avoid unnecessary repaints
+        const newDataStr = JSON.stringify(data);
+        if (newDataStr === lastDataStr) return; 
+        lastDataStr = newDataStr;
+
+        const { team, members = [], tasks = {}, taskSummary = {}, messages = [] } = data;
+
+        // Header
+        document.getElementById('ui-title').innerText = team.name;
+        document.getElementById('ui-meta').innerText = `Orchestrated by ${team.leaderName || 'unknown leader'} • ${members.length} members • ${team.description || 'Active Protocol'}`;
+        document.getElementById('btn-create-task').style.display = 'inline-flex';
+        document.getElementById('btn-provide-context').style.display = 'inline-flex';
+
+        // Summary Cards
+        document.getElementById('ui-summary').innerHTML = `
+            <div class="stat-card glass-panel pending">
+                <div class="stat-value" style="color: var(--color-pending)">${taskSummary.pending || 0}</div>
+                <div class="stat-label">Pending Intake</div>
+            </div>
+            <div class="stat-card glass-panel progress">
+                <div class="stat-value" style="color: var(--color-progress)">${taskSummary.in_progress || 0}</div>
+                <div class="stat-label">In Execution</div>
+            </div>
+            <div class="stat-card glass-panel completed">
+                <div class="stat-value" style="color: var(--color-completed)">${taskSummary.completed || 0}</div>
+                <div class="stat-label">Missions Accomplished</div>
+            </div>
+            <div class="stat-card glass-panel blocked">
+                <div class="stat-value" style="color: var(--color-blocked)">${taskSummary.blocked || 0}</div>
+                <div class="stat-label">Blocked / Anomalies</div>
+            </div>
+        `;
+
+        // Members
+        document.getElementById('ui-member-count').innerText = members.length + ' active';
+        document.getElementById('ui-members').innerHTML = `
+            <div class="members-grid">
+                ${members.map(m => `
+                    <div class="member-card">
+                        <div class="member-name">${escapeHtml(m.name)}</div>
+                        <div class="member-role">${escapeHtml(m.agentType || 'Agent')} ${m.user ? `(${escapeHtml(m.user)})` : ''}</div>
+                        <div class="member-inbox ${m.inboxCount > 0 ? 'has-msgs' : ''}">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                            ${m.inboxCount} pending
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // Messages
+        const sortedMsgs = [...messages].sort((a,b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        document.getElementById('ui-msg-count').innerText = sortedMsgs.length + ' events';
+        
+        const formatTime = ts =>ts ? ts.slice(11, 19) : '';
+
+        const msgHTML = sortedMsgs.length === 0 ? '<div class="empty-state">No swarm activity recorded yet.</div>' :
+            `<div class="msg-list">
+                ${sortedMsgs.map((m, i) => {
+                    let tagClass = 'msg-tag-message';
+                    if(m.isBroadcast) tagClass = 'msg-tag-broadcast';
+                    if(m.type && m.type !== 'message') tagClass = 'msg-tag-event';
+                    
+                    return `
+                    <div class="msg-item" style="animation-delay: ${Math.min(i*0.02, 0.5)}s">
+                        <div class="msg-meta">
+                            <span class="msg-tag ${tagClass}">${escapeHtml(m.type || 'PROTOCOL')}</span>
+                            <div class="msg-flow">
+                                <span class="msg-party">${escapeHtml(m.fromLabel || m.from || 'SYS')}</span>
+                                <span class="msg-arrow">${m.isBroadcast ? '↠' : '→'}</span>
+                                <span class="msg-party">${escapeHtml(m.toLabel || m.to || 'ALL')}</span>
+                            </div>
+                            <span class="msg-time">${formatTime(m.timestamp)}</span>
+                        </div>
+                        <div class="msg-content">${escapeHtml(m.content || '')}</div>
+                    </div>
+                `}).join('')}
+            </div>`;
+        document.getElementById('ui-msg-list').innerHTML = msgHTML;
+
+        // Kanban Board
+        ['pending', 'in_progress', 'completed', 'blocked'].forEach(key => {
+            const list = tasks[key] || [];
+            const safeKey = key === 'in_progress' ? 'progress' : key;
+            document.getElementById(`c-${safeKey}`).innerText = list.length;
+            
+            document.getElementById(`col-${safeKey}`).innerHTML = list.length === 0 ? 
+                '<div style="text-align:center;color:var(--text-tertiary);margin-top:24px;font-size:13px;letter-spacing:0.05em;">NO DATA</div>' :
+                list.map(t => `
+                    <div class="task-card ${key === 'blocked' ? 'blocked-card' : ''}">
+                        <div class="task-id">#${escapeHtml((t.id || '').substring(0,8))}</div>
+                        <div class="task-subj">${escapeHtml(t.subject || '')}</div>
+                        <div class="task-own">${escapeHtml(t.owner || 'Unassigned')}</div>
+                        ${key === 'blocked' && t.blockedBy && t.blockedBy.length ? `<div class="blocked-label">Blocked by: ${t.blockedBy.map(v => escapeHtml(v)).join(', ')}</div>` : ''}
+                    </div>
+                `).join('');
+        });
+    }
+
+    // Modal Operations
+    function openTaskModal() {
+        document.getElementById('task-modal').style.display = 'flex';
+        document.getElementById('task-subj').focus();
+    }
+    function closeTaskModal() {
+        document.getElementById('task-modal').style.display = 'none';
+        document.getElementById('task-subj').value = '';
+        document.getElementById('task-owner').value = '';
+    }
+    document.getElementById('task-subj').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') submitTask(e);
+    });
+    document.getElementById('task-owner').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') submitTask(e);
+    });
+    async function submitTask(event) {
+        if(!currentTeam) return;
+        const subject = document.getElementById('task-subj').value;
+        const owner = document.getElementById('task-owner').value;
+        if(!subject.trim()) return;
+        
+        const btn = event && event.target && event.target.tagName === 'BUTTON' ? event.target : document.querySelector('.modal-actions .action-btn');
+        const oldText = btn.innerText;
+        btn.innerText = 'Deploying...';
+        btn.disabled = true;
+
+        try {
+            await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject, owner })
+            });
+            closeTaskModal();
+        } catch(e) {
+            console.error("Error creating task", e);
+            alert("Failed to create task");
+        } finally {
+            btn.innerText = oldText;
+            btn.disabled = false;
+        }
+    }
+
+    // Context Operations
+    function openContextModal() {
+        document.getElementById('context-modal').style.display = 'flex';
+        document.getElementById('ctx-url').focus();
+    }
+    function closeContextModal() {
+        document.getElementById('context-modal').style.display = 'none';
+        document.getElementById('ctx-url').value = '';
+        document.getElementById('ctx-text').value = '';
+    }
+    async function submitContext(event) {
+        if(!currentTeam) return;
+        const owner = document.getElementById('ctx-owner').value;
+        const url = document.getElementById('ctx-url').value.trim();
+        let description = document.getElementById('ctx-text').value.trim();
+        
+        const btn = event.target;
+        const oldText = btn.innerText;
+        btn.innerText = 'Processing...';
+        btn.disabled = true;
+
+        try {
+            if (url) {
+                btn.innerText = 'Fetching Data...';
+                const proxyUrl = '/api/proxy?url=' + encodeURIComponent(url);
+                const resp = await fetch(proxyUrl);
+                if (!resp.ok) {
+                    throw new Error("Failed to fetch URL content. Server returned status: " + resp.status);
+                }
+                const text = await resp.text();
+                description += "\\n\\n--- Extracted Context ---\\n\\n" + text;
+            }
+            if (!description.trim()) {
+                alert("Please provide either a URL or text input.");
+                return;
+            }
+
+            btn.innerText = 'Injecting Context...';
+            await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    subject: "Analyze Project Specification Context", 
+                    description: description,
+                    owner: owner 
+                })
+            });
+            closeContextModal();
+        } catch(e) {
+            console.error("Error setting context", e);
+            alert("Failed to set context: " + e.message);
+        } finally {
+            btn.innerText = oldText;
+            btn.disabled = false;
+        }
+    }
+
+    // Startup
+    init();
+
 </script>
 </body>
 </html>

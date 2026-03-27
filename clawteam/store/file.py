@@ -16,12 +16,16 @@ if sys.platform == "win32":
 else:
     import fcntl
 
+from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.store.base import BaseTaskStore, TaskLockError
 from clawteam.team.models import TaskItem, TaskPriority, TaskStatus, get_data_dir
 
 
 def _tasks_root(team_name: str) -> Path:
-    d = get_data_dir() / "tasks" / team_name
+    d = ensure_within_root(
+        get_data_dir() / "tasks",
+        validate_identifier(team_name, "team name"),
+    )
     d.mkdir(parents=True, exist_ok=True)
     return d
 

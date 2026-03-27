@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.workspace import git
 from clawteam.workspace.models import WorkspaceInfo, WorkspaceRegistry
 
@@ -51,7 +52,11 @@ def _workspaces_root() -> Path:
 
 
 def _registry_path(team_name: str) -> Path:
-    return _workspaces_root() / team_name / "workspace-registry.json"
+    return ensure_within_root(
+        _workspaces_root(),
+        validate_identifier(team_name, "team name"),
+        "workspace-registry.json",
+    )
 
 
 def _load_registry(team_name: str, repo_root: str) -> WorkspaceRegistry:
@@ -99,8 +104,10 @@ class WorkspaceManager:
         agent_name: str,
         agent_id: str,
     ) -> WorkspaceInfo:
+        validate_identifier(team_name, "team name")
+        validate_identifier(agent_name, "agent name")
         branch = f"clawteam/{team_name}/{agent_name}"
-        wt_path = _workspaces_root() / team_name / agent_name
+        wt_path = ensure_within_root(_workspaces_root(), team_name, agent_name)
 
         # Crash recovery: if worktree already exists, clean it up first
         if wt_path.exists():

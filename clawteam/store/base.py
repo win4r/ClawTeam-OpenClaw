@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from clawteam.paths import validate_identifier
 from clawteam.team.models import TaskItem, TaskPriority, TaskStatus
 
 
@@ -20,7 +21,7 @@ class BaseTaskStore(ABC):
     """
 
     def __init__(self, team_name: str):
-        self.team_name = team_name
+        self.team_name = validate_identifier(team_name, "team name")
 
     @abstractmethod
     def create(
