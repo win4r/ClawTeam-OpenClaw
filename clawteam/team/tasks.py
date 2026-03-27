@@ -518,7 +518,7 @@ class TaskStore:
                 )
             task.updated_at = _now_iso()
 
-            if task.status == TaskStatus.completed:
+            if task.status == TaskStatus.completed and self._should_resolve_dependents_on_completion(task):
                 self._resolve_dependents_unlocked(task_id)
             elif task.status == TaskStatus.failed:
                 self._apply_failure_flow_unlocked(task)
@@ -681,6 +681,13 @@ class TaskStore:
         except BaseException:
             Path(tmp_name).unlink(missing_ok=True)
             raise
+
+    @staticmethod
+    def _should_resolve_dependents_on_completion(task: TaskItem) -> bool:
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        if str(metadata.get("template_stage") or "").strip().lower() != "scope":
+            return True
+        return str(metadata.get("materialization_mode") or "immediate").strip().lower() != "post-scope"
 
     def _resolve_dependents_unlocked(self, completed_task_id: str) -> None:
         root = _tasks_root(self.team_name)

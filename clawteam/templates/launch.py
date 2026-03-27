@@ -142,12 +142,16 @@ def _has_positive_additive_intent(text: str, entity_patterns: tuple[str, ...]) -
         return False
     if _matches_any_pattern(text, _STRONG_ADDITIVE_INTENT_PATTERNS):
         return True
-    new_with_entity_patterns = tuple(rf"\bnew\s+{pattern.lstrip('\\b')}" for pattern in entity_patterns)
+    stripped_entity_patterns = tuple(
+        pattern[2:] if pattern.startswith(r"\b") else pattern
+        for pattern in entity_patterns
+    )
+    new_with_entity_patterns = tuple(rf"\bnew\s+{pattern}" for pattern in stripped_entity_patterns)
     if _matches_any_pattern(text, new_with_entity_patterns):
         return True
     action_with_new_entity_patterns = tuple(
-        rf"\b(?:add|create|introduce)(?:\s+\w+){{0,3}}\s+new\s+{pattern.lstrip('\\b')}"
-        for pattern in entity_patterns
+        rf"\b(?:add|create|introduce)(?:\s+\w+){{0,3}}\s+new\s+{pattern}"
+        for pattern in stripped_entity_patterns
     )
     return _matches_any_pattern(text, action_with_new_entity_patterns)
 
@@ -630,6 +634,7 @@ def build_launch_task_input(
     team_name: str,
     created_task_ids: dict[str, str],
     render_task,
+    materialization_mode: str = "immediate",
 ) -> LaunchTaskInput:
     """Canonical launch-task preparation entrypoint.
 
@@ -660,6 +665,8 @@ def build_launch_task_input(
         metadata["template_stage"] = task_def.stage.strip().lower()
     if task_def.feature_scope_required:
         metadata["feature_scope_required"] = True
+    if materialization_mode != "immediate":
+        metadata["materialization_mode"] = materialization_mode
     if task_def.message_type:
         metadata["message_type"] = task_def.message_type
     if task_def.required_sections:
@@ -673,6 +680,8 @@ def build_launch_task_input(
         render_task=render_task,
     )
     metadata.update(prepared_brief.metadata_patch)
+    if metadata.get("template_stage") == "scope" and materialization_mode == "post-scope":
+        metadata["deferred_materialization_state"] = "pending_scope_completion"
 
     return LaunchTaskInput(
         subject=task_def.subject,
@@ -690,17 +699,22 @@ def execute_template_launch(
     goal: str,
     team_name: str,
     render_task,
+    materialization_mode: str = "immediate",
 ) -> LaunchExecutionResult:
     """Execute authored-order template task creation behind one launch boundary."""
     created_task_ids: dict[str, str] = {}
+    tasks_to_launch = list(tasks)
+    if materialization_mode == "post-scope":
+        tasks_to_launch = [task_def for task_def in tasks if not task_def.blocked_by]
 
-    for task_def in tasks:
+    for task_def in tasks_to_launch:
         launch_task_input = build_launch_task_input(
             task_def,
             goal=goal,
             team_name=team_name,
             created_task_ids=created_task_ids,
             render_task=render_task,
+            materialization_mode=materialization_mode,
         )
         task = task_store.create(
             subject=launch_task_input.subject,

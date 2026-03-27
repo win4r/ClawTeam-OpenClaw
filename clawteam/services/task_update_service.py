@@ -71,6 +71,15 @@ merge_update_metadata = merge_transition_metadata
 plan_task_update_followups = plan_task_transition_followups
 
 
+POST_SCOPE_MATERIALIZATION_MODE = "post-scope"
+DEFERRED_MATERIALIZATION_CASE = "deferred_post_scope_materialization"
+DEFERRED_MATERIALIZATION_HOOK = "post_scope_materialization"
+DEFERRED_MATERIALIZATION_AWAITING_HOOK = "awaiting_explicit_post_scope_hook"
+DEFERRED_MATERIALIZATION_REASON = (
+    "Deferred topology materialization is not implemented; refusing legacy downstream auto-release."
+)
+
+
 def _build_failure_repair_packet(task: TaskItem) -> str | None:
     if not isinstance(task.metadata, dict):
         return None
@@ -479,6 +488,7 @@ class TaskUpdateEffects:
     auto_releases: list[dict[str, Any]]
     failure_notice: dict[str, Any] | None
     triage_release: dict[str, Any] | None = None
+    deferred_materialization: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -836,6 +846,39 @@ def _apply_triage_followup_resolution(
         release_notifier=ctx.release_notifier,
     )
 
+
+def _resolve_deferred_materialization(
+    *,
+    task: TaskItem,
+    deferred_materialization: dict[str, Any] | None,
+    dependent_ids_to_wake: list[str],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    metadata = task.metadata if isinstance(task.metadata, dict) else None
+    is_post_scope_completion = (
+        metadata is not None
+        and task.status == TaskStatus.completed
+        and str(metadata.get("template_stage") or "").strip().lower() == "scope"
+        and str(metadata.get("materialization_mode") or "immediate").strip().lower() == POST_SCOPE_MATERIALIZATION_MODE
+    )
+    if not is_post_scope_completion and deferred_materialization is None:
+        return None, dependent_ids_to_wake
+
+    effect = dict(deferred_materialization or {})
+    effect["case_name"] = str(effect.get("case_name") or DEFERRED_MATERIALIZATION_CASE)
+    effect["mode"] = str(effect.get("mode") or POST_SCOPE_MATERIALIZATION_MODE)
+    effect["hook"] = str(effect.get("hook") or DEFERRED_MATERIALIZATION_HOOK)
+    effect["state"] = str(
+        effect.get("state")
+        or (metadata or {}).get("deferred_materialization_state")
+        or DEFERRED_MATERIALIZATION_AWAITING_HOOK
+    )
+    effect["status"] = str(effect.get("status") or "fail_closed")
+    effect["reason"] = str(effect.get("reason") or DEFERRED_MATERIALIZATION_REASON)
+    effect["suppressed_dependent_ids"] = list(
+        effect.get("suppressed_dependent_ids") or dependent_ids_to_wake
+    )
+    return effect, []
+
 def execute_task_update_effects(
     *,
     ctx: TaskUpdateContext,
@@ -845,8 +888,15 @@ def execute_task_update_effects(
     message: str,
     dependent_ids_to_wake: list[str],
     failed_targets_to_wake: list[str],
+    deferred_materialization: dict[str, Any] | None = None,
 ) -> TaskUpdateEffects:
     """Execute post-update side effects after the task store mutation succeeds."""
+    deferred_materialization, dependent_ids_to_wake = _resolve_deferred_materialization(
+        task=task,
+        deferred_materialization=deferred_materialization,
+        dependent_ids_to_wake=dependent_ids_to_wake,
+    )
+
     scope_payload = _scope_payload(task)
     scope_warnings = task.metadata.get("scope_audit_warnings") if isinstance(task.metadata, dict) else None
     feature_scope = task.metadata.get("feature_scope") if isinstance(task.metadata, dict) else None
@@ -934,6 +984,7 @@ def execute_task_update_effects(
         auto_releases=auto_releases,
         failure_notice=failure_notice,
         triage_release=triage_release,
+        deferred_materialization=deferred_materialization,
     )
 
 
@@ -1132,10 +1183,12 @@ def execute_task_update(
 
     metadata_keys_to_remove: list[str] | None = None
     apply_result: TransitionApplyResult | None = None
+    deferred_materialization_effect: dict[str, Any] | None = None
 
     existing_launch_brief = existing.metadata.get("launch_brief") if isinstance(existing.metadata, dict) else None
     is_scope_task = (existing.metadata.get("template_stage") == "scope") if isinstance(existing.metadata, dict) else False
     require_feature_scope = bool(existing.metadata.get("feature_scope_required")) if isinstance(existing.metadata, dict) else False
+    materialization_mode = str((existing.metadata or {}).get("materialization_mode") or "immediate").strip().lower() if isinstance(existing.metadata, dict) else "immediate"
     if request.status == TaskStatus.completed and is_scope_task:
         final_scope_description = (request.description or existing.description or "").strip()
         if not final_scope_description:
@@ -1165,11 +1218,29 @@ def execute_task_update(
         metadata["scope_audit_warnings"] = [warning.model_dump(mode="json") for warning in scope_warnings]
         if validated_scope.feature_scope is not None:
             metadata["feature_scope"] = validated_scope.feature_scope.model_dump(mode="json")
-        plan = TaskUpdatePlan(
-            metadata_to_apply=metadata,
-            dependent_ids_to_wake=plan.dependent_ids_to_wake,
-            failed_targets_to_wake=plan.failed_targets_to_wake,
-        )
+        if materialization_mode == POST_SCOPE_MATERIALIZATION_MODE:
+            metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_AWAITING_HOOK
+            metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE
+            deferred_materialization_effect = {
+                "case_name": DEFERRED_MATERIALIZATION_CASE,
+                "status": "fail_closed",
+                "mode": materialization_mode,
+                "hook": DEFERRED_MATERIALIZATION_HOOK,
+                "state": DEFERRED_MATERIALIZATION_AWAITING_HOOK,
+                "reason": DEFERRED_MATERIALIZATION_REASON,
+                "suppressed_dependent_ids": list(plan.dependent_ids_to_wake),
+            }
+            plan = TaskUpdatePlan(
+                metadata_to_apply=metadata,
+                dependent_ids_to_wake=[],
+                failed_targets_to_wake=plan.failed_targets_to_wake,
+            )
+        else:
+            plan = TaskUpdatePlan(
+                metadata_to_apply=metadata,
+                dependent_ids_to_wake=plan.dependent_ids_to_wake,
+                failed_targets_to_wake=plan.failed_targets_to_wake,
+            )
 
     execution_decision = plan_terminal_writeback(
         existing=existing,
@@ -1305,6 +1376,7 @@ def execute_task_update(
         message=request.message,
         dependent_ids_to_wake=plan.dependent_ids_to_wake,
         failed_targets_to_wake=plan.failed_targets_to_wake,
+        deferred_materialization=deferred_materialization_effect,
     )
 
     return TaskUpdateResult(task=task, plan=plan, effects=effects, apply_result=apply_result)

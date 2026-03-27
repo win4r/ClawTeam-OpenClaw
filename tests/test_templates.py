@@ -565,7 +565,7 @@ Polish the member list UI using the existing tests are representative assumption
         assert exc.value.reference_kind == "on_fail"
         assert exc.value.missing_refs == ["MissingImplement"]
 
-    def test_execute_template_launch_creates_tasks_in_authored_order_and_backfills_ids(self):
+    def test_execute_template_launch_immediate_mode_keeps_full_authored_topology(self):
         store = _FakeTaskStore()
 
         result = execute_template_launch(
@@ -598,6 +598,9 @@ Polish the member list UI using the existing tests are representative assumption
         assert store.calls[1]["blocked_by"] == ["task-1"]
         assert store.calls[1]["metadata"]["on_fail"] == ["task-1"]
         assert store.calls[1]["metadata"]["launch_brief"]["format"] == "prose_fallback"
+        assert "materialization_mode" not in store.calls[0]["metadata"]
+        assert "materialization_mode" not in store.calls[1]["metadata"]
+        assert "deferred_materialization_state" not in store.calls[0]["metadata"]
         assert "## Interpretation Rules" in store.calls[1]["description"]
 
     def test_execute_template_launch_surfaces_reference_error_without_partial_hidden_logic(self):
@@ -624,6 +627,55 @@ Polish the member list UI using the existing tests are representative assumption
         assert exc.value.reference_kind == "blocked_by"
         assert exc.value.missing_refs == ["MissingScope"]
         assert store.calls == []
+
+    def test_execute_template_launch_post_scope_materialization_only_creates_entry_tasks(self):
+        store = _FakeTaskStore()
+
+        result = execute_template_launch(
+            store,
+            [
+                TaskDef(
+                    subject="Scope",
+                    description="Clarify {goal}.",
+                    owner="lead",
+                    stage="scope",
+                ),
+                TaskDef(
+                    subject="Setup",
+                    description="Prepare the baseline.",
+                    owner="config1",
+                    blocked_by=["Scope"],
+                    stage="setup",
+                ),
+                TaskDef(
+                    subject="Preflight",
+                    description="Capture baseline signals before implementation starts.",
+                    owner="lead",
+                ),
+                TaskDef(
+                    subject="Implement",
+                    description="Build the change.",
+                    owner="dev1",
+                    blocked_by=["Setup"],
+                    stage="implement",
+                ),
+            ],
+            goal="Ship the feature safely",
+            team_name="delivery-demo",
+            materialization_mode="post-scope",
+        )
+
+        assert result == LaunchExecutionResult(
+            created_task_ids={
+                "Scope": "task-1",
+                "Preflight": "task-2",
+            }
+        )
+        assert [call["subject"] for call in store.calls] == ["Scope", "Preflight"]
+        assert store.calls[0]["metadata"]["materialization_mode"] == "post-scope"
+        assert store.calls[0]["metadata"]["deferred_materialization_state"] == "pending_scope_completion"
+        assert store.calls[1]["metadata"]["materialization_mode"] == "post-scope"
+        assert "deferred_materialization_state" not in store.calls[1]["metadata"]
 
     def test_read_launch_brief_metadata_returns_normalized_contract(self):
         normalized = read_launch_brief_metadata(

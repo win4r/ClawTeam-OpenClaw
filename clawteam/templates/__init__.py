@@ -46,6 +46,7 @@ class TemplateDef(BaseModel):
     command: list[str] = ["openclaw"]
     backend: str = "tmux"
     topology_mode: str = "explicit"
+    materialization_mode: str = "immediate"
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
@@ -121,6 +122,7 @@ def build_launch_task_input(
     goal: str,
     team_name: str,
     created_task_ids: dict[str, str],
+    materialization_mode: str = "immediate",
 ) -> LaunchTaskInput:
     return _build_launch_task_input(
         task_def,
@@ -128,6 +130,7 @@ def build_launch_task_input(
         team_name=team_name,
         created_task_ids=created_task_ids,
         render_task=render_task,
+        materialization_mode=materialization_mode,
     )
 
 
@@ -137,6 +140,7 @@ def execute_template_launch(
     *,
     goal: str,
     team_name: str,
+    materialization_mode: str = "immediate",
 ) -> LaunchExecutionResult:
     return _execute_template_launch(
         task_store,
@@ -144,6 +148,7 @@ def execute_template_launch(
         goal=goal,
         team_name=team_name,
         render_task=render_task,
+        materialization_mode=materialization_mode,
     )
 
 
@@ -235,6 +240,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         command=tmpl.get("command", ["openclaw"]),
         backend=tmpl.get("backend", "tmux"),
         topology_mode=tmpl.get("topology_mode", "explicit"),
+        materialization_mode=tmpl.get("materialization_mode", "immediate"),
         leader=leader,
         agents=agents,
         tasks=tasks,
