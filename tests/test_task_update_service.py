@@ -2492,6 +2492,22 @@ def test_execute_task_update_post_scope_mode_fails_closed_without_releasing_lega
             "template_stage": "scope",
             "materialization_mode": "post-scope",
             "deferred_materialization_state": "pending_scope_completion",
+            "workflow_definition": {
+                "template_name": "five-step-delivery",
+                "preserved_definition": True,
+                "materialized_subjects": ["Scope the task into a minimal deliverable"],
+                "deferred_subjects": ["Prepare repo, branch, env, and runnable baseline"],
+                "tasks": [
+                    {"subject": "Scope the task into a minimal deliverable", "stage": "scope", "blocked_by": []},
+                    {"subject": "Prepare repo, branch, env, and runnable baseline", "stage": "setup", "blocked_by": ["Scope the task into a minimal deliverable"]},
+                    {"subject": "Implement assigned change slice A with real validation", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"]},
+                    {"subject": "Implement assigned change slice B with real validation", "stage": "implement", "blocked_by": ["Prepare repo, branch, env, and runnable baseline"]},
+                    {"subject": "Run scoped QA pass A on the real change", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"]},
+                    {"subject": "Run scoped QA pass B on the real change", "stage": "qa", "blocked_by": ["Implement assigned change slice A with real validation", "Implement assigned change slice B with real validation"]},
+                    {"subject": "Review code quality, maintainability, and release readiness", "stage": "review", "blocked_by": ["Run scoped QA pass A on the real change", "Run scoped QA pass B on the real change"]},
+                    {"subject": "Prepare final delivery package and human decision summary", "stage": "deliver", "blocked_by": ["Review code quality, maintainability, and release readiness"]},
+                ],
+            },
             "launch_brief": {
                 "format": "structured_sections",
                 "sections": {
@@ -2596,6 +2612,8 @@ Deliver only the minimal safe fix.
         "state": "awaiting_explicit_post_scope_hook",
         "reason": "Deferred topology materialization is not implemented; refusing legacy downstream auto-release.",
         "suppressed_dependent_ids": [setup.id],
+        "workflow_definition_preserved": True,
+        "deferred_subjects": ["Prepare repo, branch, env, and runnable baseline"],
     }
     assert wake_calls == []
     assert refreshed_setup.status == TaskStatus.blocked

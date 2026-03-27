@@ -59,6 +59,12 @@ def test_launch_template_post_scope_only_materializes_scope_root(monkeypatch, tm
     assert scope.metadata.get("feature_scope_required") is True
     assert scope.metadata.get("materialization_mode") == "post-scope"
     assert scope.metadata.get("deferred_materialization_state") == "pending_scope_completion"
+    workflow_definition = scope.metadata.get("workflow_definition")
+    assert workflow_definition["template_name"] == "five-step-delivery"
+    assert workflow_definition["preserved_definition"] is True
+    assert workflow_definition["materialized_subjects"] == ["Scope the task into a minimal deliverable"]
+    assert "Prepare repo, branch, env, and runnable baseline" in workflow_definition["deferred_subjects"]
+    assert any(task["stage"] == "deliver" for task in workflow_definition["tasks"])
     assert "Ship the feature safely" in scope.description
     assert "{goal}" not in scope.description
     assert "## Source Request" in scope.description

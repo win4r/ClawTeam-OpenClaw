@@ -76,6 +76,40 @@ class LaunchExecutionResult(BaseModel):
     created_task_ids: dict[str, str] = Field(default_factory=dict)
 
 
+def _build_deferred_workflow_definition(
+    *,
+    tasks,
+    materialized_subjects: list[str],
+    template_name: str | None = None,
+) -> dict[str, object]:
+    authored_tasks = []
+    for task_def in tasks:
+        authored_tasks.append(
+            {
+                "subject": task_def.subject,
+                "owner": task_def.owner,
+                "stage": task_def.stage.strip().lower() if task_def.stage else "",
+                "blocked_by": list(task_def.blocked_by),
+                "on_fail": list(task_def.on_fail),
+                "message_type": task_def.message_type,
+                "required_sections": list(task_def.required_sections),
+                "feature_scope_required": bool(task_def.feature_scope_required),
+                "description": task_def.description,
+            }
+        )
+
+    deferred_subjects = [task_def.subject for task_def in tasks if task_def.subject not in materialized_subjects]
+    return {
+        "template_name": template_name,
+        "preserved_definition": True,
+        "materialization_mode": "post-scope",
+        "authored_task_order": [task_def.subject for task_def in tasks],
+        "materialized_subjects": list(materialized_subjects),
+        "deferred_subjects": deferred_subjects,
+        "tasks": authored_tasks,
+    }
+
+
 class TaskLaunchBriefView(BaseModel):
     format: str = "prose_fallback"
     source_request: str = ""
@@ -635,6 +669,7 @@ def build_launch_task_input(
     created_task_ids: dict[str, str],
     render_task,
     materialization_mode: str = "immediate",
+    deferred_workflow_definition: dict[str, object] | None = None,
 ) -> LaunchTaskInput:
     """Canonical launch-task preparation entrypoint.
 
@@ -680,6 +715,8 @@ def build_launch_task_input(
         render_task=render_task,
     )
     metadata.update(prepared_brief.metadata_patch)
+    if materialization_mode == "post-scope" and deferred_workflow_definition is not None:
+        metadata["workflow_definition"] = deferred_workflow_definition
     if metadata.get("template_stage") == "scope" and materialization_mode == "post-scope":
         metadata["deferred_materialization_state"] = "pending_scope_completion"
 
@@ -700,12 +737,19 @@ def execute_template_launch(
     team_name: str,
     render_task,
     materialization_mode: str = "immediate",
+    template_name: str | None = None,
 ) -> LaunchExecutionResult:
     """Execute authored-order template task creation behind one launch boundary."""
     created_task_ids: dict[str, str] = {}
     tasks_to_launch = list(tasks)
+    deferred_workflow_definition: dict[str, object] | None = None
     if materialization_mode == "post-scope":
         tasks_to_launch = [task_def for task_def in tasks if not task_def.blocked_by]
+        deferred_workflow_definition = _build_deferred_workflow_definition(
+            tasks=tasks,
+            materialized_subjects=[task_def.subject for task_def in tasks_to_launch],
+            template_name=template_name,
+        )
 
     for task_def in tasks_to_launch:
         launch_task_input = build_launch_task_input(
@@ -715,6 +759,7 @@ def execute_template_launch(
             created_task_ids=created_task_ids,
             render_task=render_task,
             materialization_mode=materialization_mode,
+            deferred_workflow_definition=deferred_workflow_definition,
         )
         task = task_store.create(
             subject=launch_task_input.subject,

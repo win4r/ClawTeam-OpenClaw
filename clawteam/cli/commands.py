@@ -2677,6 +2677,7 @@ def launch_team(
             goal=goal,
             team_name=t_name,
             materialization_mode=tmpl.materialization_mode,
+            template_name=tmpl.name,
         )
     except LaunchTemplateError as e:
         console.print(f"[red]{e}[/red]")

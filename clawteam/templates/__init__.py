@@ -141,6 +141,7 @@ def execute_template_launch(
     goal: str,
     team_name: str,
     materialization_mode: str = "immediate",
+    template_name: str | None = None,
 ) -> LaunchExecutionResult:
     return _execute_template_launch(
         task_store,
@@ -149,6 +150,7 @@ def execute_template_launch(
         team_name=team_name,
         render_task=render_task,
         materialization_mode=materialization_mode,
+        template_name=template_name,
     )
 
 

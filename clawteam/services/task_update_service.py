@@ -1219,6 +1219,7 @@ def execute_task_update(
         if validated_scope.feature_scope is not None:
             metadata["feature_scope"] = validated_scope.feature_scope.model_dump(mode="json")
         if materialization_mode == POST_SCOPE_MATERIALIZATION_MODE:
+            workflow_definition = existing.metadata.get("workflow_definition") if isinstance(existing.metadata, dict) else None
             metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_AWAITING_HOOK
             metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE
             deferred_materialization_effect = {
@@ -1230,6 +1231,13 @@ def execute_task_update(
                 "reason": DEFERRED_MATERIALIZATION_REASON,
                 "suppressed_dependent_ids": list(plan.dependent_ids_to_wake),
             }
+            if isinstance(workflow_definition, dict):
+                deferred_materialization_effect["workflow_definition_preserved"] = bool(
+                    workflow_definition.get("preserved_definition")
+                )
+                deferred_materialization_effect["deferred_subjects"] = list(
+                    workflow_definition.get("deferred_subjects") or []
+                )
             plan = TaskUpdatePlan(
                 metadata_to_apply=metadata,
                 dependent_ids_to_wake=[],

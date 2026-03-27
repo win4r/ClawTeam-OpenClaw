@@ -977,6 +977,7 @@ class TestLoadBuiltinTemplate:
             materialization_mode=tmpl.materialization_mode,
             goal="Test goal for five-step-delivery",
             team_name="test-team",
+            template_name=tmpl.name,
         )
 
         assert result == LaunchExecutionResult(
@@ -992,6 +993,30 @@ class TestLoadBuiltinTemplate:
         assert scope_call["metadata"]["feature_scope_required"] is True
         assert scope_call["metadata"]["materialization_mode"] == "post-scope"
         assert scope_call["metadata"]["deferred_materialization_state"] == "pending_scope_completion"
+
+        workflow_definition = scope_call["metadata"]["workflow_definition"]
+        assert workflow_definition["template_name"] == "five-step-delivery"
+        assert workflow_definition["preserved_definition"] is True
+        assert workflow_definition["materialized_subjects"] == ["Scope the task into a minimal deliverable"]
+        assert workflow_definition["deferred_subjects"] == [
+            "Prepare repo, branch, env, and runnable baseline",
+            "Implement assigned change slice A with real validation",
+            "Implement assigned change slice B with real validation",
+            "Run scoped QA pass A on the real change",
+            "Run scoped QA pass B on the real change",
+            "Review code quality, maintainability, and release readiness",
+            "Prepare final delivery package and human decision summary",
+        ]
+        assert [task["stage"] for task in workflow_definition["tasks"]] == [
+            "scope",
+            "setup",
+            "implement",
+            "implement",
+            "qa",
+            "qa",
+            "review",
+            "deliver",
+        ]
 
 
 
