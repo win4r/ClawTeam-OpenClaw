@@ -663,6 +663,9 @@ def _build_failure_reopen_message(failed_task: TaskItem, target: TaskItem) -> st
 
 def _build_triage_followup(task: TaskItem, ctx: TaskUpdateContext) -> tuple[TaskItem, str, bool] | tuple[None, None, bool]:
     metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    if metadata.get("triage_followup") == "true":
+        return None, None, False
+
     is_complex_failure = task.status == TaskStatus.failed and metadata.get("failure_kind") == "complex"
     is_blocked = task.status == TaskStatus.blocked
     if not is_complex_failure and not is_blocked:

@@ -1139,6 +1139,92 @@ def test_execute_task_update_effects_auto_creates_blocked_triage_followup(monkey
 
 
 
+
+def test_execute_task_update_effects_does_not_recurse_triage_followups(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    source = store.create("Regression QA", owner="qa1")
+
+    class FakeRuntime:
+        def release_to_owner(self, task, *, caller, message, respawn, release_notifier):
+            return {"taskId": task.id, "owner": task.owner, "message": message, "respawned": False}
+
+    ctx = TaskUpdateContext(
+        store=store,
+        team="demo",
+        runtime=FakeRuntime(),
+        release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
+        failure_notifier=lambda *args, **kwargs: None,
+    )
+
+    execute_task_update(
+        task_id=source.id,
+        caller="qa1",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.failed,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind="complex",
+            failure_note=None,
+            failure_root_cause="ownership unclear",
+            failure_evidence="cross-cutting regression",
+            failure_recommended_next_owner="dev1",
+            failure_recommended_action="fix and re-run qa",
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    triage_id = store.get(source.id).metadata.get("triage_followup_task_id")
+    triage = store.get(str(triage_id))
+    assert triage is not None
+    assert triage.metadata["triage_followup"] == "true"
+
+    result = execute_task_update(
+        task_id=triage.id,
+        caller="dev1",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.blocked,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause="need more routing",
+            failure_evidence="still unclear",
+            failure_recommended_next_owner="leader",
+            failure_recommended_action="decide owner",
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    triage_after = store.get(triage.id)
+    assert triage_after is not None
+    assert triage_after.status == TaskStatus.blocked
+    assert triage_after.metadata["blocked_recommended_action"] == "decide owner"
+    assert "triage_followup_task_id" not in triage_after.metadata
+    assert result.effects.triage_release is None
+
+
 def test_execute_task_update_applies_triage_followup_resolution(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
 
