@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from clawteam.execution.state import CLAIMED
 from clawteam.team.models import TaskItem, TaskStatus
 from clawteam.team.tasks import TaskLockError, TaskStore
 
@@ -278,6 +279,27 @@ class TestTaskLocking:
         with patch("clawteam.spawn.registry.is_agent_alive", return_value=False):
             updated = store.update(t.id, status=TaskStatus.in_progress, caller="live-agent")
         assert updated.locked_by == "live-agent"
+
+    def test_claim_execution_writes_claim_metadata(self, store):
+        task = store.create("claimable")
+
+        claimed = store.claim_execution(task.id, caller="agent-a")
+
+        assert claimed is not None
+        execution = claimed.task.metadata["execution"]
+        assert execution["state"] == CLAIMED
+        assert execution["claim_observed"] is True
+        assert execution["claimed_at"]
+
+    def test_update_in_progress_writes_claim_metadata(self, store):
+        task = store.create("claimable")
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            claimed = store.update(task.id, status=TaskStatus.in_progress, caller="agent-a")
+
+        execution = claimed.metadata["execution"]
+        assert execution["state"] == CLAIMED
+        assert execution["claim_observed"] is True
+        assert execution["claimed_at"]
 
 
 class TestDurationTracking:

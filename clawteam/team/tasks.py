@@ -264,20 +264,18 @@ class TaskStore:
             self._acquire_lock(task, caller, force)
             if not task.started_at:
                 task.started_at = _now_iso()
-            if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+            claimed_execution = (
+                previous_status != TaskStatus.in_progress
+                or not task.active_execution_id
+                or previous_owner != task.locked_by
+            )
+            if claimed_execution:
                 next_seq, next_execution_id = _next_execution_id(task)
                 task.execution_seq = next_seq
                 task.active_execution_id = next_execution_id
                 task.active_execution_owner = task.locked_by or caller or task.owner
+                self._write_claim_execution_metadata(task)
             task.status = TaskStatus.in_progress
-            task.metadata.update(
-                merge_execution_metadata(
-                    task,
-                    state=CLAIMED,
-                    claimed_at=_now_iso(),
-                    claim_observed=True,
-                )
-            )
             _append_transition_log(
                 task,
                 case_name=decision.case_name,
@@ -470,11 +468,17 @@ class TaskStore:
                 # Record when work actually started
                 if not task.started_at:
                     task.started_at = _now_iso()
-                if previous_status != TaskStatus.in_progress or not task.active_execution_id or previous_owner != task.locked_by:
+                claimed_execution = (
+                    previous_status != TaskStatus.in_progress
+                    or not task.active_execution_id
+                    or previous_owner != task.locked_by
+                )
+                if claimed_execution:
                     next_seq, execution_id = _next_execution_id(task)
                     task.execution_seq = next_seq
                     task.active_execution_id = execution_id
                     task.active_execution_owner = task.locked_by or caller or task.owner
+                    self._write_claim_execution_metadata(task)
 
             # Clear lock when transitioning to completed, pending, or failed
             if status in (TaskStatus.completed, TaskStatus.pending, TaskStatus.failed):
@@ -534,6 +538,16 @@ class TaskStore:
 
             self._save_unlocked(task)
             return task
+
+    def _write_claim_execution_metadata(self, task: TaskItem) -> None:
+        task.metadata.update(
+            merge_execution_metadata(
+                task,
+                state=CLAIMED,
+                claimed_at=_now_iso(),
+                claim_observed=True,
+            )
+        )
 
     def _acquire_lock(self, task: TaskItem, caller: str, force: bool) -> None:
         """Acquire lock on a task for the caller agent."""
