@@ -1228,6 +1228,27 @@ def _apply_terminal_transition(
     metadata_keys_to_remove: list[str] | None,
     force: bool,
 ) -> TransitionApplyResult | None:
+    if execution_id:
+        _decision_payload = _decision_to_payload(
+            decision,
+            default_case_name="terminal_writeback_without_execution_scope",
+        )
+        runtime_decision, _task, apply_result = ctx.store.apply_runtime_terminal_writeback(
+            task_id,
+            status=status,
+            caller=caller,
+            execution_id=execution_id,
+            metadata=metadata_to_apply,
+            metadata_keys_to_remove=metadata_keys_to_remove,
+            force=force,
+            fallback_case_name=str(_decision_payload.get("case_name") or "worker_runtime_failed_closed"),
+        )
+        if runtime_decision is not None and not runtime_decision.accepted:
+            raise RuntimeError(
+                f"terminal writeback rejected: {runtime_decision.rejection_reason}"
+            )
+        return apply_result
+
     return ctx.store.apply_transition_decision(
         task_id,
         decision=_decision_to_payload(

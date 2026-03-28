@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from clawteam.execution.state import WRITEBACK_APPLIED
+
 from clawteam.runtime.orchestrator import RuntimeOrchestrator
 from clawteam.services.task_update_service import (
     FailureRepairPacket,
@@ -365,6 +367,142 @@ def test_execute_task_update_allows_terminal_update_without_execution_id_when_no
     assert result.apply_result is not None
     assert result.apply_result.case_name == "terminal_writeback_without_execution_scope"
 
+
+
+def test_execute_task_update_execution_scoped_completion_persists_writeback_applied(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Implement fix", owner="dev1")
+    claimed = store.claim_execution(task.id, caller="dev1")
+    assert claimed is not None
+
+    result = execute_task_update(
+        task_id=task.id,
+        caller="dev1",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description=None,
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=claimed.task.active_execution_id,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    assert result.apply_result is not None
+    assert result.apply_result.case_name == "execution_scoped_terminal_writeback"
+    assert result.task.metadata["execution"]["state"] == WRITEBACK_APPLIED
+
+
+def test_execute_task_update_effects_preserves_execution_metadata_when_adding_setup_runtime_handoff(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "config1", "config1-id", agent_type="general-purpose")
+    TeamManager.add_member("demo", "dev1", "dev1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    setup = store.create(
+        "Prepare repo, branch, env, and runnable baseline",
+        owner="config1",
+        metadata={"message_type": "SETUP_RESULT"},
+    )
+    claimed = store.claim_execution(setup.id, caller="config1")
+    assert claimed is not None
+    result = execute_task_update(
+        task_id=setup.id,
+        caller="config1",
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: None,
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description=(
+                "SETUP_RESULT\n"
+                "status: completed\n"
+                "remote_status: cached_only\n"
+                "remote_head: 03bdc8f\n"
+                "detached_worktree: /tmp/demo/.worktrees/setup-123\n"
+                "detached_head: 9e8f87f\n"
+                "install:\n"
+                "- python3 -m venv .venv && source .venv/bin/activate && python -m pip install -e '.[dev]' -> success\n"
+                "baseline_validation:\n"
+                "- source .venv/bin/activate && pytest -q -> 336 passed in 2.30s\n"
+                "known_limitations:\n"
+                "- none\n"
+                "next_action: handoff to implement"
+            ),
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=claimed.task.active_execution_id,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+    setup = result.task
+    impl = store.create("Implement fix", owner="dev1", description="Original implement brief")
+
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda *args, **kwargs: [{"taskId": impl.id, "owner": "dev1", "respawned": False}],
+    )
+
+    execute_task_update_effects(
+        ctx=TaskUpdateContext(
+            store=store,
+            team="demo",
+            runtime=RuntimeOrchestrator(team="demo"),
+            release_notifier=lambda team, task, caller, message: {"messageSent": True, "message": message},
+            failure_notifier=lambda team, task, caller: None,
+        ),
+        task=setup,
+        caller="config1",
+        wake_owner=False,
+        message="",
+        dependent_ids_to_wake=[impl.id],
+        failed_targets_to_wake=[],
+    )
+
+    updated_setup = store.get(setup.id)
+    assert updated_setup is not None
+    assert updated_setup.metadata["execution"]["state"] == WRITEBACK_APPLIED
+    assert updated_setup.metadata["runtime_handoff"]["detached_worktree"] == "/tmp/demo/.worktrees/setup-123"
 
 
 def test_execute_task_update_rejects_stale_execution_writeback(monkeypatch, tmp_path):
