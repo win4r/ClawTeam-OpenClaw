@@ -2338,7 +2338,7 @@ Polish the member list page UI only.
 {"source_request":"Polish the member list page UI only","scoped_brief":"Polish the member list page UI only.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing web route should already exist"],"out_of_scope":["backend changes"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[]}
 '''
 
-    with pytest.raises(TaskUpdateValidationError, match="validated web target"):
+    with pytest.raises(TaskUpdateValidationError, match="validated frontend target"):
         execute_task_update(
             task_id=scope.id,
             caller="leader",
@@ -3153,6 +3153,70 @@ Deliver only the member list UI update.
     assert "Run scoped QA pass B on the real change" in subjects
     assert "Implement assigned change slice A with real validation" not in subjects
     assert "Run scoped QA pass A on the real change" not in subjects
+
+
+def test_execute_task_update_materializes_full_stack_mobile_and_backend_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    result = execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description="""## Source Request
+Ship the feature safely
+
+## Scoped Brief
+Deliver the mobile company directory UI update and the backend company directory API update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- web portal rewrite
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the feature safely","scoped_brief":"Deliver the mobile company directory UI update and the backend company directory API update.","in_scope":["mobile company directory UI update","backend company directory API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["web portal rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack","change_budget":{"allowed_layers":["mobile-ui","backend","api"],"allowed_operations":["edit-existing","add-ui-component","add-backend-module"],"allowed_roots":["mobile/app/","server/"],"forbidden_layers":["web-ui"]},"initial_targets":[{"kind":"mobile-screen","path":"mobile/app/companies.tsx","exists":true,"why_in_scope":"company directory screen already exists","evidence":["rg hit: mobile/app/companies.tsx"]},{"kind":"api-handler","path":"server/src/routes/companies.ts","exists":true,"why_in_scope":"company directory API already exists","evidence":["rg hit: server/src/routes/companies.ts"]}]}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    tasks = {task.subject: task for task in store.list_tasks()}
+    assert result.effects.deferred_materialization["execution_shape"] == "full-stack"
+    assert tasks["Prepare repo, branch, env, and runnable baseline"].metadata["feature_scope"]["change_budget"]["allowed_layers"] == ["mobile-ui", "backend", "api"]
+    assert "Implement assigned change slice A with real validation" in tasks
+    assert "Implement assigned change slice B with real validation" in tasks
 
 
 def test_execute_task_update_post_scope_mode_fails_closed_when_feature_scope_shape_is_missing(monkeypatch, tmp_path):

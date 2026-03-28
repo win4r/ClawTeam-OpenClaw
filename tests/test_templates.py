@@ -363,6 +363,59 @@ Deliver only the mobile company directory UI slice.
         assert parsed.change_budget.allowed_layers == ["mobile-ui"]
         assert parsed.initial_targets[0].kind == "mobile-screen"
 
+    def test_parse_feature_scope_block_accepts_web_ui_scope_with_frontend_root_alias(self):
+        parsed = parse_feature_scope_block(
+            """
+## Source Request
+Polish the existing member access screen in the frontend app.
+
+## Scoped Brief
+Deliver only the frontend member access UI polish.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing frontend route already exists
+
+## Out of Scope
+- backend rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the frontend member access UI polish.","in_scope":["frontend member access flow"],"unknowns":["none"],"leader_assumptions":["existing frontend route already exists"],"out_of_scope":["backend rewrite"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["frontend/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[{"kind":"web-flow","path":"frontend/src/features/members/access.tsx","exists":true,"why_in_scope":"existing frontend member access flow already exists","evidence":["rg hit: frontend/src/features/members/access.tsx"]}]}
+""".strip(),
+        )
+
+        assert parsed.change_budget.allowed_layers == ["web-ui"]
+        assert parsed.initial_targets[0].path == "frontend/src/features/members/access.tsx"
+
+    def test_parse_feature_scope_block_accepts_full_stack_scope_with_mobile_and_backend_targets(self):
+        parsed = parse_feature_scope_block(
+            """
+## Source Request
+Ship the company directory feature safely.
+
+## Scoped Brief
+Deliver the mobile company directory UI update and the backend company directory API update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- current mobile navigation shell already exists
+
+## Out of Scope
+- web portal rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver the mobile company directory UI update and the backend company directory API update.","in_scope":["mobile company directory UI update","backend company directory API update"],"unknowns":["none"],"leader_assumptions":["current mobile navigation shell already exists"],"out_of_scope":["web portal rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack","change_budget":{"allowed_layers":["mobile-ui","backend","api"],"allowed_operations":["edit-existing","add-ui-component","add-backend-module"],"allowed_roots":["mobile/app/","server/"],"forbidden_layers":["web-ui"]},"initial_targets":[{"kind":"mobile-screen","path":"mobile/app/companies.tsx","exists":true,"why_in_scope":"existing company directory screen needs update","evidence":["rg hit: mobile/app/companies.tsx"]},{"kind":"api-handler","path":"server/src/routes/companies.ts","exists":true,"why_in_scope":"existing company directory API needs update","evidence":["rg hit: server/src/routes/companies.ts"]}]}
+""".strip(),
+        )
+
+        assert parsed.execution_shape == "full-stack"
+        assert parsed.change_budget.allowed_layers == ["mobile-ui", "backend", "api"]
+        assert {target.kind for target in parsed.initial_targets} == {"mobile-screen", "api-handler"}
+
     def test_parse_feature_scope_block_rejects_root_layer_conflict_for_mobile_ui(self):
         with pytest.raises(
             ScopeTaskValidationError,
