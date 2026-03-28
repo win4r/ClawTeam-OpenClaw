@@ -80,5 +80,6 @@ def test_build_agent_prompt_bootstrap_uses_shell_and_quotes_data_dir(monkeypatch
     assert "do not rely on Linux-only `timeout`" in prompt
     assert "resolve the target repo first instead of hardcoding a remote" in prompt
     assert "resolve_remote_probe_target(Path('.'))" in prompt
+    assert "detached_head must equal remote_head" in prompt
     assert "REVIEW_RESULT must include exactly these headings" in prompt
     assert "architecture_review" in prompt
