@@ -1,6 +1,6 @@
 [project]
 name = "clawteam"
-version = "0.2.0.openclaw1"
+version = "0.2.0+openclaw1"
 description = "Framework-agnostic multi-agent coordination CLI"
 readme = "README.md"
 requires-python = ">=3.10"
