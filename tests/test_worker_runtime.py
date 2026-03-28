@@ -1102,6 +1102,67 @@ def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal
 
 
 
+def test_run_worker_iteration_fails_closed_when_completion_envelope_has_no_valid_structured_result(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
+    monkeypatch.setenv("CLAWTEAM_TEAM_NAME", "demo")
+    monkeypatch.setenv("CLAWTEAM_AGENT_ID", "qa1-id")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    mailbox = MailboxManager("demo")
+    task = TaskStore("demo").create(
+        subject="Prepare repo, branch, env, and runnable baseline",
+        description=(
+            "SETUP_RESULT\n"
+            "status: <completed|blocked|failed>\n"
+            "remote_status: <confirmed_latest|cached_only|unreachable>\n"
+            "remote_head: <sha|none>\n"
+            "detached_worktree: <path|none>\n"
+            "detached_head: <sha|none>\n"
+            "install:\n"
+            "- <command + actual result>\n"
+            "baseline_validation:\n"
+            "- <command or discovery step + actual result>\n"
+            "known_limitations:\n"
+            "- <risk/blocker or none>\n"
+            "next_action: <handoff or fail-closed blocker>"
+        ),
+        owner="qa1",
+        metadata={"message_type": "SETUP_RESULT", "required_sections": ["status", "remote_status", "remote_head", "detached_worktree", "detached_head", "install", "baseline_validation", "known_limitations", "next_action"]},
+    )
+    mailbox.send("leader", "qa1", "start now", key=f"task-wake:{task.id}", last_task=task.id)
+
+    session_dir = tmp_path / ".openclaw" / "agents" / "main" / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    claimed = {"execution_id": None}
+
+    def fake_run(*args, **kwargs):
+        claimed["execution_id"] = kwargs["env"]["CLAWTEAM_TASK_EXECUTION_ID"]
+        (session_dir / "clawteam-demo-qa1.completion.json").write_text(
+            '{"version":1,"task_id":"' + task.id + '","execution_id":"' + claimed["execution_id"] + '","terminal_status":"completed","result_type":"SETUP_RESULT","result_payload":{"status":"completed"}}\n',
+            encoding="utf-8",
+        )
+        return _Completed(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(worker_runtime, "_run_agent_with_progress_watchdog", fake_run)
+    monkeypatch.setattr(
+        worker_runtime,
+        "_wait_for_post_exit_settle",
+        lambda **kwargs: (TaskStore("demo").get(task.id), False),
+    )
+
+    result = run_worker_iteration(team_name="demo", agent_name="qa1", base_command=["openclaw"])
+
+    assert result["status"] == "failed_closed"
+    assert result["taskId"] == task.id
+    assert result["intentSource"] == "post_exit_missing_terminal"
+
+    updated = TaskStore("demo").get(task.id)
+    assert updated is not None
+    assert updated.status == TaskStatus.failed
+    assert updated.description.startswith("SETUP_RESULT\nstatus: <completed|blocked|failed>")
+
+
 def test_run_worker_iteration_recovers_terminal_writeback_from_transcript_result_block(monkeypatch, tmp_path):
     _seed_team(tmp_path, monkeypatch)
     monkeypatch.setenv("CLAWTEAM_AGENT_NAME", "qa1")
