@@ -313,7 +313,7 @@ Deliver only the minimal safe fix.
     def test_parse_feature_scope_block_rejects_ui_scope_without_validated_initial_target(self):
         with pytest.raises(
             ScopeTaskValidationError,
-            match="initial_targets must include at least one validated web target",
+            match="initial_targets must include at least one validated frontend target",
         ):
             parse_feature_scope_block(
                 """
@@ -334,6 +334,59 @@ Deliver only the member list UI update.
 
 ## FEATURE_SCOPE
 {"scoped_brief":"Deliver only the member list UI update.","in_scope":["member list UI update"],"unknowns":["none"],"leader_assumptions":["existing web route should already exist"],"out_of_scope":["backend rewrite"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["dashboard/"],"forbidden_layers":["backend","api","schema","db","crawler","auth","mobile-ui"]},"initial_targets":[]}
+""".strip(),
+            )
+
+    def test_parse_feature_scope_block_accepts_mobile_ui_scope_when_roots_and_targets_match(self):
+        parsed = parse_feature_scope_block(
+            """
+## Source Request
+Build a company directory screen in the mobile app.
+
+## Scoped Brief
+Deliver only the mobile company directory UI slice.
+
+## Unknowns
+- home entry vs tab entry is not finalized
+
+## Leader Assumptions
+- existing company API already exists
+
+## Out of Scope
+- backend rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the mobile company directory UI slice.","in_scope":["mobile company directory entry","mobile company directory screen"],"unknowns":["home entry vs tab entry is not finalized"],"leader_assumptions":["existing company API already exists"],"out_of_scope":["backend rewrite"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["mobile-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["mobile/app/","mobile/components/"],"forbidden_layers":["backend","api","schema","db","crawler","auth"]},"initial_targets":[{"kind":"mobile-screen","path":"mobile/app/companies.tsx","exists":true,"why_in_scope":"dedicated company directory screen","evidence":["rg hit: mobile/app/companies.tsx"]}]}
+""".strip(),
+        )
+
+        assert parsed.change_budget.allowed_layers == ["mobile-ui"]
+        assert parsed.initial_targets[0].kind == "mobile-screen"
+
+    def test_parse_feature_scope_block_rejects_root_layer_conflict_for_mobile_ui(self):
+        with pytest.raises(
+            ScopeTaskValidationError,
+            match=r"allowed_layers must include the execution layers implied by allowed_roots: mobile-ui",
+        ):
+            parse_feature_scope_block(
+                """
+## Source Request
+Build a company directory screen in the mobile app.
+
+## Scoped Brief
+Deliver only the mobile company directory UI slice.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing company API already exists
+
+## Out of Scope
+- backend rewrite
+
+## FEATURE_SCOPE
+{"scoped_brief":"Deliver only the mobile company directory UI slice.","in_scope":["mobile company directory entry"],"unknowns":["none"],"leader_assumptions":["existing company API already exists"],"out_of_scope":["backend rewrite"],"risks_blockers":["none"],"recommended_next_step":"setup","execution_shape":"ui-only","change_budget":{"allowed_layers":["web-ui"],"allowed_operations":["edit-existing","add-ui-component"],"allowed_roots":["mobile/app/"],"forbidden_layers":["backend","api","schema","db","crawler","auth"]},"initial_targets":[{"kind":"mobile-screen","path":"mobile/app/companies.tsx","exists":true,"why_in_scope":"dedicated company directory screen","evidence":["rg hit: mobile/app/companies.tsx"]}]}
 """.strip(),
             )
 

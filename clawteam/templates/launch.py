@@ -42,6 +42,45 @@ ALLOWED_SCOPE_OPERATIONS: tuple[str, ...] = (
     "edit-config",
 )
 
+_ROOT_LAYER_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("mobile/", "mobile-ui"),
+    ("dashboard/", "web-ui"),
+    ("web/", "web-ui"),
+    ("frontend/", "web-ui"),
+    ("server/", "backend"),
+    ("prisma/", "schema"),
+)
+
+_FRONTEND_TARGET_KINDS: frozenset[str] = frozenset(
+    {
+        "web-page",
+        "web-component",
+        "web-route",
+        "mobile-screen",
+        "mobile-component",
+        "mobile-route",
+        "ui-navigation-home-entry",
+        "tab-navigation-config",
+    }
+)
+
+_BACKEND_TARGET_KINDS: frozenset[str] = frozenset({"backend-module", "api-handler", "db-query", "schema-file"})
+
+
+def _normalize_scope_path(path: str) -> str:
+    return path.strip().lstrip("./")
+
+
+def _infer_layers_from_paths(paths: list[str]) -> set[str]:
+    inferred: set[str] = set()
+    for raw_path in paths:
+        path = _normalize_scope_path(raw_path)
+        for prefix, layer in _ROOT_LAYER_PREFIXES:
+            if path.startswith(prefix):
+                inferred.add(layer)
+                break
+    return inferred
+
 
 class ChangeBudget(BaseModel):
     allowed_layers: list[str] = Field(default_factory=list)
@@ -449,9 +488,31 @@ def _validate_feature_scope_change_budget(feature_scope: FeatureScope) -> None:
     allowed_layers = set(budget.allowed_layers)
     forbidden_layers = set(budget.forbidden_layers)
 
+    root_implied_layers = _infer_layers_from_paths(budget.allowed_roots)
+    missing_root_layers = sorted(root_implied_layers - allowed_layers)
+    if missing_root_layers:
+        raise ScopeTaskValidationError(
+            "FEATURE_SCOPE.change_budget.allowed_layers must include the execution layers implied by allowed_roots: "
+            + ", ".join(missing_root_layers)
+        )
+    conflicted_root_layers = sorted(root_implied_layers & forbidden_layers)
+    if conflicted_root_layers:
+        raise ScopeTaskValidationError(
+            "FEATURE_SCOPE.change_budget.forbidden_layers cannot forbid layers implied by allowed_roots: "
+            + ", ".join(conflicted_root_layers)
+        )
+
     validated_targets = [target for target in feature_scope.initial_targets if target.exists]
-    ui_targets = [target for target in validated_targets if target.kind in {"web-page", "web-component", "web-route"}]
-    backend_targets = [target for target in validated_targets if target.kind in {"backend-module", "api-handler", "db-query", "schema-file"}]
+    ui_targets = [
+        target
+        for target in validated_targets
+        if target.kind in _FRONTEND_TARGET_KINDS or _infer_layers_from_paths([target.path]) & {"web-ui", "mobile-ui"}
+    ]
+    backend_targets = [
+        target
+        for target in validated_targets
+        if target.kind in _BACKEND_TARGET_KINDS or _infer_layers_from_paths([target.path]) & {"backend", "api", "schema", "db"}
+    ]
 
     if feature_scope.execution_shape == "ui-only":
         if not allowed_layers <= {"web-ui", "mobile-ui"}:
@@ -463,9 +524,9 @@ def _validate_feature_scope_change_budget(feature_scope: FeatureScope) -> None:
             raise ScopeTaskValidationError(
                 "ui-only FEATURE_SCOPE.change_budget.forbidden_layers must explicitly forbid backend/api/schema/db/crawler/auth."
             )
-        if "web-ui" in allowed_layers and not ui_targets:
+        if allowed_layers & {"web-ui", "mobile-ui"} and not ui_targets:
             raise ScopeTaskValidationError(
-                "ui-only FEATURE_SCOPE.initial_targets must include at least one validated web target with exists=true and evidence."
+                "ui-only FEATURE_SCOPE.initial_targets must include at least one validated frontend target with exists=true and evidence."
             )
     if feature_scope.execution_shape == "backend-only":
         if allowed_layers & {"web-ui", "mobile-ui"}:
@@ -477,13 +538,13 @@ def _validate_feature_scope_change_budget(feature_scope: FeatureScope) -> None:
                 "backend-only FEATURE_SCOPE.initial_targets must include at least one validated backend target with exists=true and evidence."
             )
     if feature_scope.execution_shape == "full-stack":
-        if not (allowed_layers & {"web-ui", "backend", "api"}):
+        if not (allowed_layers & {"web-ui", "mobile-ui", "backend", "api"}):
             raise ScopeTaskValidationError(
                 "full-stack FEATURE_SCOPE.change_budget.allowed_layers must include at least one frontend/backend execution layer."
             )
-        if "web-ui" in allowed_layers and not ui_targets:
+        if (allowed_layers & {"web-ui", "mobile-ui"}) and not ui_targets:
             raise ScopeTaskValidationError(
-                "full-stack FEATURE_SCOPE.initial_targets must include at least one validated web target with exists=true and evidence when web-ui is allowed."
+                "full-stack FEATURE_SCOPE.initial_targets must include at least one validated frontend target with exists=true and evidence when a frontend layer is allowed."
             )
         if (allowed_layers & {"backend", "api", "schema", "db"}) and not backend_targets:
             raise ScopeTaskValidationError(
