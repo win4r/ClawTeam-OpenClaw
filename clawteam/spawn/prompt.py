@@ -46,7 +46,7 @@ def build_agent_prompt(
             "## Shared Memory",
             f"- Your team shares memory scope `{memory_scope}`.",
             f"- Use `memory_store` with scope `{memory_scope}` for team-shared knowledge.",
-            f"- Use `memory_recall` to access memories stored by other team members in this scope.",
+            "- Use `memory_recall` to access memories stored by other team members in this scope.",
         ])
     lines.extend([
         "",
@@ -54,7 +54,7 @@ def build_agent_prompt(
         task,
         "",
         "## Coordination Protocol\n",
-        f"- IMPORTANT: spawned OpenClaw workers run under exec allowlist mode. Use only the allowlisted executable path from $CLAWTEAM_BIN, not arbitrary shell commands.",
+        "- IMPORTANT: spawned OpenClaw workers run under exec allowlist mode. Use only the allowlisted executable path from $CLAWTEAM_BIN, not arbitrary shell commands.",
         f"- First action: run `clawteam task list {team_name} --owner {agent_name}` to discover your task ID.",
         f"- Starting a task: `clawteam task update {team_name} <task-id> --status in_progress`",
         f"- Finishing a task: `clawteam task update {team_name} <task-id> --status completed`",

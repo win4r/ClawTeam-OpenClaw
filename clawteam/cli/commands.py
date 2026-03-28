@@ -431,7 +431,9 @@ def team_approve_join(
     # cleanup here since the message was just delivered; the joining agent will
     # pick it up from the permanent inbox if it misses the temp one.
     import shutil
+
     from clawteam.team.models import get_data_dir
+
     pending_dir = get_data_dir() / "teams" / team / "inboxes" / temp_inbox_name
     if pending_dir.exists():
         try:
@@ -481,7 +483,9 @@ def team_reject_join(
 
     # Clean up the _pending_ inbox directory
     import shutil
+
     from clawteam.team.models import get_data_dir
+
     pending_dir = get_data_dir() / "teams" / team / "inboxes" / temp_inbox_name
     if pending_dir.exists():
         try:
