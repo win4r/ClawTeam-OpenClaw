@@ -15,12 +15,12 @@
 <h1 align="center">🦞ClawTeam-OpenClaw</h1>
 
 <p align="center">
-  <strong>Multi-agent swarm coordination for CLI coding agents — <a href="https://openclaw.ai">OpenClaw</a> as default</strong>
+  <strong>面向命令行编程智能体的多智能体集群协调框架 — 默认使用 <a href="https://openclaw.ai">OpenClaw</a></strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/HKUDS/ClawTeam"><img src="https://img.shields.io/badge/upstream-HKUDS%2FClawTeam-purple?style=for-the-badge" alt="Upstream"></a>
-  <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-3_min-blue?style=for-the-badge" alt="Quick Start"></a>
+  <a href="#-快速开始"><img src="https://img.shields.io/badge/Quick_Start-3_min-blue?style=for-the-badge" alt="Quick Start"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License"></a>
 </p>
 
@@ -31,36 +31,36 @@
   <img src="https://img.shields.io/badge/version-0.3.0-teal" alt="Version">
 </p>
 
-> **Fork of [HKUDS/ClawTeam](https://github.com/HKUDS/ClawTeam)** with deep OpenClaw integration: default `openclaw` agent, per-agent session isolation, exec approval auto-config, and production-hardened spawn backends. All upstream fixes are synced.
+> **[HKUDS/ClawTeam](https://github.com/HKUDS/ClawTeam) 的 Fork 版本**，深度集成 OpenClaw：默认使用 `openclaw` 智能体、每个智能体独立会话隔离、执行审批自动配置，以及生产级加固的进程生成后端。所有上游修复均已同步。
 
-You set the goal. The agent swarm handles the rest — spawning workers, splitting tasks, coordinating, and merging results.
+你只需设定目标。智能体集群会处理其余一切——生成工作节点、拆分任务、协调合作、合并结果。
 
-Works with [OpenClaw](https://openclaw.ai) (default), [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [nanobot](https://github.com/HKUDS/nanobot), [Cursor](https://cursor.com), and any CLI agent.
+支持 [OpenClaw](https://openclaw.ai)（默认）、[Claude Code](https://claude.ai/claude-code)、[Codex](https://openai.com/codex)、[nanobot](https://github.com/HKUDS/nanobot)、[Cursor](https://cursor.com) 及任何命令行智能体。
 
 ---
 
-## Why ClawTeam?
+## 为什么选择 ClawTeam？
 
-Current AI agents are powerful but work in **isolation**. ClawTeam lets agents self-organize into teams — splitting work, communicating, and converging on results without human micromanagement.
+当前的 AI 智能体虽然强大，但都在**孤立地**工作。ClawTeam 让智能体能够自组织成团队——拆分工作、相互通信、协同汇聚结果，无需人工微管理。
 
-| | ClawTeam | Other multi-agent frameworks |
+| | ClawTeam | 其他多智能体框架 |
 |---|---------|----------------------------|
-| **Who uses it** | The AI agents themselves | Humans writing orchestration code |
-| **Setup** | `pip install` + one prompt | Docker, cloud APIs, YAML configs |
-| **Infrastructure** | Filesystem + tmux | Redis, message queues, databases |
-| **Agent support** | Any CLI agent | Framework-specific only |
-| **Isolation** | Git worktrees (real branches) | Containers or virtual envs |
+| **使用者** | AI 智能体自身 | 编写编排代码的人类 |
+| **部署方式** | `pip install` + 一句提示词 | Docker、云 API、YAML 配置 |
+| **基础设施** | 文件系统 + tmux | Redis、消息队列、数据库 |
+| **智能体支持** | 任何命令行智能体 | 仅支持特定框架 |
+| **隔离方式** | Git worktrees（真实分支） | 容器或虚拟环境 |
 
 ---
 
-## How It Works
+## 工作原理
 
 <table>
 <tr>
 <td width="33%">
 
-### Agents Spawn Agents
-The leader calls `clawteam spawn` to create workers. Each gets its own **git worktree**, **tmux window**, and **identity**.
+### 智能体生成智能体
+领导者调用 `clawteam spawn` 创建工作节点。每个节点拥有独立的 **Git worktree**、**tmux 窗口**和**身份标识**。
 
 ```bash
 clawteam spawn --team my-team \
@@ -71,8 +71,8 @@ clawteam spawn --team my-team \
 </td>
 <td width="33%">
 
-### Agents Talk to Agents
-Workers check inboxes, update tasks, and report results — all through CLI commands **auto-injected** into their prompt.
+### 智能体之间直接通信
+工作节点检查收件箱、更新任务、汇报结果——所有操作通过**自动注入**到提示词中的命令行指令完成。
 
 ```bash
 clawteam task list my-team --owner me
@@ -83,8 +83,8 @@ clawteam inbox send my-team leader \
 </td>
 <td width="33%">
 
-### You Just Watch
-Monitor the swarm from a tiled tmux view or Web UI. The leader handles coordination.
+### 你只需观察
+通过平铺的 tmux 视图或 Web 界面监控集群。领导者负责协调一切。
 
 ```bash
 clawteam board attach my-team
@@ -98,19 +98,19 @@ clawteam board serve --port 8080
 
 ---
 
-## Quick Start
+## 快速开始
 
-### Option 1: Let the Agent Drive (Recommended)
+### 方式一：让智能体自主驱动（推荐）
 
-Install ClawTeam, then prompt your agent:
+安装 ClawTeam，然后向你的智能体发出提示：
 
 ```
 "Build a web app. Use clawteam to split the work across multiple agents."
 ```
 
-The agent auto-creates a team, spawns workers, assigns tasks, and coordinates — all via `clawteam` CLI.
+智能体会自动创建团队、生成工作节点、分配任务并协调——全部通过 `clawteam` 命令行完成。
 
-### Option 2: Drive It Manually
+### 方式二：手动驱动
 
 ```bash
 # Create a team
@@ -124,26 +124,26 @@ clawteam spawn --team my-team --agent-name bob   --task "Write unit tests for au
 clawteam board attach my-team
 ```
 
-### Supported Agents
+### 支持的智能体
 
-| Agent | Spawn Command | Status |
+| 智能体 | 生成命令 | 状态 |
 |-------|--------------|--------|
-| [OpenClaw](https://openclaw.ai) | `clawteam spawn tmux openclaw --team ...` | **Default** |
-| [Claude Code](https://claude.ai/claude-code) | `clawteam spawn tmux claude --team ...` | Full support |
-| [Codex](https://openai.com/codex) | `clawteam spawn tmux codex --team ...` | Full support |
-| [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn tmux nanobot --team ...` | Full support |
-| [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | Experimental |
-| Custom scripts | `clawteam spawn subprocess python --team ...` | Full support |
+| [OpenClaw](https://openclaw.ai) | `clawteam spawn tmux openclaw --team ...` | **默认** |
+| [Claude Code](https://claude.ai/claude-code) | `clawteam spawn tmux claude --team ...` | 完整支持 |
+| [Codex](https://openai.com/codex) | `clawteam spawn tmux codex --team ...` | 完整支持 |
+| [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn tmux nanobot --team ...` | 完整支持 |
+| [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | 实验性支持 |
+| 自定义脚本 | `clawteam spawn subprocess python --team ...` | 完整支持 |
 
 ---
 
-## Install
+## 安装
 
-### Step 1: Prerequisites
+### 第一步：前置条件
 
-ClawTeam requires **Python 3.10+**, **tmux**, and at least one CLI coding agent (OpenClaw, Claude Code, Codex, etc.).
+ClawTeam 需要 **Python 3.10+**、**tmux** 以及至少一个命令行编程智能体（OpenClaw、Claude Code、Codex 等）。
 
-**Check what you already have:**
+**检查已有工具：**
 
 ```bash
 python3 --version   # Need 3.10+
@@ -151,19 +151,19 @@ tmux -V             # Need any version
 openclaw --version  # Or: claude --version / codex --version
 ```
 
-**Install missing prerequisites:**
+**安装缺失的前置工具：**
 
-| Tool | macOS | Ubuntu/Debian |
+| 工具 | macOS | Ubuntu/Debian |
 |------|-------|---------------|
 | Python 3.10+ | `brew install python@3.12` | `sudo apt update && sudo apt install python3 python3-pip` |
 | tmux | `brew install tmux` | `sudo apt install tmux` |
 | OpenClaw | `pip install openclaw` | `pip install openclaw` |
 
-> If using Claude Code or Codex instead of OpenClaw, install those per their own docs. OpenClaw is the default but not strictly required.
+> 如果使用 Claude Code 或 Codex 替代 OpenClaw，请按照其各自的文档安装。OpenClaw 是默认选项，但并非强制要求。
 
-### Step 2: Install ClawTeam
+### 第二步：安装 ClawTeam
 
-> **Important:** Do not use `pip install clawteam` — that installs the upstream version from PyPI, which defaults to `claude` and lacks the OpenClaw adaptations. Always install from this repo.
+> **重要提示：** 不要使用 `pip install clawteam` —— 这会安装 PyPI 上的上游版本，该版本默认使用 `claude` 且缺少 OpenClaw 适配。请务必从本仓库安装。
 
 ```bash
 git clone https://github.com/win4r/ClawTeam-OpenClaw.git
@@ -171,22 +171,22 @@ cd ClawTeam-OpenClaw
 pip install -e .
 ```
 
-Optional — P2P transport (ZeroMQ):
+可选——P2P 传输（ZeroMQ）：
 
 ```bash
 pip install -e ".[p2p]"
 ```
 
-### Step 3: Create the `~/bin/clawteam` symlink
+### 第三步：创建 `~/bin/clawteam` 软链接
 
-Spawned agents run in fresh shells that may not have pip's bin directory in PATH. A symlink in `~/bin` ensures `clawteam` is always reachable:
+生成的智能体在全新的 shell 环境中运行，PATH 中可能没有 pip 的 bin 目录。在 `~/bin` 下创建软链接可确保 `clawteam` 命令始终可用：
 
 ```bash
 mkdir -p ~/bin
 ln -sf "$(which clawteam)" ~/bin/clawteam
 ```
 
-If `which clawteam` returns nothing, find the binary manually:
+如果 `which clawteam` 没有返回结果，手动查找二进制文件：
 
 ```bash
 # Common locations:
@@ -197,24 +197,24 @@ If `which clawteam` returns nothing, find the binary manually:
 find / -name clawteam -type f 2>/dev/null | head -5
 ```
 
-Then ensure `~/bin` is in your PATH — add this to `~/.zshrc` or `~/.bashrc` if it isn't:
+然后确保 `~/bin` 在你的 PATH 中——如果尚未添加，将以下内容加入 `~/.zshrc` 或 `~/.bashrc`：
 
 ```bash
 export PATH="$HOME/bin:$PATH"
 ```
 
-### Step 4: Install the OpenClaw skill (OpenClaw users only)
+### 第四步：安装 OpenClaw 技能（仅 OpenClaw 用户）
 
-The skill file teaches OpenClaw agents how to use ClawTeam through natural language. Skip this step if you're not using OpenClaw.
+技能文件教会 OpenClaw 智能体如何通过自然语言使用 ClawTeam。如果你不使用 OpenClaw，可跳过此步骤。
 
 ```bash
 mkdir -p ~/.openclaw/workspace/skills/clawteam
 cp skills/openclaw/SKILL.md ~/.openclaw/workspace/skills/clawteam/SKILL.md
 ```
 
-### Step 5: Configure exec approvals (OpenClaw users only)
+### 第五步：配置执行审批（仅 OpenClaw 用户）
 
-Spawned OpenClaw agents need permission to run `clawteam` commands. Without this, agents will block on interactive permission prompts.
+生成的 OpenClaw 智能体需要权限才能运行 `clawteam` 命令。如果不配置，智能体会在交互式权限提示处阻塞。
 
 ```bash
 # Ensure security mode is "allowlist" (not "full")
@@ -234,24 +234,24 @@ else:
 openclaw approvals allowlist add --agent "*" "*/clawteam"
 ```
 
-> If `openclaw approvals` fails, the OpenClaw gateway may not be running. Start it first, then retry.
+> 如果 `openclaw approvals` 失败，可能是 OpenClaw 网关未运行。请先启动网关，然后重试。
 
-### Step 6: Verify
+### 第六步：验证
 
 ```bash
 clawteam --version          # Should print version
 clawteam config health      # Should show all green
 ```
 
-If using OpenClaw, also verify the skill is loaded:
+如果使用 OpenClaw，还需验证技能是否已加载：
 
 ```bash
 openclaw skills list | grep clawteam
 ```
 
-### Automated installer
+### 自动化安装脚本
 
-Steps 2–6 above are also available as a single script:
+上述第 2-6 步也可通过一个脚本完成：
 
 ```bash
 git clone https://github.com/win4r/ClawTeam-OpenClaw.git
@@ -259,24 +259,24 @@ cd ClawTeam-OpenClaw
 bash scripts/install-openclaw.sh
 ```
 
-### Troubleshooting
+### 故障排查
 
-| Problem | Cause | Fix |
+| 问题 | 原因 | 解决方法 |
 |---------|-------|-----|
-| `clawteam: command not found` | pip bin dir not in PATH | Run Step 3 (symlink + PATH) |
-| Spawned agents can't find `clawteam` | Agents run in fresh shells without pip PATH | Verify `~/bin/clawteam` symlink exists and `~/bin` is in PATH |
-| `openclaw approvals` fails | Gateway not running | Start `openclaw gateway` first, then retry Step 5 |
-| `exec-approvals.json not found` | OpenClaw never ran | Run `openclaw` once to generate config, then retry Step 5 |
-| Agents block on permission prompts | Exec approvals security is "full" | Run Step 5 to switch to "allowlist" |
-| `pip install -e .` fails | Missing build deps | Run `pip install hatchling` first |
+| `clawteam: command not found` | pip 的 bin 目录不在 PATH 中 | 执行第三步（软链接 + PATH） |
+| 生成的智能体找不到 `clawteam` | 智能体在没有 pip PATH 的全新 shell 中运行 | 确认 `~/bin/clawteam` 软链接存在且 `~/bin` 在 PATH 中 |
+| `openclaw approvals` 失败 | 网关未运行 | 先启动 `openclaw gateway`，再重试第五步 |
+| `exec-approvals.json not found` | OpenClaw 从未运行过 | 先运行一次 `openclaw` 生成配置文件，再重试第五步 |
+| 智能体在权限提示处阻塞 | 执行审批安全模式为 "full" | 执行第五步切换为 "allowlist" |
+| `pip install -e .` 失败 | 缺少构建依赖 | 先运行 `pip install hatchling` |
 
 ---
 
-## Use Cases
+## 应用场景
 
-### 1. Autonomous ML Research — 8 Agents x 8 GPUs
+### 1. 自主机器学习研究 — 8 个智能体 x 8 块 GPU
 
-Based on [@karpathy/autoresearch](https://github.com/karpathy/autoresearch). One prompt launches 8 research agents across H100s that design 2000+ experiments autonomously.
+基于 [@karpathy/autoresearch](https://github.com/karpathy/autoresearch)。一句提示词启动 8 个研究智能体，跨 H100 GPU 自主设计 2000 多个实验。
 
 ```
 Human: "Use 8 GPUs to optimize train.py. Read program.md for instructions."
@@ -289,9 +289,9 @@ Leader agent:
 └── Result: val_bpb 1.044 → 0.977 (6.4% improvement) across 2430 experiments in ~30 GPU-hours
 ```
 
-Full results: [novix-science/autoresearch](https://github.com/novix-science/autoresearch)
+完整结果：[novix-science/autoresearch](https://github.com/novix-science/autoresearch)
 
-### 2. Agentic Software Engineering
+### 2. 智能体驱动的软件工程
 
 ```
 Human: "Build a full-stack todo app with auth, database, and React frontend."
@@ -304,90 +304,90 @@ Leader agent:
 └── Leader merges all worktrees into main when complete
 ```
 
-### 3. AI Hedge Fund — Template Launch
+### 3. AI 对冲基金 — 模板一键启动
 
-A TOML template spawns a complete 7-agent investment team with one command:
+一个 TOML 模板通过一条命令生成完整的 7 智能体投资团队：
 
 ```bash
 clawteam launch hedge-fund --team fund1 --goal "Analyze AAPL, MSFT, NVDA for Q2 2026"
 ```
 
-5 analyst agents (value, growth, technical, fundamentals, sentiment) work in parallel. Risk manager synthesizes all signals. Portfolio manager makes final decisions.
+5 个分析师智能体（价值分析、成长分析、技术分析、基本面分析、情绪分析）并行工作。风险管理者综合所有信号。投资组合经理做出最终决策。
 
-Templates are TOML files — **create your own** for any domain.
+模板是 TOML 文件——**可以为任何领域创建自定义模板**。
 
 ---
 
-## Features
+## 功能特性
 
 <table>
 <tr>
 <td width="50%">
 
-### Agent Self-Organization
-- Leader spawns and manages workers
-- Auto-injected coordination prompt — zero manual setup
-- Workers self-report status and idle state
-- Any CLI agent can participate
+### 智能体自组织
+- 领导者生成并管理工作节点
+- 自动注入协调提示词——零手动配置
+- 工作节点自行上报状态和空闲信息
+- 任何命令行智能体均可参与
 
-### Workspace Isolation
-- Each agent gets its own **git worktree**
-- No merge conflicts between parallel agents
-- Checkpoint, merge, and cleanup commands
-- Branch naming: `clawteam/{team}/{agent}`
+### 工作区隔离
+- 每个智能体拥有独立的 **Git worktree**
+- 并行智能体之间不会产生合并冲突
+- 支持检查点、合并和清理命令
+- 分支命名：`clawteam/{team}/{agent}`
 
-### Task Tracking with Dependencies
-- Shared kanban: `pending` → `in_progress` → `completed` / `blocked`
-- `--blocked-by` chains with auto-unblock on completion
-- `task wait` blocks until all tasks complete
+### 带依赖关系的任务追踪
+- 共享看板：`pending` → `in_progress` → `completed` / `blocked`
+- `--blocked-by` 链式依赖，任务完成时自动解除阻塞
+- `task wait` 阻塞等待直到所有任务完成
 
 </td>
 <td width="50%">
 
-### Inter-Agent Messaging
-- Point-to-point inboxes (send, receive, peek)
-- Broadcast to all team members
-- File-based (default) or ZeroMQ P2P transport
+### 智能体间消息通信
+- 点对点收件箱（发送、接收、预览）
+- 向所有团队成员广播
+- 基于文件（默认）或 ZeroMQ P2P 传输
 
-### Monitoring & Dashboards
-- `board show` — terminal kanban
-- `board live` — auto-refreshing dashboard
-- `board attach` — tiled tmux view of all agents
-- `board serve` — Web UI with real-time updates
+### 监控与仪表盘
+- `board show` — 终端看板
+- `board live` — 自动刷新仪表盘
+- `board attach` — 平铺 tmux 视图查看所有智能体
+- `board serve` — 实时更新的 Web 界面
 
-### Team Templates
-- TOML files define team archetypes (roles, tasks, prompts)
-- One command: `clawteam launch <template>`
-- Variable substitution: `{goal}`, `{team_name}`, `{agent_name}`
-- **Per-agent model assignment** (preview): assign different models to different roles — see [below](#per-agent-model-assignment-preview)
+### 团队模板
+- TOML 文件定义团队原型（角色、任务、提示词）
+- 一条命令：`clawteam launch <template>`
+- 变量替换：`{goal}`、`{team_name}`、`{agent_name}`
+- **每智能体模型分配**（预览版）：为不同角色分配不同模型——参见[下文](#每智能体模型分配预览版)
 
 </td>
 </tr>
 </table>
 
-**Also:** plan approval workflows, graceful lifecycle management, `--json` output on all commands, cross-machine support (NFS/SSHFS or P2P), multi-user namespacing, spawn validation with auto-rollback, `fcntl` file locking for concurrent safety.
+**其他特性：** 计划审批工作流、优雅的生命周期管理、所有命令支持 `--json` 输出、跨机器支持（NFS/SSHFS 或 P2P）、多用户命名空间、带自动回滚的生成校验、基于 `fcntl` 文件锁的并发安全保障。
 
 ---
 
-## OpenClaw Integration
+## OpenClaw 集成
 
-This fork makes [OpenClaw](https://openclaw.ai) the **default agent**. Without ClawTeam, each OpenClaw agent works in isolation. ClawTeam transforms it into a multi-agent platform.
+本 Fork 版本将 [OpenClaw](https://openclaw.ai) 设为**默认智能体**。没有 ClawTeam 时，每个 OpenClaw 智能体各自独立工作。ClawTeam 将其转变为多智能体平台。
 
-| Capability | OpenClaw Alone | OpenClaw + ClawTeam |
+| 能力 | 单独使用 OpenClaw | OpenClaw + ClawTeam |
 |-----------|---------------|-------------------|
-| **Task assignment** | Manual per-agent messaging | Leader autonomously splits, assigns, monitors |
-| **Parallel development** | Shared working directory | Isolated git worktrees per agent |
-| **Dependencies** | Manual polling | `--blocked-by` with auto-unblock |
-| **Communication** | Only through AGI relay | Direct point-to-point inbox + broadcast |
-| **Observability** | Read logs | Kanban board + tiled tmux view |
+| **任务分配** | 手动向每个智能体发消息 | 领导者自主拆分、分配、监控 |
+| **并行开发** | 共享工作目录 | 每个智能体独立的 Git worktree |
+| **依赖管理** | 手动轮询 | `--blocked-by` 自动解除阻塞 |
+| **通信方式** | 仅通过 AGI 中继 | 直接的点对点收件箱 + 广播 |
+| **可观测性** | 查看日志 | 看板 + 平铺 tmux 视图 |
 
-Once the skill is installed, talk to your OpenClaw bot in any channel:
+安装技能后，在任何频道与你的 OpenClaw 机器人对话：
 
-| What you say | What happens |
+| 你说的话 | 发生的事情 |
 |-------------|-------------|
-| "Create a 5-agent team to build a web app" | Creates team, tasks, spawns 5 agents in tmux |
-| "Launch a hedge-fund analysis team" | `clawteam launch hedge-fund` with 7 agents |
-| "Check the status of my agent team" | `clawteam board show` with kanban output |
+| "创建一个 5 智能体团队来构建 Web 应用" | 创建团队、任务，在 tmux 中生成 5 个智能体 |
+| "启动一个对冲基金分析团队" | 执行 `clawteam launch hedge-fund`，启动 7 个智能体 |
+| "查看我的智能体团队状态" | 执行 `clawteam board show`，输出看板 |
 
 ```
   You (Telegram/Discord/TUI)
@@ -413,7 +413,7 @@ Once the skill is installed, talk to your OpenClaw bot in any channel:
 
 ---
 
-## Architecture
+## 架构
 
 ```
   Human: "Optimize this LLM"
@@ -439,21 +439,21 @@ Once the skill is installed, talk to your OpenClaw bot in any channel:
                                       └─────────────────────┘
 ```
 
-All state lives in `~/.clawteam/` as JSON files. No database, no server. Atomic writes with `fcntl` file locking ensure crash safety.
+所有状态以 JSON 文件形式存储在 `~/.clawteam/` 中。无需数据库，无需服务器。通过 `fcntl` 文件锁进行原子写入以确保崩溃安全。
 
-| Setting | Env Var | Default |
+| 配置项 | 环境变量 | 默认值 |
 |---------|---------|---------|
-| Data directory | `CLAWTEAM_DATA_DIR` | `~/.clawteam` |
-| Transport | `CLAWTEAM_TRANSPORT` | `file` |
-| Workspace mode | `CLAWTEAM_WORKSPACE` | `auto` |
-| Spawn backend | `CLAWTEAM_DEFAULT_BACKEND` | `tmux` |
+| 数据目录 | `CLAWTEAM_DATA_DIR` | `~/.clawteam` |
+| 传输方式 | `CLAWTEAM_TRANSPORT` | `file` |
+| 工作区模式 | `CLAWTEAM_WORKSPACE` | `auto` |
+| 生成后端 | `CLAWTEAM_DEFAULT_BACKEND` | `tmux` |
 
 ---
 
-## Command Reference
+## 命令参考
 
 <details open>
-<summary><strong>Core Commands</strong></summary>
+<summary><strong>核心命令</strong></summary>
 
 ```bash
 # Team lifecycle
@@ -488,7 +488,7 @@ clawteam board serve --port 8080          # web UI
 </details>
 
 <details>
-<summary><strong>Workspace, Plan, Lifecycle, Config</strong></summary>
+<summary><strong>工作区、计划、生命周期、配置</strong></summary>
 
 ```bash
 # Workspace (git worktree management)
@@ -521,20 +521,20 @@ clawteam config health
 
 ---
 
-## Per-Agent Model Assignment (Preview)
+## 每智能体模型分配（预览版）
 
-> **Branch:** [`feat/per-agent-model-assignment`](https://github.com/win4r/ClawTeam-OpenClaw/tree/feat/per-agent-model-assignment)
+> **分支：** [`feat/per-agent-model-assignment`](https://github.com/win4r/ClawTeam-OpenClaw/tree/feat/per-agent-model-assignment)
 >
-> This feature is available for early testing on a separate branch. It will be merged into `main` once the companion OpenClaw `--model` flag is shipped.
+> 此功能在单独分支上提供早期测试。待 OpenClaw 配套的 `--model` 参数发布后，将合并到 `main` 分支。
 
-Assign different models to different agent roles for better cost/performance tradeoffs in multi-agent swarms.
+为不同智能体角色分配不同模型，以在多智能体集群中实现更优的成本/性能平衡。
 
 ```bash
 # Install from the feature branch
 pip install -e "git+https://github.com/win4r/ClawTeam-OpenClaw.git@feat/per-agent-model-assignment#egg=clawteam"
 ```
 
-**Per-agent model in templates:**
+**模板中的每智能体模型配置：**
 ```toml
 [template]
 name = "my-team"
@@ -551,58 +551,58 @@ name = "worker"
 model_tier = "cheap"              # cost tiers: strong / balanced / cheap
 ```
 
-**CLI flags:**
+**命令行参数：**
 ```bash
 clawteam spawn --model opus                          # single agent
 clawteam launch my-template --model gpt-5.4          # override all agents
 clawteam launch my-template --model-strategy auto     # auto-assign by role
 ```
 
-See [issue #1](https://github.com/win4r/ClawTeam-OpenClaw/issues/1) for the full feature request and discussion.
+参见 [issue #1](https://github.com/win4r/ClawTeam-OpenClaw/issues/1) 了解完整的功能需求和讨论。
 
 ---
 
-## Roadmap
+## 路线图
 
-| Version | What | Status |
+| 版本 | 内容 | 状态 |
 |---------|------|--------|
-| v0.3 | File + P2P transport, Web UI, multi-user, templates | Shipped |
-| v0.4 | Redis transport — cross-machine messaging | Planned |
-| v0.5 | Shared state layer — team config across machines | Planned |
-| v0.6 | Agent marketplace — community templates | Exploring |
-| v0.7 | Adaptive scheduling — dynamic task reassignment | Exploring |
-| v1.0 | Production-grade — auth, permissions, audit logs | Exploring |
+| v0.3 | 文件 + P2P 传输、Web 界面、多用户、模板 | 已发布 |
+| v0.4 | Redis 传输——跨机器消息通信 | 计划中 |
+| v0.5 | 共享状态层——跨机器团队配置 | 计划中 |
+| v0.6 | 智能体市场——社区模板 | 探索中 |
+| v0.7 | 自适应调度——动态任务重分配 | 探索中 |
+| v1.0 | 生产级——认证、权限、审计日志 | 探索中 |
 
 ---
 
-## Contributing
+## 贡献
 
-We welcome contributions:
+欢迎贡献：
 
-- **Agent integrations** — support for more CLI agents
-- **Team templates** — TOML templates for new domains
-- **Transport backends** — Redis, NATS, etc.
-- **Dashboard improvements** — Web UI, Grafana
-- **Documentation** — tutorials and best practices
+- **智能体集成** — 支持更多命令行智能体
+- **团队模板** — 面向新领域的 TOML 模板
+- **传输后端** — Redis、NATS 等
+- **仪表盘改进** — Web 界面、Grafana
+- **文档** — 教程和最佳实践
 
 ---
 
-## Acknowledgements
+## 致谢
 
-- [@karpathy/autoresearch](https://github.com/karpathy/autoresearch) — autonomous ML research framework
-- [OpenClaw](https://openclaw.ai) — default agent backend
-- [Claude Code](https://claude.ai/claude-code) and [Codex](https://openai.com/codex) — supported AI coding agents
-- [ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) — hedge fund template inspiration
-- [CLI-Anything](https://github.com/HKUDS/CLI-Anything) — sister project
+- [@karpathy/autoresearch](https://github.com/karpathy/autoresearch) — 自主机器学习研究框架
+- [OpenClaw](https://openclaw.ai) — 默认智能体后端
+- [Claude Code](https://claude.ai/claude-code) 和 [Codex](https://openai.com/codex) — 支持的 AI 编程智能体
+- [ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) — 对冲基金模板的灵感来源
+- [CLI-Anything](https://github.com/HKUDS/CLI-Anything) — 姊妹项目
 
-## License
+## 许可证
 
-MIT — free to use, modify, and distribute.
+MIT — 可自由使用、修改和分发。
 
 ---
 
 <div align="center">
 
-**ClawTeam** — *Agent Swarm Intelligence.*
+**ClawTeam** — *智能体集群协作。*
 
 </div>
