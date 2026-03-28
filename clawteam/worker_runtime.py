@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from clawteam.delivery.failure_notifier import notify_task_failure
+from clawteam.services.task_update_service import TaskUpdateRequest, TaskUpdateValidationError, validate_completion
 from clawteam.spawn.cli_env import resolve_clawteam_executable
 from clawteam.spawn.registry import unregister_agent
 from clawteam.task.terminal_commands import build_terminal_task_update_command
 from clawteam.task.transition import (
     DUPLICATE_TERMINAL_CONFLICTING_STATUS,
     DUPLICATE_TERMINAL_SAME_STATUS,
+    TaskTransitionValidationError,
 )
 from clawteam.team.manager import TeamManager
 from clawteam.team.models import TaskStatus
@@ -844,6 +846,49 @@ def apply_terminal_intent(
     intent: TerminalIntent,
 ) -> dict[str, Any]:
     store = TaskStore(team_name)
+    existing = store.get(intent.task_id)
+    if existing is None:
+        return {
+            "status": "terminal_rejected",
+            "taskId": intent.task_id,
+            "reason": intent.reason,
+            "evidence": intent.evidence,
+            "rejectionReason": "task_not_found",
+            "intentSource": intent.source,
+        }
+    if intent.terminal_status == TaskStatus.completed:
+        try:
+            validate_completion(
+                existing,
+                TaskUpdateRequest(
+                    status=TaskStatus.completed,
+                    owner=None,
+                    subject=None,
+                    description=None,
+                    add_blocks=None,
+                    add_blocked_by=None,
+                    add_on_fail=None,
+                    failure_kind=None,
+                    failure_note=None,
+                    failure_root_cause=None,
+                    failure_evidence=None,
+                    failure_recommended_next_owner=None,
+                    failure_recommended_action=None,
+                    execution_id=intent.execution_id,
+                ),
+                all_tasks=store.list_tasks(),
+            )
+        except (TaskUpdateValidationError, TaskTransitionValidationError) as exc:
+            return {
+                "status": "terminal_rejected",
+                "taskId": intent.task_id,
+                "reason": intent.reason,
+                "evidence": intent.evidence,
+                "rejectionReason": "structured_completion_validation_failed",
+                "validationError": str(exc),
+                "terminalStatus": existing.status.value,
+                "intentSource": intent.source,
+            }
     decision, task, apply_result = store.apply_runtime_terminal_writeback(
         intent.task_id,
         status=intent.terminal_status,

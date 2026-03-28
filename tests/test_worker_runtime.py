@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 import clawteam.worker_runtime as worker_runtime
 from clawteam.cli.commands import app
-from clawteam.execution.state import CLAIMED
+from clawteam.execution.state import CLAIMED, WRITEBACK_APPLIED, WRITEBACK_FAILED
 from clawteam.spawn.subprocess_backend import SubprocessBackend
 from clawteam.task.terminal_commands import build_terminal_task_update_command
 from clawteam.team.mailbox import MailboxManager
@@ -781,6 +781,8 @@ def test_task_store_runtime_terminal_writeback_rejects_missing_execution_id(monk
     assert rejected_task is not None
     assert rejected_task.status == TaskStatus.in_progress
     assert rejected_task.metadata["transition_log"][-1]["rejectionReason"] == "missing_execution_id"
+    assert rejected_task.metadata["execution"]["state"] == WRITEBACK_FAILED
+    assert rejected_task.metadata["execution"]["last_error"] == "missing_execution_id"
 
 
 
@@ -803,6 +805,8 @@ def test_task_store_runtime_terminal_writeback_accepts_matching_execution(monkey
     assert apply_result is not None
     assert apply_result.case_name == "execution_scoped_terminal_writeback"
     assert apply_result.task.status == TaskStatus.completed
+    assert apply_result.task.metadata["execution"]["state"] == WRITEBACK_APPLIED
+    assert "last_error" not in apply_result.task.metadata["execution"]
 
 
 
@@ -993,6 +997,54 @@ def test_parse_runtime_completion_envelope_rejects_invalid_schema():
         "terminal_status": "unknown",
     }) is None
 
+
+
+def test_apply_terminal_intent_rejects_completed_structured_task_when_description_is_placeholder(monkeypatch, tmp_path):
+    _seed_team(tmp_path, monkeypatch)
+    store = TaskStore("demo")
+    task = store.create(
+        subject="Prepare repo, branch, env, and runnable baseline",
+        description=(
+            "SETUP_RESULT\n"
+            "status: <completed|blocked|failed>\n"
+            "remote_status: <confirmed_latest|cached_only|unreachable>\n"
+            "remote_head: <sha|none>\n"
+            "detached_worktree: <path|none>\n"
+            "detached_head: <sha|none>\n"
+            "install:\n"
+            "- <command + actual result>\n"
+            "baseline_validation:\n"
+            "- <command or discovery step + actual result>\n"
+            "known_limitations:\n"
+            "- <risk/blocker or none>\n"
+            "next_action: <handoff or fail-closed blocker>"
+        ),
+        owner="qa1",
+        metadata={"message_type": "SETUP_RESULT", "required_sections": ["status", "remote_status", "remote_head", "detached_worktree", "detached_head", "install", "baseline_validation", "known_limitations", "next_action"]},
+    )
+    task = store.update(task.id, status=TaskStatus.in_progress, caller="qa1")
+
+    result = worker_runtime.apply_terminal_intent(
+        team_name="demo",
+        agent_name="qa1",
+        intent=worker_runtime.TerminalIntent(
+            task_id=task.id,
+            execution_id=task.active_execution_id,
+            terminal_status=TaskStatus.completed,
+            reason="runtime terminal recovered from runtime_completion_envelope",
+            evidence="completion envelope only",
+            source="completion_envelope",
+        ),
+    )
+
+    assert result["status"] == "terminal_rejected"
+    assert result["rejectionReason"] == "structured_completion_validation_failed"
+    assert "remote_status" in result["validationError"]
+
+    updated = store.get(task.id)
+    assert updated is not None
+    assert updated.status == TaskStatus.in_progress
+    assert updated.description.startswith("SETUP_RESULT\nstatus: <completed|blocked|failed>")
 
 
 def test_run_worker_iteration_recovers_terminal_writeback_from_completion_signal_without_transcript_reconstruction(monkeypatch, tmp_path):
