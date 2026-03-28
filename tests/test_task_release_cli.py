@@ -121,6 +121,10 @@ def test_runtime_orchestrator_release_to_owner_respawns_missing_owner(monkeypatc
 
     store = TaskStore("demo")
     task = store.create("Functional QA", description="Check company directory", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+    assert claimed is not None
+    task = store.get(task.id)
+    assert task is not None
 
     workspace = tmp_path / "qa1-worktree"
     workspace.mkdir()
@@ -145,12 +149,13 @@ def test_runtime_orchestrator_release_to_owner_respawns_missing_owner(monkeypatc
     }
     assert len(backend.calls) == 1
 
-
     call = backend.calls[0]
     assert call["agent_name"] == "qa1"
     assert call["cwd"] == str(workspace)
     assert "Functional QA" in call["prompt"]
     assert "Start immediately" in call["prompt"]
+    assert call["env"]["CLAWTEAM_TASK_ID"] == task.id
+    assert call["env"]["CLAWTEAM_TASK_EXECUTION_ID"] == task.active_execution_id
 
     inbox = MailboxManager("demo")
     messages = inbox.peek("qa1")
@@ -350,6 +355,10 @@ def test_execute_task_release_records_claim_failed_metadata(monkeypatch, tmp_pat
 
     store = TaskStore("demo")
     task = store.create("Functional QA", description="Check company directory", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+    assert claimed is not None
+    task = store.get(task.id)
+    assert task is not None
 
     def fake_release_notifier(team, released_task, caller, message):
         raise RuntimeError("notify boom")
@@ -446,6 +455,10 @@ def test_task_release_respawns_dead_owner_uses_registry_cwd_without_workspace(mo
 
     store = TaskStore("demo")
     task = store.create("Functional QA", description="Check company directory", owner="qa1")
+    claimed = store.claim_execution(task.id, caller="qa1")
+    assert claimed is not None
+    task = store.get(task.id)
+    assert task is not None
 
     from clawteam.spawn.registry import register_agent
 
@@ -479,6 +492,8 @@ def test_task_release_respawns_dead_owner_uses_registry_cwd_without_workspace(mo
     assert call["agent_name"] == "qa1"
     assert call["cwd"] == str(repo.resolve())
     assert str(repo.resolve()) in call["prompt"]
+    assert call["env"]["CLAWTEAM_TASK_ID"] == task.id
+    assert "CLAWTEAM_TASK_EXECUTION_ID" not in call["env"]
 
 
 def test_task_release_respawns_dead_owner_before_wake(monkeypatch, tmp_path):

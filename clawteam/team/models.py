@@ -131,6 +131,7 @@ class TaskItem(BaseModel):
     blocks: list[str] = Field(default_factory=list)
     blocked_by: list[str] = Field(default_factory=list, alias="blockedBy")
     started_at: str = Field(default="", alias="startedAt")
+    completed_at: str = Field(default="", alias="completedAt")
     execution_seq: int = Field(default=0, alias="executionSeq")
     active_execution_id: str = Field(default="", alias="activeExecutionId")
     active_execution_owner: str = Field(default="", alias="activeExecutionOwner")

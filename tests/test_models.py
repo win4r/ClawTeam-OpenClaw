@@ -28,6 +28,7 @@ class TestTaskItem:
         data = json.loads(t.model_dump_json(by_alias=True))
         assert "blockedBy" in data
         assert "lockedBy" in data
+        assert "completedAt" in data
 
     def test_populate_by_name(self):
         """Should accept both field names and aliases."""

@@ -508,6 +508,11 @@ class TaskStore:
                 task.active_execution_id = ""
                 task.active_execution_owner = ""
 
+            if status == TaskStatus.completed:
+                task.completed_at = _now_iso()
+            elif status in (TaskStatus.pending, TaskStatus.in_progress, TaskStatus.failed):
+                task.completed_at = ""
+
             # Compute duration when completing a task that has a start time
             if status == TaskStatus.completed and task.started_at:
                 try:

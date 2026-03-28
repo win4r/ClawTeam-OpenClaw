@@ -354,6 +354,14 @@ class TestDurationTracking:
         dumped = t.model_dump(by_alias=True)
         assert "startedAt" in dumped
 
+    def test_completed_at_is_recorded_and_cleared_on_reopen(self, store):
+        task = store.create("done then reopen")
+        completed = store.update(task.id, status=TaskStatus.completed)
+        assert completed.completed_at != ""
+
+        reopened = store.update(task.id, status=TaskStatus.pending)
+        assert reopened.completed_at == ""
+
 
 class TestReplacementCleanup:
     def test_clear_unfinished_tasks_for_owner_removes_only_started_owner_tasks(self, store):

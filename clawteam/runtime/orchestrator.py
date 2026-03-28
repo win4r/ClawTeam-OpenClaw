@@ -87,6 +87,8 @@ class RuntimeOrchestrator:
                 ),
                 repo=self.repo,
                 resume=False,
+                task_id=task.id,
+                task_execution_id=task.active_execution_id,
             )
             respawned = True
 
@@ -105,6 +107,8 @@ class RuntimeOrchestrator:
                         task_prompt=_build_release_task_prompt(task, release_message),
                         repo=self.repo,
                         resume=True,
+                        task_id=task.id,
+                        task_execution_id=task.active_execution_id,
                     )
                     respawned = True
 
@@ -301,6 +305,8 @@ def _spawn_existing_agent(
     backend: str | None = None,
     skip_permissions: bool | None = None,
     resume: bool = True,
+    task_id: str = "",
+    task_execution_id: str = "",
 ) -> dict[str, str]:
     import os
 
@@ -328,6 +334,10 @@ def _spawn_existing_agent(
     pinned_bin = str((existing_record or {}).get("clawteam_bin") or os.environ.get("CLAWTEAM_BIN") or "").strip()
     if pinned_bin:
         pinned_env["CLAWTEAM_BIN"] = pinned_bin
+    if task_id:
+        pinned_env["CLAWTEAM_TASK_ID"] = task_id
+    if task_execution_id:
+        pinned_env["CLAWTEAM_TASK_EXECUTION_ID"] = task_execution_id
 
     prompt = build_agent_prompt(
         agent_name=agent_name,
@@ -339,6 +349,7 @@ def _spawn_existing_agent(
         user=os.environ.get("CLAWTEAM_USER", ""),
         workspace_dir=cwd or "",
         workspace_branch=workspace_branch,
+        task_execution_id=task_execution_id,
     )
 
     command = ["openclaw"]
