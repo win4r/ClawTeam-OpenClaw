@@ -64,6 +64,7 @@ def build_agent_prompt(
         f'  `clawteam inbox send {team_name} {leader_name} "Blocked: <exact error>"`',
         f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
         f"- Before finishing, save your session: `clawteam session save {team_name} --session-id <id>`",
+        "- When you finish all tasks, type `exit` to terminate this session.",
         "",
     ])
     return "\n".join(lines)

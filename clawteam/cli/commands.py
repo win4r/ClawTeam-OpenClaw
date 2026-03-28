@@ -1589,6 +1589,7 @@ def lifecycle_on_exit(
     import subprocess
 
     from clawteam.spawn.registry import get_agent_info
+    from clawteam.spawn.registry import is_agent_alive, list_dead_agents, unregister_agent
     from clawteam.spawn.sessions import SessionStore
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
@@ -1601,15 +1602,32 @@ def lifecycle_on_exit(
     SessionStore(team).clear(agent)
 
     store = TaskStore(team)
-    tasks = store.list_tasks()
+
+    # Release locks held by this agent FIRST — must happen before unregister
+    # to avoid a race where is_agent_alive returns None (no registry entry)
+    # and causes _acquire_lock to refuse overwriting a stale lock.
+    store.release_stale_locks()
 
     # Find this agent's in_progress tasks and reset them
+    tasks = store.list_tasks()
     abandoned = [
         t for t in tasks
         if t.owner == agent and t.status == TaskStatus.in_progress
     ]
 
+    # Unregister from spawn registry so is_agent_alive returns None for this agent.
+    # Guard: only unregister if the agent is already dead (avoids removing a live entry
+    # if the hook fires before the process actually exits).
+    if is_agent_alive(team, agent) is False:
+        unregister_agent(team, agent)
+
+        # Garbage-collect any other dead agents in the same team while we're here.
+        for dead in list_dead_agents(team):
+            unregister_agent(team, dead)
+
     if not abandoned:
+        # Agent exited cleanly (all tasks already completed or pending)
+        # Registry cleanup has already happened above.
         return
 
     for t in abandoned:

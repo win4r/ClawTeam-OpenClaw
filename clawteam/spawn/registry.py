@@ -42,6 +42,14 @@ def register_agent(
         _save(path, registry)
 
 
+def unregister_agent(team_name: str, agent_name: str) -> None:
+    """Remove an agent entry from the spawn registry."""
+    path = _registry_path(team_name)
+    registry = _load(path)
+    registry.pop(agent_name, None)
+    _save(path, registry)
+
+
 def get_registry(team_name: str) -> dict[str, dict]:
     """Return the full spawn registry for a team."""
     return _load(_registry_path(team_name))

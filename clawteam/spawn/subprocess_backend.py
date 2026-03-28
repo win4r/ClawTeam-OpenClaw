@@ -111,7 +111,7 @@ class SubprocessBackend(SpawnBackend):
             f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
             f"--agent {shlex.quote(agent_name)}"
         )
-        shell_cmd = f"{cmd_str}; {exit_hook}"
+        shell_cmd = f"trap \"{exit_hook}\" EXIT; {cmd_str}"
 
         process = subprocess.Popen(
             shell_cmd,

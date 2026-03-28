@@ -152,9 +152,9 @@ class TmuxBackend(SpawnBackend):
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
         if cwd:
-            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && {cmd_str}; {exit_hook}"
+            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
         else:
-            full_cmd = f"{unset_clause}{export_str}; {cmd_str}; {exit_hook}"
+            full_cmd = f"{unset_clause}{export_str}; trap \"{exit_hook}\" EXIT; {cmd_str}"
 
         # Check if tmux session exists
         check = subprocess.run(
