@@ -126,6 +126,7 @@ def test_build_worker_task_prompt_uses_shell_safe_identity_bootstrap(monkeypatch
     assert "do not rely on Linux-only `timeout`" in prompt
     assert "resolve the target repo first instead of hardcoding a remote" in prompt
     assert "resolve_remote_probe_target(Path('.'))" in prompt
+    assert "detached_head must equal remote_head" in prompt
     assert "do not guess a test path and present that as proof" in prompt
     assert "QA_RESULT must include exactly these headings" in prompt
     assert "QA_RESULT status may be pass, pass_with_risk, fail, or blocked" in prompt

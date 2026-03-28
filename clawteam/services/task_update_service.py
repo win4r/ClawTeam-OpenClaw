@@ -344,6 +344,11 @@ def _validate_setup_completion(existing: TaskItem, request: TaskUpdateRequest) -
             "setup completion with remote_status=confirmed_latest requires explicit `git ls-remote` evidence"
         )
 
+    if remote_status == "confirmed_latest" and remote_head.lower() != "none" and detached_head != remote_head:
+        raise TaskTransitionValidationError(
+            "setup completion with remote_status=confirmed_latest requires detached_head to equal confirmed remote_head"
+        )
+
 
 def _validate_dev_completion(existing: TaskItem, request: TaskUpdateRequest) -> None:
     if request.status != TaskStatus.completed:

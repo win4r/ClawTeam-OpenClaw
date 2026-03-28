@@ -313,6 +313,7 @@ Setup contract (must satisfy or fail closed):
    - 若失败/超时，只能明确写 `remote_status: cached_only` 或 `remote_status: unreachable`
 2. Detached worktree gate
    - 必须真实创建 detached worktree
+   - 若 `remote_status: confirmed_latest`，detached worktree 必须直接基于刚确认的 target head；`detached_head` 必须等于 `remote_head`，否则 fail closed
    - 必须产出 detached path、`git rev-parse HEAD`、`git status --short --branch`
    - 没有 detached 证据，不算 setup 完成
 3. Install gate
