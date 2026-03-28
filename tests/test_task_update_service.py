@@ -3024,6 +3024,10 @@ Deliver the backend API update and the member list UI update.
     assert "## Resolved Scope Context" in tasks["Prepare repo, branch, env, and runnable baseline"].description
     assert result.effects.deferred_materialization["status"] == "materialized"
     assert result.effects.deferred_materialization["execution_shape"] == "full-stack"
+    assert result.effects.deferred_materialization["lane_materialization"] == "dual_lane"
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["lane"] == "backend"
+    assert tasks["Implement assigned change slice B with real validation"].metadata["lane_slice_authority"]["lane"] == "frontend"
+    assert "## Lane Authority" in tasks["Implement assigned change slice A with real validation"].description
     assert wake_calls == [[tasks["Prepare repo, branch, env, and runnable baseline"].id]]
 
 
@@ -3217,6 +3221,76 @@ Deliver the mobile company directory UI update and the backend company directory
     assert tasks["Prepare repo, branch, env, and runnable baseline"].metadata["feature_scope"]["change_budget"]["allowed_layers"] == ["mobile-ui", "backend", "api"]
     assert "Implement assigned change slice A with real validation" in tasks
     assert "Implement assigned change slice B with real validation" in tasks
+
+
+def test_execute_task_update_materializes_single_lane_when_full_stack_scope_lacks_disjoint_lane_authority(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    result = execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description="""## Source Request
+Ship the members login feature safely
+
+## Scoped Brief
+Deliver the members login backend API update and the existing members login UI update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- workflow redesign
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the members login feature safely","scoped_brief":"Deliver the members login backend API update and the existing members login UI update.","in_scope":["members login backend API update","members login UI update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["workflow redesign"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack","change_budget":{"allowed_layers":["web-ui","backend","api"],"allowed_operations":["edit-existing","add-ui-component","add-backend-module"],"allowed_roots":["src/"],"forbidden_layers":["mobile-ui"]},"initial_targets":[{"kind":"web-flow","path":"frontend/src/features/members/login.tsx","exists":true,"why_in_scope":"existing members login UI requires update","evidence":["rg hit: frontend/src/features/members/login.tsx"]},{"kind":"api-handler","path":"server/src/routes/member-login.ts","exists":true,"why_in_scope":"existing members login API requires update","evidence":["rg hit: server/src/routes/member-login.ts"]}]}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    tasks = {task.subject: task for task in store.list_tasks()}
+    assert result.effects.deferred_materialization["execution_shape"] == "full-stack"
+    assert result.effects.deferred_materialization["lane_materialization"] == "single_lane_fail_closed"
+    assert "Implement assigned change slice A with real validation" in tasks
+    assert "Run scoped QA pass A on the real change" in tasks
+    assert "Implement assigned change slice B with real validation" not in tasks
+    assert "Run scoped QA pass B on the real change" not in tasks
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["lane"] == "combined"
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["meaningful"] is True
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["allowed_roots"] == ["src/"]
+    assert set(tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["allowed_layers"]) == {"web-ui", "backend", "api"}
 
 
 def test_execute_task_update_post_scope_mode_fails_closed_when_feature_scope_shape_is_missing(monkeypatch, tmp_path):

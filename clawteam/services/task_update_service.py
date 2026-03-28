@@ -49,6 +49,7 @@ from clawteam.templates import (
     validate_scope_task_completion,
     read_feature_scope_metadata,
 )
+from clawteam.templates.launch import _BACKEND_TARGET_KINDS, _FRONTEND_TARGET_KINDS, _infer_layers_from_paths
 from clawteam.task.transition import (
     ReopenTaskEvent,
     TaskTransitionPlan,
@@ -884,6 +885,71 @@ def _validate_materialization_budget(feature_scope: dict[str, Any]) -> None:
         )
 
 
+def _build_lane_authority(feature_scope: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    parsed = read_feature_scope_metadata({"feature_scope": feature_scope})
+    if parsed is None:
+        raise TaskUpdateValidationError("post-scope materialization requires machine-readable feature_scope metadata")
+
+    budget = parsed.change_budget
+    validated_targets = [target for target in parsed.initial_targets if target.exists]
+    lane_roots = {
+        "frontend": [root for root in budget.allowed_roots if _infer_layers_from_paths([root]) & {"web-ui", "mobile-ui"}],
+        "backend": [root for root in budget.allowed_roots if _infer_layers_from_paths([root]) & {"backend", "api", "schema", "db"}],
+        "combined": list(budget.allowed_roots),
+    }
+    lane_layers = {
+        "frontend": [layer for layer in budget.allowed_layers if layer in {"web-ui", "mobile-ui"}],
+        "backend": [layer for layer in budget.allowed_layers if layer in {"backend", "api", "schema", "db", "crawler", "auth"}],
+        "combined": list(budget.allowed_layers),
+    }
+    lane_targets = {
+        "frontend": [
+            target.model_dump(mode="python")
+            for target in validated_targets
+            if target.kind in _FRONTEND_TARGET_KINDS or _infer_layers_from_paths([target.path]) & {"web-ui", "mobile-ui"}
+        ],
+        "backend": [
+            target.model_dump(mode="python")
+            for target in validated_targets
+            if target.kind in _BACKEND_TARGET_KINDS or _infer_layers_from_paths([target.path]) & {"backend", "api", "schema", "db"}
+        ],
+        "combined": [target.model_dump(mode="python") for target in validated_targets],
+    }
+
+    authority: dict[str, dict[str, Any]] = {}
+    for lane_name in ("frontend", "backend", "combined"):
+        authority[lane_name] = {
+            "lane": lane_name,
+            "allowed_roots": lane_roots[lane_name],
+            "allowed_layers": lane_layers[lane_name],
+            "initial_targets": lane_targets[lane_name],
+            "meaningful": bool(lane_roots[lane_name] and lane_layers[lane_name] and lane_targets[lane_name]),
+            "primary_evidence": {
+                "roots": list(lane_roots[lane_name]),
+                "layers": list(lane_layers[lane_name]),
+                "targets": [target["path"] for target in lane_targets[lane_name]],
+            },
+        }
+    return authority
+
+
+def _render_lane_authority_context(authority: dict[str, Any]) -> str:
+    evidence = authority.get("primary_evidence") if isinstance(authority, dict) else None
+    if not isinstance(evidence, dict):
+        return ""
+    roots = ", ".join(str(item) for item in evidence.get("roots") or []) or "none"
+    layers = ", ".join(str(item) for item in evidence.get("layers") or []) or "none"
+    targets = ", ".join(str(item) for item in evidence.get("targets") or []) or "none"
+    return (
+        "\n\n## Lane Authority\n"
+        f"- lane: {authority.get('lane') or 'unspecified'}\n"
+        f"- allowed_roots: {roots}\n"
+        f"- allowed_layers: {layers}\n"
+        f"- initial_targets: {targets}\n"
+        "- This machine-readable slice authority is binding for this task; stay inside it and fail closed if the required change spills outside."
+    )
+
+
 def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> tuple[TaskItem, TaskTransitionPlan, dict[str, Any]]:
     metadata = scope_task.metadata if isinstance(scope_task.metadata, dict) else {}
     workflow_definition = metadata.get("workflow_definition")
@@ -915,6 +981,14 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
 
     execution_shape = _infer_execution_shape(feature_scope)
     _validate_materialization_budget(feature_scope)
+    lane_authority = _build_lane_authority(feature_scope)
+    dual_lane_full_stack = (
+        execution_shape == "full-stack"
+        and lane_authority["backend"]["meaningful"]
+        and lane_authority["frontend"]["meaningful"]
+        and set(lane_authority["backend"]["allowed_roots"]).isdisjoint(set(lane_authority["frontend"]["allowed_roots"]))
+        and set(lane_authority["backend"]["primary_evidence"]["targets"]).isdisjoint(set(lane_authority["frontend"]["primary_evidence"]["targets"]))
+    )
     selected_subjects = {
         "ui-only": [
             _FIVE_STEP_SETUP_SUBJECT,
@@ -933,13 +1007,29 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
         "full-stack": [
             _FIVE_STEP_SETUP_SUBJECT,
             _FIVE_STEP_IMPL_A_SUBJECT,
+            _FIVE_STEP_QA_A_SUBJECT,
+            _FIVE_STEP_REVIEW_SUBJECT,
+            _FIVE_STEP_DELIVER_SUBJECT,
+        ],
+    }[execution_shape]
+    if dual_lane_full_stack:
+        selected_subjects = [
+            _FIVE_STEP_SETUP_SUBJECT,
+            _FIVE_STEP_IMPL_A_SUBJECT,
             _FIVE_STEP_IMPL_B_SUBJECT,
             _FIVE_STEP_QA_A_SUBJECT,
             _FIVE_STEP_QA_B_SUBJECT,
             _FIVE_STEP_REVIEW_SUBJECT,
             _FIVE_STEP_DELIVER_SUBJECT,
-        ],
-    }[execution_shape]
+        ]
+
+    single_lane_authority = lane_authority["combined"] if execution_shape == "full-stack" and not dual_lane_full_stack else lane_authority["backend"]
+    subject_lane_authority = {
+        _FIVE_STEP_IMPL_A_SUBJECT: single_lane_authority,
+        _FIVE_STEP_QA_A_SUBJECT: single_lane_authority,
+        _FIVE_STEP_IMPL_B_SUBJECT: lane_authority["frontend"],
+        _FIVE_STEP_QA_B_SUBJECT: lane_authority["frontend"],
+    }
 
     created_ids_by_subject: dict[str, str] = {_FIVE_STEP_SCOPE_SUBJECT: scope_task.id}
     root_ids_to_wake: list[str] = []
@@ -966,6 +1056,9 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
             task_metadata["message_type"] = authored_task.get("message_type")
         if authored_task.get("required_sections"):
             task_metadata["required_sections"] = list(authored_task.get("required_sections") or [])
+        lane_slice_authority = subject_lane_authority.get(subject)
+        if lane_slice_authority is not None:
+            task_metadata["lane_slice_authority"] = lane_slice_authority
         if on_fail_subjects:
             task_metadata["on_fail"] = [created_ids_by_subject[dep] for dep in on_fail_subjects]
 
@@ -974,6 +1067,8 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
             normalized=resolved_scope or {},
             scope_audit_warnings=scope_warnings if isinstance(scope_warnings, list) else None,
         )
+        if lane_slice_authority is not None:
+            description += _render_lane_authority_context(lane_slice_authority)
         created = store.create(
             subject=subject,
             description=description,
@@ -989,6 +1084,8 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
     updated_metadata["deferred_materialization_state"] = DEFERRED_MATERIALIZATION_MATERIALIZED
     updated_metadata["deferred_materialization_case"] = DEFERRED_MATERIALIZATION_CASE
     updated_metadata["execution_shape"] = execution_shape
+    updated_metadata["lane_authority"] = lane_authority
+    updated_metadata["lane_materialization"] = "dual_lane" if dual_lane_full_stack else "single_lane_fail_closed"
     updated_metadata["materialized_task_ids"] = {
         subject: created_ids_by_subject[subject] for subject in selected_subjects if subject in created_ids_by_subject
     }
@@ -1012,6 +1109,8 @@ def _materialize_post_scope_tasks(*, store: TaskStore, scope_task: TaskItem) -> 
             "state": DEFERRED_MATERIALIZATION_MATERIALIZED,
             "reason": "Downstream topology materialized explicitly from FEATURE_SCOPE after scope completion.",
             "execution_shape": execution_shape,
+            "lane_materialization": "dual_lane" if dual_lane_full_stack else "single_lane_fail_closed",
+            "lane_authority": lane_authority,
             "created_task_ids": {subject: created_ids_by_subject[subject] for subject in selected_subjects if subject in created_ids_by_subject},
             "released_root_task_ids": list(root_ids_to_wake),
             "deferred_subjects": list(updated_metadata["workflow_definition"]["deferred_subjects"]),
