@@ -3221,6 +3221,76 @@ Deliver the mobile company directory UI update and the backend company directory
     assert tasks["Prepare repo, branch, env, and runnable baseline"].metadata["feature_scope"]["change_budget"]["allowed_layers"] == ["mobile-ui", "backend", "api"]
     assert "Implement assigned change slice A with real validation" in tasks
     assert "Implement assigned change slice B with real validation" in tasks
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["allowed_roots"] == ["server/"]
+    assert tasks["Implement assigned change slice B with real validation"].metadata["lane_slice_authority"]["allowed_roots"] == ["mobile/"]
+    assert tasks["Run scoped QA pass A on the real change"].metadata["lane_slice_authority"]["allowed_roots"] == ["server/"]
+    assert tasks["Run scoped QA pass B on the real change"].metadata["lane_slice_authority"]["allowed_roots"] == ["mobile/"]
+
+
+def test_execute_task_update_materializes_mobile_full_stack_scope_with_mobile_lane_boundary(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path / "data"))
+    store = TaskStore("demo")
+    scope, ctx = _post_scope_context(store)
+    monkeypatch.setattr(
+        "clawteam.services.task_update_service.wake_tasks_to_pending",
+        lambda team, target_ids, caller, message_builder, repo, store, runtime, release_notifier: [],
+    )
+
+    result = execute_task_update(
+        task_id=scope.id,
+        caller="leader",
+        ctx=ctx,
+        request=TaskUpdateRequest(
+            status=TaskStatus.completed,
+            owner=None,
+            subject=None,
+            description="""## Source Request
+Ship the members login feature safely
+
+## Scoped Brief
+Deliver the mobile members login UI update and the backend members login API update.
+
+## Unknowns
+- none
+
+## Leader Assumptions
+- existing tests are representative
+
+## Out of Scope
+- web portal rewrite
+
+## Risks/Blockers
+- none
+
+## Recommended Next Step
+- explicit post-scope materialization
+
+## FEATURE_SCOPE
+{"source_request":"Ship the members login feature safely","scoped_brief":"Deliver the mobile members login UI update and the backend members login API update.","in_scope":["mobile members login UI update","backend members login API update"],"unknowns":["none"],"leader_assumptions":["existing tests are representative"],"out_of_scope":["web portal rewrite"],"risks_blockers":["none"],"recommended_next_step":"explicit post-scope materialization","execution_shape":"full-stack","change_budget":{"allowed_layers":["mobile-ui","backend","api"],"allowed_operations":["edit-existing","add-ui-component","add-backend-module"],"allowed_roots":["mobile/app/","server/"],"forbidden_layers":["web-ui"]},"initial_targets":[{"kind":"mobile-screen","path":"mobile/app/members/login.tsx","exists":true,"why_in_scope":"existing mobile members login UI requires update","evidence":["rg hit: mobile/app/members/login.tsx"]},{"kind":"api-handler","path":"server/src/routes/member-login.ts","exists":true,"why_in_scope":"existing members login API requires update","evidence":["rg hit: server/src/routes/member-login.ts"]}]}
+""",
+            add_blocks=None,
+            add_blocked_by=None,
+            add_on_fail=None,
+            failure_kind=None,
+            failure_note=None,
+            failure_root_cause=None,
+            failure_evidence=None,
+            failure_recommended_next_owner=None,
+            failure_recommended_action=None,
+            execution_id=None,
+            wake_owner=False,
+            message="",
+            force=False,
+        ),
+    )
+
+    tasks = {task.subject: task for task in store.list_tasks()}
+    assert result.effects.deferred_materialization["execution_shape"] == "full-stack"
+    assert result.effects.deferred_materialization["lane_materialization"] == "dual_lane"
+    assert tasks["Implement assigned change slice A with real validation"].metadata["lane_slice_authority"]["allowed_roots"] == ["server/"]
+    assert tasks["Implement assigned change slice B with real validation"].metadata["lane_slice_authority"]["allowed_roots"] == ["mobile/"]
+    assert tasks["Implement assigned change slice B with real validation"].metadata["lane_slice_authority"]["primary_evidence"]["targets"] == ["mobile/app/members/login.tsx"]
+    assert "allowed_roots: mobile/" in tasks["Implement assigned change slice B with real validation"].description
 
 
 def test_execute_task_update_materializes_single_lane_when_full_stack_scope_lacks_disjoint_lane_authority(monkeypatch, tmp_path):

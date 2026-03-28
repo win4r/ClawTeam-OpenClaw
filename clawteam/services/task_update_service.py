@@ -885,6 +885,14 @@ def _validate_materialization_budget(feature_scope: dict[str, Any]) -> None:
         )
 
 
+def _mobile_lane_boundary(roots: list[str]) -> list[str]:
+    normalized = [str(root).strip().lstrip("./") for root in roots]
+    if normalized and all(path.startswith("mobile/") for path in normalized):
+        return ["mobile/"]
+    return roots
+
+
+
 def _build_lane_authority(feature_scope: dict[str, Any]) -> dict[str, dict[str, Any]]:
     parsed = read_feature_scope_metadata({"feature_scope": feature_scope})
     if parsed is None:
@@ -892,8 +900,9 @@ def _build_lane_authority(feature_scope: dict[str, Any]) -> dict[str, dict[str, 
 
     budget = parsed.change_budget
     validated_targets = [target for target in parsed.initial_targets if target.exists]
+    frontend_roots = [root for root in budget.allowed_roots if _infer_layers_from_paths([root]) & {"web-ui", "mobile-ui"}]
     lane_roots = {
-        "frontend": [root for root in budget.allowed_roots if _infer_layers_from_paths([root]) & {"web-ui", "mobile-ui"}],
+        "frontend": _mobile_lane_boundary(frontend_roots),
         "backend": [root for root in budget.allowed_roots if _infer_layers_from_paths([root]) & {"backend", "api", "schema", "db"}],
         "combined": list(budget.allowed_roots),
     }
