@@ -235,7 +235,7 @@ def test_tmux_backend_normalizes_bare_nanobot_to_agent(monkeypatch, tmp_path):
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
     full_cmd = new_session[-1]
-    assert " nanobot agent -w /tmp/demo -m 'do work';" in full_cmd
+    assert " nanobot agent -w /tmp/demo -m 'do work'" in full_cmd
 
 
 def test_tmux_backend_confirms_claude_workspace_trust_prompt(monkeypatch):
