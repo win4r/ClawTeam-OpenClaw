@@ -46,6 +46,8 @@ class ClawTeamConfig(BaseModel):
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
     default_backend: str = "tmux"  # "tmux" | "subprocess"
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
+    spawn_prompt_delay: float = 2.0  # fallback wait (seconds) if TUI ready-detection times out
+    spawn_ready_timeout: float = 30.0  # max seconds to poll for TUI readiness before fallback
 
 
 def config_path() -> Path:
@@ -84,6 +86,8 @@ def get_effective(key: str) -> tuple[str, str]:
         "workspace": "CLAWTEAM_WORKSPACE",
         "default_backend": "CLAWTEAM_DEFAULT_BACKEND",
         "skip_permissions": "CLAWTEAM_SKIP_PERMISSIONS",
+        "spawn_prompt_delay": "CLAWTEAM_SPAWN_PROMPT_DELAY",
+        "spawn_ready_timeout": "CLAWTEAM_SPAWN_READY_TIMEOUT",
     }
     defaults = ClawTeamConfig()
     cfg = load_config()
