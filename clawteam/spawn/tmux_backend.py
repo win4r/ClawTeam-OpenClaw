@@ -138,6 +138,8 @@ class TmuxBackend(SpawnBackend):
             final_command.append(prompt)
         elif prompt and is_gemini_command(normalized_command):
             final_command.extend(["-p", prompt])
+        elif prompt and (is_qwen_command(normalized_command) or is_opencode_command(normalized_command)):
+            final_command.extend(["-p", prompt])
 
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
         # Append on-exit hook: runs immediately when agent process exits
