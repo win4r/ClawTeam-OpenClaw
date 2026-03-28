@@ -300,6 +300,47 @@ def test_execute_task_release_uses_injected_context(monkeypatch, tmp_path):
     assert result.task.metadata["execution"]["message_id"] == "msg-1"
 
 
+def test_execute_task_release_uses_single_release_metadata_helper_for_a_path(monkeypatch, tmp_path):
+    env = _team_env(tmp_path)
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
+
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    TeamManager.add_member("demo", "qa1", "qa1-id", agent_type="general-purpose")
+
+    store = TaskStore("demo")
+    task = store.create("Functional QA", description="Check company directory", owner="qa1")
+
+    states: list[str] = []
+    original = RuntimeOrchestrator._write_release_execution_metadata
+
+    def spy(self, store, task, *, caller, state, **fields):
+        states.append(state)
+        return original(self, store, task, caller=caller, state=state, **fields)
+
+    monkeypatch.setattr(RuntimeOrchestrator, "_write_release_execution_metadata", spy)
+    monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", lambda *_: "alive")
+
+    execute_task_release(
+        task_id=task.id,
+        caller="leader",
+        request=TaskReleaseRequest(
+            message="Start immediately",
+            respawn=True,
+            force=False,
+        ),
+        ctx=TaskReleaseContext(
+            team="demo",
+            store=store,
+            runtime=RuntimeOrchestrator(team="demo", repo=str(tmp_path)),
+            release_notifier=lambda *a, **k: {"messageSent": True, "messageId": "msg-1"},
+            repo=str(tmp_path),
+        ),
+    )
+
+    assert states == ["awaiting_release", "awaiting_claim"]
+
+
+
 def test_execute_task_release_records_claim_failed_metadata(monkeypatch, tmp_path):
     env = _team_env(tmp_path)
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", env["CLAWTEAM_DATA_DIR"])
@@ -313,6 +354,14 @@ def test_execute_task_release_records_claim_failed_metadata(monkeypatch, tmp_pat
     def fake_release_notifier(team, released_task, caller, message):
         raise RuntimeError("notify boom")
 
+    states: list[str] = []
+    original = RuntimeOrchestrator._write_release_execution_metadata
+
+    def spy(self, store, task, *, caller, state, **fields):
+        states.append(state)
+        return original(self, store, task, caller=caller, state=state, **fields)
+
+    monkeypatch.setattr(RuntimeOrchestrator, "_write_release_execution_metadata", spy)
     monkeypatch.setattr("clawteam.spawn.registry.get_agent_runtime_state", lambda *_: "alive")
 
     try:
@@ -338,6 +387,7 @@ def test_execute_task_release_records_claim_failed_metadata(monkeypatch, tmp_pat
 
     updated = store.get(task.id)
     assert updated is not None
+    assert states == ["awaiting_release", "claim_failed"]
     assert updated.status == TaskStatus.pending
     assert updated.metadata["execution"]["state"] == CLAIM_FAILED
     assert updated.metadata["execution"]["runtime_state_before"] == "alive"
