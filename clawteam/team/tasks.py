@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from clawteam.execution.state import CLAIMED, merge_execution_metadata
+from clawteam.execution.state import AWAITING_WRITEBACK, CLAIMED, WRITEBACK_APPLIED, WRITEBACK_FAILED, merge_execution_metadata
 from clawteam.task.transition import TaskTransitionDecision, plan_runtime_terminal_writeback
 from clawteam.team.models import TaskItem, TaskStatus, get_data_dir
 
@@ -368,18 +368,36 @@ class TaskStore:
                 execution_id=execution_id,
                 rejection_reason=decision.rejection_reason,
             )
-            task = rejection.task if rejection is not None else self.get(task_id)
+            failed = self.update(
+                task_id,
+                metadata=merge_execution_metadata(
+                    rejection.task if rejection is not None else existing,
+                    state=WRITEBACK_FAILED,
+                    clear_error=False,
+                    last_error=decision.rejection_reason or "writeback_rejected",
+                ),
+                caller=caller,
+            )
+            if failed is not None:
+                task = failed
+            elif rejection is not None:
+                task = rejection.task
+            else:
+                task = self.get(task_id)
             return decision, task, apply_result
 
         applied_case = fallback_case_name
         if decision and decision.accepted:
             applied_case = decision.case_name
+        accepted_metadata = merge_execution_metadata(existing, state=WRITEBACK_APPLIED)
+        if metadata:
+            accepted_metadata.update(metadata)
         apply_result = self.accept_terminal_writeback(
             task_id,
             status=status,
             caller=caller,
             execution_id=execution_id,
-            metadata=metadata,
+            metadata=accepted_metadata,
             metadata_keys_to_remove=metadata_keys_to_remove,
             force=force,
             case_name=applied_case,

@@ -12,17 +12,26 @@ ExecutionLifecycleState = Literal[
     "awaiting_claim",
     "claim_failed",
     "claimed",
+    "awaiting_writeback",
+    "writeback_failed",
+    "writeback_applied",
 ]
 
 AWAITING_RELEASE: ExecutionLifecycleState = "awaiting_release"
 AWAITING_CLAIM: ExecutionLifecycleState = "awaiting_claim"
 CLAIM_FAILED: ExecutionLifecycleState = "claim_failed"
 CLAIMED: ExecutionLifecycleState = "claimed"
+AWAITING_WRITEBACK: ExecutionLifecycleState = "awaiting_writeback"
+WRITEBACK_FAILED: ExecutionLifecycleState = "writeback_failed"
+WRITEBACK_APPLIED: ExecutionLifecycleState = "writeback_applied"
 VALID_EXECUTION_STATES = frozenset({
     AWAITING_RELEASE,
     AWAITING_CLAIM,
     CLAIM_FAILED,
     CLAIMED,
+    AWAITING_WRITEBACK,
+    WRITEBACK_FAILED,
+    WRITEBACK_APPLIED,
 })
 
 _BOOL_FIELDS = frozenset({"claim_observed", "respawn_attempted", "respawn_succeeded", "message_sent", "replacement_required"})
