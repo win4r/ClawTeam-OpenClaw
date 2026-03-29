@@ -24,20 +24,6 @@ dependency resolution, plan approval workflows, and terminal-based monitoring da
 
 All operations are performed via the `clawteam` CLI. Data is stored in `~/.clawteam/` by default.
 
-## Installation
-
-```bash
-pip install clawteam
-```
-
-Requires Python 3.10+. For P2P transport support: `pip install clawteam[p2p]`.
-
-## Prerequisites
-
-- `tmux` installed (used by default spawn backend)
-- A CLI coding agent (e.g. `claude`, `codex`, or any command-line agent)
-- A git repository (for worktree isolation)
-
 ## Core Concepts
 
 **Teams** — A named group of agents with one leader and zero or more workers. Created via
