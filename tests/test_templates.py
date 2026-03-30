@@ -7,6 +7,7 @@ from clawteam.templates import (
     TaskDef,
     TemplateDef,
     _SafeDict,
+    check_agent_count,
     list_templates,
     load_template,
     render_task,
@@ -49,6 +50,24 @@ class TestModels:
         assert a.type == "general-purpose"
         assert a.task == ""
         assert a.command is None
+        assert a.task_type == "parallel"
+        assert a.intent is None
+        assert a.end_state is None
+        assert a.constraints is None
+
+    def test_agent_def_task_type(self):
+        a = AgentDef(name="worker", task_type="sequential")
+        assert a.task_type == "sequential"
+
+    def test_agent_def_intent_fields(self):
+        a = AgentDef(
+            name="analyst",
+            intent="Analyze stock fundamentals",
+            end_state="Buy/sell/hold recommendation",
+            constraints=["No leverage", "Max 10% position"],
+        )
+        assert a.intent == "Analyze stock fundamentals"
+        assert len(a.constraints) == 2
 
     def test_task_def(self):
         t = TaskDef(subject="Build feature", description="details", owner="alice")
@@ -62,6 +81,12 @@ class TestModels:
         assert t.backend == "tmux"
         assert t.agents == []
         assert t.tasks == []
+        assert t.max_agents == 4
+
+    def test_template_def_custom_max_agents(self):
+        leader = AgentDef(name="lead")
+        t = TemplateDef(name="my-tmpl", leader=leader, max_agents=8)
+        assert t.max_agents == 8
 
 
 class TestLoadBuiltinTemplate:
@@ -136,3 +161,28 @@ class TestListTemplates:
             assert "description" in t
             assert "source" in t
             assert t["source"] in ("builtin", "user")
+
+
+class TestCheckAgentCount:
+    """Tests for max-agent warning (research-backed: arXiv:2512.08296)."""
+
+    def test_under_limit_no_warning(self):
+        assert check_agent_count(2, max_agents=4) is None
+
+    def test_at_limit_warns(self):
+        warning = check_agent_count(4, max_agents=4)
+        assert warning is not None
+        assert "exceeds recommended max" in warning
+
+    def test_over_limit_warns(self):
+        warning = check_agent_count(6, max_agents=4)
+        assert warning is not None
+        assert "#7" in warning
+
+    def test_custom_max(self):
+        assert check_agent_count(7, max_agents=8) is None
+        assert check_agent_count(8, max_agents=8) is not None
+
+    def test_warning_contains_research_ref(self):
+        warning = check_agent_count(4, max_agents=4)
+        assert "arXiv:2512.08296" in warning

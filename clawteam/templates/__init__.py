@@ -18,6 +18,13 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_MAX_AGENTS = 4  # Research-backed (Google/MIT arXiv:2512.08296)
+
+
+# ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
@@ -26,6 +33,10 @@ class AgentDef(BaseModel):
     type: str = "general-purpose"
     task: str = ""
     command: list[str] | None = None
+    task_type: str = "parallel"  # parallel | sequential | hybrid
+    intent: str | None = None  # Auftragstaktik: what is the mission's purpose?
+    end_state: str | None = None  # What does success look like?
+    constraints: list[str] | None = None  # Boundaries the agent must respect
 
 
 class TaskDef(BaseModel):
@@ -42,6 +53,25 @@ class TemplateDef(BaseModel):
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
+    max_agents: int = DEFAULT_MAX_AGENTS  # Research-backed (arXiv:2512.08296)
+
+
+# ---------------------------------------------------------------------------
+# Agent count warning
+# ---------------------------------------------------------------------------
+
+_MAX_AGENTS_WARNING = (
+    "Warning: spawning agent #{count} exceeds recommended max of {max} agents per team. "
+    "Research shows coordination overhead dominates beyond 3-4 agents "
+    "(Google/MIT arXiv:2512.08296). Use --force to suppress."
+)
+
+
+def check_agent_count(current_count: int, max_agents: int) -> str | None:
+    """Return a warning message if current_count exceeds max_agents, else None."""
+    if current_count >= max_agents:
+        return _MAX_AGENTS_WARNING.format(count=current_count + 1, max=max_agents)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +127,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         leader=leader,
         agents=agents,
         tasks=tasks,
+        max_agents=tmpl.get("max_agents", DEFAULT_MAX_AGENTS),
     )
 
 

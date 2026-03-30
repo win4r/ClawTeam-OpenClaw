@@ -1737,6 +1737,7 @@ def spawn_agent(
     skip_permissions: Optional[bool] = typer.Option(None, "--skip-permissions/--no-skip-permissions", help="Skip tool approval for claude (default: from config, true)"),
     resume: bool = typer.Option(False, "--resume", "-r", help="Resume previous session if available"),
     openclaw_agent: Optional[str] = typer.Option(None, "--openclaw-agent", help="OpenClaw agent id to use (routes to a specific agent config/model)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
@@ -1755,6 +1756,16 @@ def spawn_agent(
     _team = team or "default"
     _name = agent_name or f"agent-{uuid.uuid4().hex[:6]}"
     _id = uuid.uuid4().hex[:12]
+
+    # Check agent count against recommended max (arXiv:2512.08296)
+    if not force:
+        from clawteam.spawn.registry import get_registry
+        from clawteam.templates import DEFAULT_MAX_AGENTS, check_agent_count
+
+        current_count = len(get_registry(_team))
+        warning = check_agent_count(current_count, max_agents=DEFAULT_MAX_AGENTS)
+        if warning:
+            console.print(f"[yellow]{warning}[/yellow]", err=True)
 
     # Resolve skip_permissions from config
     if skip_permissions is None:
@@ -2275,6 +2286,7 @@ def launch_team(
     workspace: bool = typer.Option(False, "--workspace/--no-workspace", "-w"),
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path"),
     command_override: Optional[list[str]] = typer.Option(None, "--command", help="Override agent command"),
+    force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
@@ -2291,6 +2303,15 @@ def launch_team(
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
+
+    # Check agent count against template max_agents
+    if not force:
+        from clawteam.templates import check_agent_count
+
+        total_agents = len(tmpl.agents) + 1  # agents + leader
+        warning = check_agent_count(total_agents - 1, tmpl.max_agents)
+        if warning:
+            console.print(f"[yellow]{warning}[/yellow]", err=True)
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
@@ -2387,6 +2408,10 @@ def launch_team(
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{t_name}",
+            intent=agent.intent or "",
+            end_state=agent.end_state or "",
+            constraints=agent.constraints,
+            team_size=len(all_agents),
         )
 
         # Resolve skip_permissions from config
