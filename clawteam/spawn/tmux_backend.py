@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -50,9 +51,18 @@ class TmuxBackend(SpawnBackend):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         skip_permissions: bool = False,
+        openclaw_agent: str | None = None,
     ) -> str:
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
+
+        if openclaw_agent:
+            print(
+                f"Warning: openclaw_agent={openclaw_agent!r} requires openclaw tui to support "
+                "the --agent parameter (see openclaw/openclaw#51481). "
+                "This flag may have no effect if your openclaw version does not support it.",
+                file=sys.stderr,
+            )
 
         session_name = f"clawteam-{team_name}"
         clawteam_bin = resolve_clawteam_executable()
@@ -114,13 +124,19 @@ class TmuxBackend(SpawnBackend):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "tui" in final_command:
                 final_command.extend(["--session", session_key])
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "agent" in final_command:
+                if openclaw_agent:
+                    final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
 
