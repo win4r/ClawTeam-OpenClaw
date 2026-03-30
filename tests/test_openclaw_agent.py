@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-
 # ---------------------------------------------------------------------------
 # TmuxBackend tests
 # ---------------------------------------------------------------------------
@@ -102,6 +101,7 @@ def test_tmux_backend_excludes_agent_flag_when_not_set(monkeypatch):
 def test_subprocess_backend_raises_with_openclaw_agent(monkeypatch):
     """subprocess_backend.spawn() with openclaw_agent should raise NotImplementedError."""
     import pytest
+
     from clawteam.spawn.subprocess_backend import SubprocessBackend
 
     backend = SubprocessBackend()
