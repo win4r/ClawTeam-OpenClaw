@@ -74,3 +74,40 @@ class TestBuildAgentPrompt:
         assert "clawteam task list my-team --owner dev" in prompt
         assert "clawteam inbox send my-team boss" in prompt
         assert "clawteam cost report my-team" in prompt
+
+    def test_boids_rules_injected_for_multi_agent(self):
+        prompt = build_agent_prompt(
+            agent_name="w", agent_id="id", agent_type="t",
+            team_name="team", leader_name="lead", task="task",
+            team_size=3,
+        )
+        assert "## Coordination Rules" in prompt
+        assert "**Separation**" in prompt
+        assert "**Alignment**" in prompt
+        assert "**Cohesion**" in prompt
+        assert "**Boundary**" in prompt
+
+    def test_boids_rules_not_injected_for_single_agent(self):
+        prompt = build_agent_prompt(
+            agent_name="w", agent_id="id", agent_type="t",
+            team_name="team", leader_name="lead", task="task",
+            team_size=1,
+        )
+        assert "## Coordination Rules" not in prompt
+
+    def test_boids_rules_not_injected_by_default(self):
+        prompt = build_agent_prompt(
+            agent_name="w", agent_id="id", agent_type="t",
+            team_name="team", leader_name="lead", task="task",
+        )
+        assert "## Coordination Rules" not in prompt
+
+    def test_boids_rules_before_task_section(self):
+        prompt = build_agent_prompt(
+            agent_name="w", agent_id="id", agent_type="t",
+            team_name="team", leader_name="lead", task="do stuff",
+            team_size=2,
+        )
+        rules_pos = prompt.index("## Coordination Rules")
+        task_pos = prompt.index("## Task")
+        assert rules_pos < task_pos

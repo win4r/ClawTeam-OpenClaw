@@ -2387,6 +2387,7 @@ def launch_team(
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{t_name}",
+            team_size=len(all_agents),
         )
 
         # Resolve skip_permissions from config

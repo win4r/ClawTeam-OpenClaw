@@ -6,6 +6,20 @@ by the ClawTeam Skill, not duplicated here.
 
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# Boids-inspired coordination rules (Reynolds 1986, adapted for LLM agents)
+# Injected when team_size > 1 to enable emergent coordination.
+# ---------------------------------------------------------------------------
+
+BOIDS_RULES = """## Coordination Rules
+
+As a member of a multi-agent team, follow these four rules:
+
+1. **Separation** — Do not duplicate work another agent has done or is doing. Check task statuses before starting.
+2. **Alignment** — Follow the team lead's direction and maintain consistent standards (code style, naming, approach).
+3. **Cohesion** — Proactively share discoveries by writing to the shared workspace. Make your findings visible to the team.
+4. **Boundary** — Stay within your assigned scope. Do not modify files or areas owned by other agents without coordination."""
+
 
 def build_agent_prompt(
     agent_name: str,
@@ -18,6 +32,7 @@ def build_agent_prompt(
     workspace_dir: str = "",
     workspace_branch: str = "",
     memory_scope: str = "",
+    team_size: int = 1,
 ) -> str:
     """Build agent prompt: identity + task + optional workspace info."""
     lines = [
@@ -48,6 +63,8 @@ def build_agent_prompt(
             f"- Use `memory_store` with scope `{memory_scope}` for team-shared knowledge.",
             "- Use `memory_recall` to access memories stored by other team members in this scope.",
         ])
+    if team_size > 1:
+        lines.extend(["", BOIDS_RULES])
     lines.extend([
         "",
         "## Task\n",
