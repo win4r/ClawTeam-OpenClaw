@@ -1588,8 +1588,12 @@ def lifecycle_on_exit(
     """
     import subprocess
 
-    from clawteam.spawn.registry import get_agent_info
-    from clawteam.spawn.registry import is_agent_alive, list_dead_agents, unregister_agent
+    from clawteam.spawn.registry import (
+        get_agent_info,
+        is_agent_alive,
+        list_dead_agents,
+        unregister_agent,
+    )
     from clawteam.spawn.sessions import SessionStore
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
