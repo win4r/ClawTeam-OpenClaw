@@ -119,6 +119,8 @@ class TeamMessage(BaseModel):
     # idle notification fields
     last_task: str | None = Field(default=None, alias="lastTask")
     status: str | None = None
+    # metacognition: agent self-assessed confidence (0.0-1.0)
+    confidence: float | None = None
 
 
 class TaskItem(BaseModel):

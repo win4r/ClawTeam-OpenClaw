@@ -114,6 +114,18 @@ class TestTeamMessage:
         assert "feedback" not in dumped
         assert "assignedName" not in dumped
 
+    def test_confidence_field(self):
+        msg = TeamMessage(from_agent="a", to="b", content="result", confidence=0.85)
+        assert msg.confidence == 0.85
+        dumped = json.loads(msg.model_dump_json(by_alias=True, exclude_none=True))
+        assert dumped["confidence"] == 0.85
+
+    def test_confidence_none_by_default(self):
+        msg = TeamMessage(from_agent="a", to="b", content="hi")
+        assert msg.confidence is None
+        dumped = json.loads(msg.model_dump_json(by_alias=True, exclude_none=True))
+        assert "confidence" not in dumped
+
 
 class TestEnums:
     def test_task_status_values(self):
