@@ -18,6 +18,13 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_MAX_AGENTS = 4  # Research-backed (Google/MIT arXiv:2512.08296)
+
+
+# ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
@@ -43,7 +50,7 @@ class TemplateDef(BaseModel):
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
-    max_agents: int = 4  # Research-backed default (arXiv:2512.08296)
+    max_agents: int = DEFAULT_MAX_AGENTS  # Research-backed (arXiv:2512.08296)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +124,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         leader=leader,
         agents=agents,
         tasks=tasks,
+        max_agents=tmpl.get("max_agents", 4),
     )
 
 

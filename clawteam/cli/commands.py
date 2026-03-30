@@ -1760,10 +1760,10 @@ def spawn_agent(
     # Check agent count against recommended max (arXiv:2512.08296)
     if not force:
         from clawteam.spawn.registry import get_registry
-        from clawteam.templates import check_agent_count
+        from clawteam.templates import DEFAULT_MAX_AGENTS, check_agent_count
 
         current_count = len(get_registry(_team))
-        warning = check_agent_count(current_count, max_agents=4)
+        warning = check_agent_count(current_count, max_agents=DEFAULT_MAX_AGENTS)
         if warning:
             console.print(f"[yellow]{warning}[/yellow]", err=True)
 
@@ -2286,6 +2286,7 @@ def launch_team(
     workspace: bool = typer.Option(False, "--workspace/--no-workspace", "-w"),
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path"),
     command_override: Optional[list[str]] = typer.Option(None, "--command", help="Override agent command"),
+    force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
@@ -2304,12 +2305,13 @@ def launch_team(
         raise typer.Exit(1)
 
     # Check agent count against template max_agents
-    from clawteam.templates import check_agent_count
+    if not force:
+        from clawteam.templates import check_agent_count
 
-    total_agents = len(tmpl.agents) + 1  # agents + leader
-    warning = check_agent_count(total_agents - 1, tmpl.max_agents)
-    if warning:
-        console.print(f"[yellow]{warning}[/yellow]", err=True)
+        total_agents = len(tmpl.agents) + 1  # agents + leader
+        warning = check_agent_count(total_agents - 1, tmpl.max_agents)
+        if warning:
+            console.print(f"[yellow]{warning}[/yellow]", err=True)
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
