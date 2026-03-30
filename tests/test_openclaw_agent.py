@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +39,7 @@ def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, c
     _make_tmux_mocks(monkeypatch, captured)
 
     backend = TmuxBackend()
-    result = backend.spawn(
+    backend.spawn(
         command=["openclaw"],
         agent_name="researcher",
         agent_id="agent-1",
