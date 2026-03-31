@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -31,6 +31,7 @@ class CostEvent(BaseModel):
     output_tokens: int = Field(default=0, alias="outputTokens")
     cost_cents: float = Field(default=0.0, alias="costCents")
     reported_at: str = Field(default_factory=_now_iso, alias="reportedAt")
+    task_id: str = Field(default="", alias="taskId")
 
 
 class CostSummary(BaseModel):
@@ -43,6 +44,8 @@ class CostSummary(BaseModel):
     total_input_tokens: int = Field(default=0, alias="totalInputTokens")
     total_output_tokens: int = Field(default=0, alias="totalOutputTokens")
     by_agent: dict[str, float] = Field(default_factory=dict, alias="byAgent")
+    by_model: dict[str, float] = Field(default_factory=dict, alias="byModel")
+    by_task: dict[str, float] = Field(default_factory=dict, alias="byTask")
     event_count: int = Field(default=0, alias="eventCount")
 
 
@@ -57,6 +60,8 @@ class _CostCacheEntry(BaseModel):
     cost_cents: float = Field(default=0.0, alias="costCents")
     size: int = 0
     mtime_ns: int = Field(default=0, alias="mtimeNs")
+    model: str = ""
+    task_id: str = Field(default="", alias="taskId")
 
 
 class _CostSummaryCache(BaseModel):
@@ -69,6 +74,8 @@ class _CostSummaryCache(BaseModel):
     total_input_tokens: int = Field(default=0, alias="totalInputTokens")
     total_output_tokens: int = Field(default=0, alias="totalOutputTokens")
     by_agent: dict[str, float] = Field(default_factory=dict, alias="byAgent")
+    by_model: dict[str, float] = Field(default_factory=dict, alias="byModel")
+    by_task: dict[str, float] = Field(default_factory=dict, alias="byTask")
     event_count: int = Field(default=0, alias="eventCount")
     files: dict[str, _CostCacheEntry] = Field(default_factory=dict)
 
@@ -129,6 +136,14 @@ def _add_cache_entry(
     cache.by_agent[entry.agent_name] = (
         cache.by_agent.get(entry.agent_name, 0.0) + entry.cost_cents
     )
+    if entry.model:
+        cache.by_model[entry.model] = (
+            cache.by_model.get(entry.model, 0.0) + entry.cost_cents
+        )
+    if entry.task_id:
+        cache.by_task[entry.task_id] = (
+            cache.by_task.get(entry.task_id, 0.0) + entry.cost_cents
+        )
     cache.files[filename] = entry
     cache.event_count = len(cache.files)
 
@@ -145,6 +160,18 @@ def _remove_cache_entry(cache: _CostSummaryCache, filename: str) -> None:
         cache.by_agent.pop(entry.agent_name, None)
     else:
         cache.by_agent[entry.agent_name] = remaining
+    if entry.model:
+        model_remaining = _normalize_cost(cache.by_model.get(entry.model, 0.0) - entry.cost_cents)
+        if model_remaining == 0.0:
+            cache.by_model.pop(entry.model, None)
+        else:
+            cache.by_model[entry.model] = model_remaining
+    if entry.task_id:
+        task_remaining = _normalize_cost(cache.by_task.get(entry.task_id, 0.0) - entry.cost_cents)
+        if task_remaining == 0.0:
+            cache.by_task.pop(entry.task_id, None)
+        else:
+            cache.by_task[entry.task_id] = task_remaining
     cache.event_count = len(cache.files)
 
 
@@ -157,6 +184,8 @@ def _cache_entry_from_event(path: Path, event: CostEvent) -> _CostCacheEntry:
         cost_cents=event.cost_cents,
         size=stat.st_size,
         mtime_ns=stat.st_mtime_ns,
+        model=event.model,
+        task_id=event.task_id,
     )
 
 
@@ -215,6 +244,8 @@ def _cache_to_summary(cache: _CostSummaryCache) -> CostSummary:
         total_input_tokens=cache.total_input_tokens,
         total_output_tokens=cache.total_output_tokens,
         by_agent=dict(cache.by_agent),
+        by_model=dict(cache.by_model),
+        by_task=dict(cache.by_task),
         event_count=cache.event_count,
     )
 
@@ -237,6 +268,7 @@ class CostStore:
         input_tokens: int = 0,
         output_tokens: int = 0,
         cost_cents: float = 0.0,
+        task_id: str = "",
     ) -> CostEvent:
         event = CostEvent(
             agent_name=agent_name,
@@ -245,6 +277,7 @@ class CostStore:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_cents=cost_cents,
+            task_id=task_id,
         )
         ts = event.reported_at.replace(":", "-").replace("+", "p")
         filename = f"cost-{ts}-{event.id}.json"
@@ -274,3 +307,22 @@ class CostStore:
 
     def summary(self) -> CostSummary:
         return _cache_to_summary(_sync_summary_cache(self.team_name))
+
+    def cost_rate(self, window_minutes: int = 5) -> float:
+        """Return cost per minute over the last `window_minutes` minutes."""
+        events = self.list_events()
+        if not events:
+            return 0.0
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(minutes=window_minutes)
+        recent_cost = 0.0
+        for e in events:
+            try:
+                t = datetime.fromisoformat(e.reported_at)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone.utc)
+                if t >= window_start:
+                    recent_cost += e.cost_cents
+            except ValueError:
+                continue
+        return recent_cost / window_minutes if window_minutes > 0 else 0.0

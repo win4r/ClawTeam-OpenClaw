@@ -5,11 +5,133 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from enum import Enum
 from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from clawteam.fileutil import atomic_write_text, file_locked
 from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import get_data_dir
+
+# ---------------------------------------------------------------------------
+# Circuit Breaker — agent health tracking
+# ---------------------------------------------------------------------------
+
+class HealthState(str, Enum):
+    healthy = "healthy"
+    degraded = "degraded"
+    open = "open"
+
+
+class AgentHealth(BaseModel):
+    """Health status for a spawned agent (circuit breaker pattern)."""
+
+    model_config = {"populate_by_name": True}
+
+    agent_name: str = Field(alias="agentName")
+    state: HealthState = HealthState.healthy
+    quality_score: float = Field(default=1.0, alias="qualityScore")
+    consecutive_failures: int = Field(default=0, alias="consecutiveFailures")
+    total_successes: int = Field(default=0, alias="totalSuccesses")
+    total_failures: int = Field(default=0, alias="totalFailures")
+    last_failure_at: float = Field(default=0.0, alias="lastFailureAt")
+    cooldown_seconds: float = Field(default=60.0, alias="cooldownSeconds")
+
+    @property
+    def is_accepting_tasks(self) -> bool:
+        """Return True if the agent can accept new tasks."""
+        if self.state != HealthState.open:
+            return True
+        # Half-open: allow after cooldown
+        if self.last_failure_at and (time.time() - self.last_failure_at) >= self.cooldown_seconds:
+            return True
+        return False
+
+
+DEFAULT_FAILURE_THRESHOLD = 3
+DEFAULT_COOLDOWN_SECONDS = 60.0
+
+
+def _health_path(team_name: str) -> Path:
+    return ensure_within_root(
+        get_data_dir() / "teams",
+        validate_identifier(team_name, "team name"),
+        "agent_health.json",
+    )
+
+
+def _load_health(team_name: str) -> dict[str, dict]:
+    path = _health_path(team_name)
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_health(team_name: str, data: dict[str, dict]) -> None:
+    atomic_write_text(_health_path(team_name), json.dumps(data, indent=2))
+
+
+def get_agent_health(team_name: str, agent_name: str) -> AgentHealth:
+    """Return health status for an agent (creates default if not tracked)."""
+    health_data = _load_health(team_name)
+    if agent_name in health_data:
+        return AgentHealth.model_validate(health_data[agent_name])
+    return AgentHealth(agent_name=agent_name)
+
+
+def get_all_health(team_name: str) -> dict[str, AgentHealth]:
+    """Return health for all tracked agents."""
+    health_data = _load_health(team_name)
+    return {
+        name: AgentHealth.model_validate(data)
+        for name, data in health_data.items()
+    }
+
+
+def record_outcome(
+    team_name: str,
+    agent_name: str,
+    success: bool,
+    failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
+    cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
+) -> AgentHealth:
+    """Record a task outcome and update agent health state.
+
+    State transitions:
+    - healthy → degraded: first failure
+    - degraded → open: consecutive_failures >= threshold
+    - open → healthy: success after cooldown (half-open probe)
+    - any → healthy: success resets consecutive failures
+    """
+    path = _health_path(team_name)
+    with file_locked(path):
+        health_data = _load_health(team_name)
+        raw = health_data.get(agent_name, {"agentName": agent_name})
+        health = AgentHealth.model_validate(raw)
+        health.cooldown_seconds = cooldown_seconds
+
+        if success:
+            health.consecutive_failures = 0
+            health.total_successes += 1
+            health.quality_score = min(1.0, health.quality_score + 0.1)
+            health.state = HealthState.healthy
+        else:
+            health.consecutive_failures += 1
+            health.total_failures += 1
+            health.last_failure_at = time.time()
+            health.quality_score = max(0.0, health.quality_score - 0.2)
+            if health.consecutive_failures >= failure_threshold:
+                health.state = HealthState.open
+            elif health.consecutive_failures >= 1:
+                health.state = HealthState.degraded
+
+        health_data[agent_name] = json.loads(health.model_dump_json(by_alias=True))
+        _save_health(team_name, health_data)
+    return health
 
 
 def _registry_path(team_name: str) -> Path:

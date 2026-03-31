@@ -83,6 +83,7 @@ class FileTaskStore(BaseTaskStore):
         blocks: list[str] | None = None,
         blocked_by: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> TaskItem:
         task = TaskItem(
             subject=subject,
@@ -92,13 +93,32 @@ class FileTaskStore(BaseTaskStore):
             blocks=blocks or [],
             blocked_by=blocked_by or [],
             metadata=metadata or {},
+            idempotency_key=idempotency_key,
         )
         self._validate_blocked_by_unlocked(task.id, task.blocked_by)
         if task.blocked_by:
             task.status = TaskStatus.blocked
         with self._write_lock():
+            # Idempotency check inside lock to prevent TOCTOU race
+            if idempotency_key:
+                existing = self._find_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    return existing
             self._save_unlocked(task)
         return task
+
+    def _find_by_idempotency_key(self, key: str) -> TaskItem | None:
+        """Return existing task with matching idempotency key, if any."""
+        root = _tasks_root(self.team_name)
+        for f in root.glob("task-*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                task = TaskItem.model_validate(data)
+                if task.idempotency_key == key:
+                    return task
+            except Exception:
+                continue
+        return None
 
     def get(self, task_id: str) -> TaskItem | None:
         return self._get_unlocked(task_id)

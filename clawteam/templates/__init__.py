@@ -28,6 +28,13 @@ DEFAULT_MAX_AGENTS = 4  # Research-backed (Google/MIT arXiv:2512.08296)
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+class RetryConfig(BaseModel):
+    """Per-agent retry configuration with exponential backoff."""
+    max_retries: int = 3
+    backoff_base_seconds: float = 1.0
+    backoff_max_seconds: float = 30.0
+
+
 class AgentDef(BaseModel):
     name: str
     type: str = "general-purpose"
@@ -37,6 +44,7 @@ class AgentDef(BaseModel):
     intent: str | None = None  # Auftragstaktik: what is the mission's purpose?
     end_state: str | None = None  # What does success look like?
     constraints: list[str] | None = None  # Boundaries the agent must respect
+    retry: RetryConfig | None = None  # Retry with exponential backoff
 
 
 class TaskDef(BaseModel):
