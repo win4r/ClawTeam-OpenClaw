@@ -2436,7 +2436,7 @@ def launch_team(
         sp_val, _ = get_effective("skip_permissions")
         _skip = str(sp_val).lower() not in ("false", "0", "no", "")
 
-        result = be.spawn(
+        spawn_kwargs = dict(
             command=a_cmd,
             agent_name=agent.name,
             agent_id=a_id,
@@ -2446,6 +2446,17 @@ def launch_team(
             cwd=cwd,
             skip_permissions=_skip,
         )
+        if agent.retry:
+            from clawteam.spawn import spawn_with_retry
+            result = spawn_with_retry(
+                be,
+                max_retries=agent.retry.max_retries,
+                backoff_base=agent.retry.backoff_base_seconds,
+                backoff_max=agent.retry.backoff_max_seconds,
+                **spawn_kwargs,
+            )
+        else:
+            result = be.spawn(**spawn_kwargs)
         spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
 
     # 9. Output summary

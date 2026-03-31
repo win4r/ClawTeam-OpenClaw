@@ -319,8 +319,10 @@ class CostStore:
         for e in events:
             try:
                 t = datetime.fromisoformat(e.reported_at)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone.utc)
                 if t >= window_start:
                     recent_cost += e.cost_cents
-            except (ValueError, TypeError):
+            except ValueError:
                 continue
         return recent_cost / window_minutes if window_minutes > 0 else 0.0

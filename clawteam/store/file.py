@@ -85,12 +85,6 @@ class FileTaskStore(BaseTaskStore):
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> TaskItem:
-        # Idempotency: return existing task if key matches
-        if idempotency_key:
-            existing = self._find_by_idempotency_key(idempotency_key)
-            if existing is not None:
-                return existing
-
         task = TaskItem(
             subject=subject,
             description=description,
@@ -105,6 +99,11 @@ class FileTaskStore(BaseTaskStore):
         if task.blocked_by:
             task.status = TaskStatus.blocked
         with self._write_lock():
+            # Idempotency check inside lock to prevent TOCTOU race
+            if idempotency_key:
+                existing = self._find_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    return existing
             self._save_unlocked(task)
         return task
 
