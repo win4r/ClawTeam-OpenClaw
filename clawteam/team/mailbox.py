@@ -88,8 +88,15 @@ class MailboxManager:
         plan: str | None = None,
         last_task: str | None = None,
         status: str | None = None,
+        idempotency_key: str | None = None,
     ) -> TeamMessage:
         from clawteam.team.manager import TeamManager
+
+        # Idempotency: return existing message if key matches
+        if idempotency_key:
+            existing = self._find_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return existing
 
         delivery_target = TeamManager.resolve_inbox(self.team_name, to)
         msg = TeamMessage(
@@ -111,6 +118,7 @@ class MailboxManager:
             plan=plan,
             last_task=last_task,
             status=status,
+            idempotency_key=idempotency_key,
         )
         data = msg.model_dump_json(indent=2, by_alias=True, exclude_none=True).encode("utf-8")
         self._transport.deliver(delivery_target, data)
@@ -193,6 +201,18 @@ class MailboxManager:
         """Return pending messages without consuming them."""
         raw = self._transport.fetch(agent_name, consume=False)
         return [TeamMessage.model_validate(json.loads(r)) for r in raw]
+
+    def _find_by_idempotency_key(self, key: str) -> TeamMessage | None:
+        """Check event log for a message with the same idempotency key."""
+        for f in sorted(self._events_dir.glob("evt-*.json"), reverse=True):
+            try:
+                data = json.loads(f.read_text("utf-8"))
+                msg = TeamMessage.model_validate(data)
+                if msg.idempotency_key == key:
+                    return msg
+            except Exception:
+                continue
+        return None
 
     def peek_count(self, agent_name: str) -> int:
         return self._transport.count(agent_name)

@@ -1008,6 +1008,7 @@ def cost_report(
     provider: str = typer.Option("", "--provider", help="Provider name (e.g. anthropic)"),
     model: str = typer.Option("", "--model", help="Model name"),
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name (default: from env)"),
+    task_id: str = typer.Option("", "--task-id", help="Associated task ID"),
 ):
     """Report token usage and cost for an agent."""
     from clawteam.identity import AgentIdentity
@@ -1023,6 +1024,7 @@ def cost_report(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_cents=cost_cents,
+        task_id=task_id,
     )
     data = _dump(event)
 
@@ -1049,6 +1051,7 @@ def cost_report(
 def cost_show(
     team: str = typer.Argument(..., help="Team name"),
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Filter by agent"),
+    by: Optional[str] = typer.Option(None, "--by", "-b", help="Breakdown dimension: agent, task, or model"),
 ):
     """Show cost summary and event history."""
     from clawteam.team.costs import CostStore
@@ -1059,10 +1062,12 @@ def cost_show(
     events = store.list_events(agent_name=agent or "")
     config = TeamManager.get_team(team)
     budget = config.budget_cents if config else 0.0
+    rate = store.cost_rate()
 
     data = {
         "summary": _dump(summary),
         "budget_cents": budget,
+        "cost_rate_per_min": rate,
         "events": [_dump(e) for e in events],
     }
 
@@ -1077,11 +1082,21 @@ def cost_show(
         console.print(f"  Input tokens:  {s.get('totalInputTokens', 0):,}")
         console.print(f"  Output tokens: {s.get('totalOutputTokens', 0):,}")
         console.print(f"  Events: {s.get('eventCount', 0)}")
-        by_agent = s.get("byAgent", {})
-        if by_agent:
-            console.print("  By agent:")
-            for a, c in sorted(by_agent.items()):
-                console.print(f"    {a}: ${c / 100:.4f}")
+        if rate > 0:
+            console.print(f"  Rate: ${rate / 100:.4f}/min")
+
+        # Dimension breakdown
+        dimension = by or "agent"
+        dimension_key = {
+            "agent": "byAgent",
+            "model": "byModel",
+            "task": "byTask",
+        }.get(dimension, "byAgent")
+        breakdown = s.get(dimension_key, {})
+        if breakdown:
+            console.print(f"  By {dimension}:")
+            for k, c in sorted(breakdown.items()):
+                console.print(f"    {k}: ${c / 100:.4f}")
 
         evts = d["events"]
         if evts:
@@ -1092,6 +1107,7 @@ def cost_show(
             table.add_column("Out Tokens", justify="right")
             table.add_column("Cost", justify="right")
             table.add_column("Model", style="dim")
+            table.add_column("Task", style="dim")
             for e in evts[-20:]:  # show last 20
                 table.add_row(
                     (e.get("reportedAt") or "")[:19],
@@ -1100,6 +1116,7 @@ def cost_show(
                     f"{e.get('outputTokens', 0):,}",
                     f"${e.get('costCents', 0) / 100:.4f}",
                     e.get("model", ""),
+                    e.get("taskId", ""),
                 )
             console.print(table)
 
