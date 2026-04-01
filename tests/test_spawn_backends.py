@@ -14,6 +14,7 @@ from clawteam.spawn.tmux_backend import (
     _inject_prompt_via_buffer,
     _wait_for_cli_ready,
 )
+from clawteam.team.routing_policy import RuntimeEnvelope
 
 
 class DummyProcess:
@@ -1027,6 +1028,31 @@ def test_inject_prompt_via_buffer_uses_load_and_paste(monkeypatch, tmp_path):
     assert ["tmux", "paste-buffer", "-b"] in cmds
     assert ["tmux", "send-keys", "-t"] in cmds
     assert ["tmux", "delete-buffer", "-b"] in cmds
+
+
+def test_tmux_backend_runtime_injection_returns_false_when_target_missing(monkeypatch):
+    class Result:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(args, **kwargs):
+        if args[:3] == ["tmux", "list-panes", "-t"]:
+            return Result(returncode=1, stderr="can't find session")
+        return Result()
+
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.shutil.which", lambda *_args, **_kwargs: "/usr/bin/tmux")
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
+
+    ok, reason = TmuxBackend().inject_runtime_message(
+        team="demo",
+        agent_name="worker",
+        envelope=RuntimeEnvelope(source="leader", target="worker", summary="hello"),
+    )
+
+    assert ok is False
+    assert "clawteam-demo:worker" in reason
 
 
 # ---------------------------------------------------------------------------

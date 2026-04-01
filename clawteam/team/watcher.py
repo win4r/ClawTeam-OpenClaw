@@ -25,6 +25,7 @@ class InboxWatcher:
         poll_interval: float = 1.0,
         json_output: bool = False,
         exec_cmd: str | None = None,
+        runtime_router=None,
     ):
         self.team_name = team_name
         self.agent_name = agent_name
@@ -32,6 +33,7 @@ class InboxWatcher:
         self.poll_interval = poll_interval
         self.json_output = json_output
         self.exec_cmd = exec_cmd
+        self.runtime_router = runtime_router
         self._running = False
 
     def watch(self) -> None:
@@ -48,15 +50,31 @@ class InboxWatcher:
 
         try:
             while self._running:
+                if self.runtime_router:
+                    self._flush_runtime_routes()
                 messages = self.mailbox.receive(self.agent_name, limit=10)
                 for msg in messages:
-                    self._output(msg)
-                    if self.exec_cmd:
-                        self._run_callback(msg)
+                    self._handle_message(msg)
                 time.sleep(self.poll_interval)
         finally:
             signal.signal(signal.SIGINT, prev_int)
             signal.signal(signal.SIGTERM, prev_term)
+
+    def _handle_message(self, msg: TeamMessage) -> None:
+        self._output(msg)
+        if self.runtime_router:
+            try:
+                self.runtime_router.route_message(msg)
+            except Exception as exc:
+                print(f"[warn] runtime routing failed: {exc}", flush=True)
+        if self.exec_cmd:
+            self._run_callback(msg)
+
+    def _flush_runtime_routes(self) -> None:
+        try:
+            self.runtime_router.flush_due()
+        except Exception as exc:
+            print(f"[warn] runtime flush failed: {exc}", flush=True)
 
     def _output(self, msg: TeamMessage) -> None:
         if self.json_output:
