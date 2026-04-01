@@ -21,6 +21,7 @@ class SpawnBackend(ABC):
         cwd: str | None = None,
         skip_permissions: bool = False,
         openclaw_agent: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Spawn a new agent process. Returns a status message."""
 

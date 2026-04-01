@@ -72,6 +72,7 @@ class TeamMember(BaseModel):
     agent_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12], alias="agentId")
     agent_type: str = Field(default="general-purpose", alias="agentType")
     joined_at: str = Field(default_factory=_now_iso, alias="joinedAt")
+    model_name: str = Field(default="", alias="modelName")
 
 
 class TeamConfig(BaseModel):

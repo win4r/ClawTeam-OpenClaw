@@ -1755,6 +1755,7 @@ def spawn_agent(
     resume: bool = typer.Option(False, "--resume", "-r", help="Resume previous session if available"),
     openclaw_agent: Optional[str] = typer.Option(None, "--openclaw-agent", help="OpenClaw agent id to use (routes to a specific agent config/model)"),
     force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model alias or ID (passed to backend via --model)"),
 ):
     """Spawn a new agent process with identity + task as its initial prompt.
 
@@ -1882,6 +1883,7 @@ def spawn_agent(
         cwd=cwd,
         skip_permissions=skip_permissions,
         openclaw_agent=openclaw_agent,
+        model=model,
     )
 
     if result.startswith("Error"):
@@ -2304,10 +2306,14 @@ def launch_team(
     repo: Optional[str] = typer.Option(None, "--repo", help="Git repo path"),
     command_override: Optional[list[str]] = typer.Option(None, "--command", help="Override agent command"),
     force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
+    model_override: Optional[str] = typer.Option(None, "--model", help="Override model for ALL agents"),
+    model_strategy_override: Optional[str] = typer.Option(None, "--model-strategy", help="Model strategy: auto | none"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
 
+    from clawteam.config import load_config as _load_config
+    from clawteam.model_resolution import resolve_model
     from clawteam.spawn import get_backend
     from clawteam.spawn.prompt import build_agent_prompt
     from clawteam.team.manager import TeamManager
@@ -2436,6 +2442,19 @@ def launch_team(
         sp_val, _ = get_effective("skip_permissions")
         _skip = str(sp_val).lower() not in ("false", "0", "no", "")
 
+        # Resolve model for this agent (CLI override > agent > tier > strategy > template > config)
+        _cfg = _load_config()
+        resolved_model = resolve_model(
+            cli_model=model_override,
+            agent_model=agent.model,
+            agent_model_tier=agent.model_tier,
+            template_model_strategy=model_strategy_override or tmpl.model_strategy,
+            template_model=tmpl.model,
+            config_default_model=_cfg.default_model,
+            agent_type=agent.type,
+            tier_overrides=_cfg.model_tiers or None,
+        )
+
         spawn_kwargs = dict(
             command=a_cmd,
             agent_name=agent.name,
@@ -2445,6 +2464,7 @@ def launch_team(
             prompt=prompt,
             cwd=cwd,
             skip_permissions=_skip,
+            model=resolved_model,
         )
         if agent.retry:
             from clawteam.spawn import spawn_with_retry

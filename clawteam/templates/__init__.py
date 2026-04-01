@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # TOML support: built-in on 3.11+, conditional dependency on 3.10
 if sys.version_info >= (3, 11):
@@ -28,6 +28,10 @@ DEFAULT_MAX_AGENTS = 4  # Research-backed (Google/MIT arXiv:2512.08296)
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+VALID_TIERS = {"strong", "balanced", "cheap"}
+VALID_STRATEGIES = {"auto", "none"}
+
+
 class RetryConfig(BaseModel):
     """Per-agent retry configuration with exponential backoff."""
     max_retries: int = 3
@@ -45,6 +49,15 @@ class AgentDef(BaseModel):
     end_state: str | None = None  # What does success look like?
     constraints: list[str] | None = None  # Boundaries the agent must respect
     retry: RetryConfig | None = None  # Retry with exponential backoff
+    model: str | None = None  # Explicit model override for this agent
+    model_tier: str | None = None  # "strong" | "balanced" | "cheap"
+
+    @field_validator("model_tier")
+    @classmethod
+    def validate_tier(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_TIERS:
+            raise ValueError(f"Invalid model_tier '{v}'. Must be one of: {VALID_TIERS}")
+        return v
 
 
 class TaskDef(BaseModel):
@@ -58,10 +71,19 @@ class TemplateDef(BaseModel):
     description: str = ""
     command: list[str] = ["openclaw"]
     backend: str = "tmux"
+    model: str | None = None  # Template-level default model
+    model_strategy: str | None = None  # "auto" | "none"
     leader: AgentDef
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
     max_agents: int = DEFAULT_MAX_AGENTS  # Research-backed (arXiv:2512.08296)
+
+    @field_validator("model_strategy")
+    @classmethod
+    def validate_strategy(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_STRATEGIES:
+            raise ValueError(f"Invalid model_strategy '{v}'. Must be one of: {VALID_STRATEGIES}")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +154,8 @@ def _parse_toml(path: Path) -> TemplateDef:
         description=tmpl.get("description", ""),
         command=tmpl.get("command", ["openclaw"]),
         backend=tmpl.get("backend", "tmux"),
+        model=tmpl.get("model"),
+        model_strategy=tmpl.get("model_strategy"),
         leader=leader,
         agents=agents,
         tasks=tasks,
