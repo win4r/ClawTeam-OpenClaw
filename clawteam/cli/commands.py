@@ -2312,7 +2312,6 @@ def launch_team(
     """Launch a full agent team from a template with one command."""
     import os as _os
 
-    from clawteam.config import load_config as _load_config
     from clawteam.model_resolution import resolve_model
     from clawteam.spawn import get_backend
     from clawteam.spawn.prompt import build_agent_prompt
@@ -2394,6 +2393,10 @@ def launch_team(
             raise typer.Exit(1)
 
     # 8. Spawn all agents (leader first, then workers)
+    # Load config once for model resolution (avoid re-reading per agent)
+    from clawteam.config import load_config as _load_config
+    _model_cfg = _load_config()
+
     all_agents = [tmpl.leader] + list(tmpl.agents)
     spawned: list[dict[str, str]] = []
 
@@ -2443,16 +2446,15 @@ def launch_team(
         _skip = str(sp_val).lower() not in ("false", "0", "no", "")
 
         # Resolve model for this agent (CLI override > agent > tier > strategy > template > config)
-        _cfg = _load_config()
         resolved_model = resolve_model(
             cli_model=model_override,
             agent_model=agent.model,
             agent_model_tier=agent.model_tier,
             template_model_strategy=model_strategy_override or tmpl.model_strategy,
             template_model=tmpl.model,
-            config_default_model=_cfg.default_model,
+            config_default_model=_model_cfg.default_model,
             agent_type=agent.type,
-            tier_overrides=_cfg.model_tiers or None,
+            tier_overrides=_model_cfg.model_tiers or None,
         )
 
         spawn_kwargs = dict(

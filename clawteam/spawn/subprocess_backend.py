@@ -92,7 +92,10 @@ class SubprocessBackend(SpawnBackend):
             elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command):
                 final_command.append("--yolo")
         # Claude Code: pass --model if specified
+        # Pass --model if specified (claude, openclaw)
         if model and is_claude_command(normalized_command):
+            final_command.extend(["--model", model])
+        if model and is_openclaw_command(normalized_command):
             final_command.extend(["--model", model])
         if is_kimi_command(normalized_command):
             if cwd and not command_has_workspace_arg(normalized_command):
@@ -113,8 +116,6 @@ class SubprocessBackend(SpawnBackend):
                     final_command.insert(1, "agent")
                 # Isolate each agent in its own session
                 session_key = f"clawteam-{team_name}-{agent_name}"
-                if model:
-                    final_command.extend(["--model", model])
                 final_command.extend(["--session-id", session_key, "--message", prompt])
             else:
                 final_command.extend(["-p", prompt])
