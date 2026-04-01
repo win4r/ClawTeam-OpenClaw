@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,7 @@ class SessionStore:
         tmp.write_text(
             session.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
         )
-        tmp.rename(path)
+        os.replace(str(tmp), str(path))
         return session
 
     def load(self, agent_name: str) -> SessionState | None:

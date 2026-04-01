@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 import uuid
@@ -159,7 +160,7 @@ class FileTransport(Transport):
             if path.suffix == ".json":
                 consumed = path.with_suffix(".consumed")
                 try:
-                    path.rename(consumed)
+                    os.replace(str(path), str(consumed))
                 except OSError:
                     continue
             try:
