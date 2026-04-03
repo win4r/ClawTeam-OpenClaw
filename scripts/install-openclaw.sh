@@ -197,7 +197,7 @@ with open('$APPROVALS_FILE', 'w') as f:
     fi
     # Add clawteam to the allowlist for all agents
     if command -v openclaw &>/dev/null; then
-        openclaw approvals allowlist add --agent "*" "*/clawteam" &>/dev/null 2>&1 && \
+        openclaw approvals allowlist add --agent "*" "$CLAWTEAM_BIN" &>/dev/null 2>&1 && \
             ok "Added clawteam to exec approvals allowlist" || \
             warn "Could not add clawteam to allowlist (gateway may not be running)"
     fi

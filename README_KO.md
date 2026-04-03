@@ -234,8 +234,8 @@ else:
     print('exec-approvals.json not found — run openclaw once first, then re-run this step')
 "
 
-# Add clawteam to the allowlist
-openclaw approvals allowlist add --agent "*" "*/clawteam"
+# Add clawteam to the allowlist (use the absolute path — OpenClaw 4.2+ requires it)
+openclaw approvals allowlist add --agent "*" "$(which clawteam)"
 ```
 
 > `openclaw approvals`가 실패하면 OpenClaw 게이트웨이가 실행 중이 아닐 수 있습니다. 먼저 시작한 후 다시 시도하세요.

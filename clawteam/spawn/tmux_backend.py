@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 from clawteam.spawn.base import SpawnBackend
@@ -29,6 +30,42 @@ from clawteam.spawn.command_validation import (
 )
 
 _SHELL_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+_WORKER_AGENTS_MD = """\
+# ClawTeam Worker
+
+This is an isolated workspace for ClawTeam worker agents.
+Follow the coordination protocol provided in your system prompt.
+"""
+
+
+def _openclaw_supports_agent_flag() -> bool:
+    """Check whether the installed openclaw tui supports the --agent parameter."""
+    openclaw_bin = shutil.which("openclaw")
+    if not openclaw_bin:
+        return False
+    try:
+        result = subprocess.run(
+            [openclaw_bin, "tui", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return "--agent" in result.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _ensure_worker_workspace() -> str:
+    """Create and return the path to an isolated minimal workspace for OpenClaw workers.
+
+    This prevents workers from inheriting the user's SOUL.md/AGENTS.md/USER.md,
+    which can cause NO_REPLY behavior or other workspace-rule pollution.
+    """
+    workspace_dir = Path.home() / ".clawteam" / "worker-workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    agents_md = workspace_dir / "AGENTS.md"
+    if not agents_md.exists():
+        agents_md.write_text(_WORKER_AGENTS_MD)
+    return str(workspace_dir)
 
 
 class TmuxBackend(SpawnBackend):
@@ -58,13 +95,14 @@ class TmuxBackend(SpawnBackend):
         if not shutil.which("tmux"):
             return "Error: tmux not installed"
 
-        if openclaw_agent:
+        # Check --agent support once, gate all uses of openclaw_agent
+        if openclaw_agent and not _openclaw_supports_agent_flag():
             print(
-                f"Warning: openclaw_agent={openclaw_agent!r} requires openclaw tui to support "
-                "the --agent parameter (see openclaw/openclaw#51481). "
-                "This flag may have no effect if your openclaw version does not support it.",
+                f"Warning: openclaw tui does not support --agent (requested: {openclaw_agent!r}). "
+                "Ignoring --openclaw-agent; worker isolation is handled via OPENCLAW_WORKSPACE instead.",
                 file=sys.stderr,
             )
+            openclaw_agent = None
 
         session_name = f"clawteam-{team_name}"
         clawteam_bin = resolve_clawteam_executable()
@@ -99,6 +137,18 @@ class TmuxBackend(SpawnBackend):
         env_vars["PATH"] = build_spawn_path(env_vars.get("PATH", os.environ.get("PATH")))
         if os.path.isabs(clawteam_bin):
             env_vars.setdefault("CLAWTEAM_BIN", clawteam_bin)
+            if is_openclaw_command(command):
+                print(
+                    f"Hint: OpenClaw 4.2+ requires absolute paths in exec allowlist. "
+                    f"Run: openclaw approvals allowlist add --agent \"*\" \"{clawteam_bin}\"",
+                    file=sys.stderr,
+                )
+
+        # Isolate OpenClaw workers from the user's workspace rules (SOUL.md, AGENTS.md, USER.md)
+        # to prevent NO_REPLY behavior or workspace-rule pollution.
+        if is_openclaw_command(command):
+            worker_ws = _ensure_worker_workspace()
+            env_vars["OPENCLAW_WORKSPACE"] = worker_ws
 
         normalized_command = normalize_spawn_command(command)
 

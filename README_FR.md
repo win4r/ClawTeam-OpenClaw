@@ -234,8 +234,8 @@ else:
     print('exec-approvals.json not found — run openclaw once first, then re-run this step')
 "
 
-# Add clawteam to the allowlist
-openclaw approvals allowlist add --agent "*" "*/clawteam"
+# Add clawteam to the allowlist (use the absolute path — OpenClaw 4.2+ requires it)
+openclaw approvals allowlist add --agent "*" "$(which clawteam)"
 ```
 
 > Si `openclaw approvals` échoue, la passerelle OpenClaw n'est peut-être pas en cours d'exécution. Démarrez-la d'abord, puis réessayez.

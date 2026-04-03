@@ -8,10 +8,11 @@ from unittest.mock import MagicMock
 # TmuxBackend tests
 # ---------------------------------------------------------------------------
 
-def _make_tmux_mocks(monkeypatch, captured: dict, *, tmux_ok: bool = True):
+def _make_tmux_mocks(monkeypatch, captured: dict, *, tmux_ok: bool = True, agent_flag_supported: bool = True):
     """Patch tmux, shutil.which, register_agent, and time.sleep for TmuxBackend tests."""
     monkeypatch.setattr("clawteam.spawn.tmux_backend.shutil.which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
     monkeypatch.setattr("clawteam.spawn.command_validation.shutil.which", lambda name, path=None: f"/usr/bin/{name}")
+    monkeypatch.setattr("clawteam.spawn.tmux_backend._openclaw_supports_agent_flag", lambda: agent_flag_supported)
 
     def fake_run(cmd, **kwargs):
         result = MagicMock()
@@ -35,7 +36,7 @@ def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, c
     from clawteam.spawn.tmux_backend import TmuxBackend
 
     captured: dict = {}
-    _make_tmux_mocks(monkeypatch, captured)
+    _make_tmux_mocks(monkeypatch, captured, agent_flag_supported=True)
 
     backend = TmuxBackend()
     backend.spawn(
@@ -55,10 +56,6 @@ def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, c
     assert "--agent researcher" in full_shell_cmd, (
         f"Expected '--agent researcher' in final command, got: {full_shell_cmd!r}"
     )
-
-    # Warning should be printed to stderr
-    stderr_output = capsys.readouterr().err
-    assert "openclaw_agent" in stderr_output or "--agent" in stderr_output
 
 
 def test_tmux_backend_excludes_agent_flag_when_not_set(monkeypatch):
@@ -91,6 +88,64 @@ def test_tmux_backend_excludes_agent_flag_when_not_set(monkeypatch):
     )
     assert "--agent" not in openclaw_cmd_segment, (
         f"Expected no '--agent' in openclaw command segment, got: {openclaw_cmd_segment!r}"
+    )
+
+
+def test_tmux_backend_drops_agent_flag_when_unsupported(monkeypatch, capsys):
+    """When openclaw tui doesn't support --agent, the flag should be silently dropped."""
+    from clawteam.spawn.tmux_backend import TmuxBackend
+
+    captured: dict = {}
+    _make_tmux_mocks(monkeypatch, captured, agent_flag_supported=False)
+
+    backend = TmuxBackend()
+    backend.spawn(
+        command=["openclaw"],
+        agent_name="researcher",
+        agent_id="agent-1",
+        agent_type="general-purpose",
+        team_name="test-team",
+        prompt="hello world",
+        openclaw_agent="researcher",
+    )
+
+    spawn_cmd = captured.get("spawn_cmd", [])
+    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    # --agent should NOT appear in the openclaw command segment
+    openclaw_part = full_shell_cmd.split(";")
+    openclaw_cmd_segment = next(
+        (seg for seg in openclaw_part if "openclaw" in seg and "lifecycle" not in seg), ""
+    )
+    assert "--agent" not in openclaw_cmd_segment, (
+        f"Expected no '--agent' in openclaw command (unsupported), got: {openclaw_cmd_segment!r}"
+    )
+
+    # Warning about dropping the flag should be printed to stderr
+    stderr_output = capsys.readouterr().err
+    assert "does not support --agent" in stderr_output
+
+
+def test_tmux_backend_sets_openclaw_workspace_env(monkeypatch):
+    """Spawning openclaw should set OPENCLAW_WORKSPACE for workspace isolation."""
+    from clawteam.spawn.tmux_backend import TmuxBackend
+
+    captured: dict = {}
+    _make_tmux_mocks(monkeypatch, captured)
+
+    backend = TmuxBackend()
+    backend.spawn(
+        command=["openclaw"],
+        agent_name="worker",
+        agent_id="agent-2",
+        agent_type="general-purpose",
+        team_name="test-team",
+        prompt="hello world",
+    )
+
+    spawn_cmd = captured.get("spawn_cmd", [])
+    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    assert "OPENCLAW_WORKSPACE=" in full_shell_cmd, (
+        f"Expected OPENCLAW_WORKSPACE in exports, got: {full_shell_cmd!r}"
     )
 
 
