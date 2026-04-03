@@ -14,7 +14,11 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from clawteam.spawn.base import SpawnBackend
-from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
+from clawteam.spawn.cli_env import (
+    build_spawn_path,
+    propagate_openclaw_gateway_token,
+    resolve_clawteam_executable,
+)
 from clawteam.spawn.command_validation import (
     command_has_workspace_arg,
     is_claude_command,
@@ -149,6 +153,7 @@ class TmuxBackend(SpawnBackend):
         if is_openclaw_command(command):
             worker_ws = _ensure_worker_workspace()
             env_vars["OPENCLAW_WORKSPACE"] = worker_ws
+            propagate_openclaw_gateway_token(env_vars)
 
         normalized_command = normalize_spawn_command(command)
 

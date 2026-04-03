@@ -7,7 +7,11 @@ import shlex
 import subprocess
 
 from clawteam.spawn.base import SpawnBackend
-from clawteam.spawn.cli_env import build_spawn_path, resolve_clawteam_executable
+from clawteam.spawn.cli_env import (
+    build_spawn_path,
+    propagate_openclaw_gateway_token,
+    resolve_clawteam_executable,
+)
 from clawteam.spawn.command_validation import (
     command_has_workspace_arg,
     is_claude_command,
@@ -76,6 +80,8 @@ class SubprocessBackend(SpawnBackend):
         spawn_env["PATH"] = build_spawn_path(spawn_env.get("PATH"))
         if os.path.isabs(clawteam_bin):
             spawn_env.setdefault("CLAWTEAM_BIN", clawteam_bin)
+        if is_openclaw_command(command):
+            propagate_openclaw_gateway_token(spawn_env)
 
         normalized_command = normalize_spawn_command(command)
 

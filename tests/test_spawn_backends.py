@@ -1211,3 +1211,62 @@ def test_subprocess_backend_opencode_skip_permissions_and_prompt(monkeypatch, tm
     )
 
     assert "opencode --yolo -p 'fix the bug'" in captured["cmd"]
+
+
+# --- Gateway token propagation (issue #51) ---
+
+
+def test_propagate_openclaw_gateway_token_reads_config(tmp_path, monkeypatch):
+    """Token from openclaw.json should be set in env vars."""
+    import json
+
+    from clawteam.spawn.cli_env import propagate_openclaw_gateway_token
+
+    config_dir = tmp_path / ".openclaw"
+    config_dir.mkdir()
+    config_file = config_dir / "openclaw.json"
+    config_file.write_text(json.dumps({
+        "gateway": {"auth": {"token": "test-secret-token"}}
+    }))
+    monkeypatch.setattr("clawteam.spawn.cli_env.Path.home", lambda: tmp_path)
+
+    env = {}
+    propagate_openclaw_gateway_token(env)
+    assert env["OPENCLAW_GATEWAY_TOKEN"] == "test-secret-token"
+
+
+def test_propagate_openclaw_gateway_token_skips_if_already_set(tmp_path, monkeypatch):
+    """User-provided env var should not be overwritten."""
+    from clawteam.spawn.cli_env import propagate_openclaw_gateway_token
+
+    env = {"OPENCLAW_GATEWAY_TOKEN": "user-provided"}
+    propagate_openclaw_gateway_token(env)
+    assert env["OPENCLAW_GATEWAY_TOKEN"] == "user-provided"
+
+
+def test_propagate_openclaw_gateway_token_no_config(tmp_path, monkeypatch):
+    """Should be no-op when config file doesn't exist."""
+    from clawteam.spawn.cli_env import propagate_openclaw_gateway_token
+
+    monkeypatch.setattr("clawteam.spawn.cli_env.Path.home", lambda: tmp_path)
+
+    env = {}
+    propagate_openclaw_gateway_token(env)
+    assert "OPENCLAW_GATEWAY_TOKEN" not in env
+
+
+def test_propagate_openclaw_gateway_token_no_token_key(tmp_path, monkeypatch):
+    """Should be no-op when config exists but has no token."""
+    import json
+
+    from clawteam.spawn.cli_env import propagate_openclaw_gateway_token
+
+    config_dir = tmp_path / ".openclaw"
+    config_dir.mkdir()
+    config_file = config_dir / "openclaw.json"
+    config_file.write_text(json.dumps({"gateway": {"url": "http://localhost"}}))
+    monkeypatch.setattr("clawteam.spawn.cli_env.Path.home", lambda: tmp_path)
+
+    env = {}
+    propagate_openclaw_gateway_token(env)
+    assert "OPENCLAW_GATEWAY_TOKEN" not in env

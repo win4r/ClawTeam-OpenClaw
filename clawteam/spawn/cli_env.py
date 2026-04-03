@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -49,3 +50,28 @@ def build_spawn_path(base_path: str | None = None) -> str:
     if not path_parts:
         return bin_dir
     return os.pathsep.join([bin_dir, *path_parts])
+
+
+def propagate_openclaw_gateway_token(env_vars: dict[str, str]) -> None:
+    """Best-effort: pre-load gateway token from OpenClaw config into env vars.
+
+    Works around a timing issue where ``openclaw tui --session`` may attempt
+    API calls before the config-file reader has loaded the gateway token,
+    resulting in 401 errors.  By setting the token in the environment before
+    the child process starts, OpenClaw can pick it up immediately.
+
+    See: https://github.com/win4r/ClawTeam-OpenClaw/issues/51
+    """
+    if env_vars.get("OPENCLAW_GATEWAY_TOKEN"):
+        return  # already set by user
+
+    config_path = Path.home() / ".openclaw" / "openclaw.json"
+    if not config_path.exists():
+        return
+    try:
+        config = json.loads(config_path.read_text())
+        token = config.get("gateway", {}).get("auth", {}).get("token")
+        if token:
+            env_vars["OPENCLAW_GATEWAY_TOKEN"] = token
+    except Exception:
+        pass  # best-effort, never crash the spawn flow
