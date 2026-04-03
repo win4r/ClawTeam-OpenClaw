@@ -1,0 +1,38 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: Describe the bug clearly — what did you expect vs. what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `clawteam spawn ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste the output of the commands below.
+      value: |
+        - OS:
+        - Python version (`python --version`):
+        - ClawTeam version (`clawteam --version`):
+        - OpenClaw version (`openclaw --version`):
+        - Spawn backend (tmux / subprocess):
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      render: shell
