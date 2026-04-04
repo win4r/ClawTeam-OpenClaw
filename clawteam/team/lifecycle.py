@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import shutil
 
 from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import MessageType, get_data_dir
+
+logger = logging.getLogger(__name__)
 
 
 class LifecycleManager:
@@ -29,6 +33,7 @@ class LifecycleManager:
             msg_type=MessageType.shutdown_request,
             reason=reason or None,
         )
+        _notify_gateway_shutdown(to_agent, self.team_name)
         return msg.request_id
 
     def approve_shutdown(
@@ -79,6 +84,16 @@ class LifecycleManager:
             status=task_status or None,
         )
 
+    def approve_shutdown_and_notify(
+        self,
+        agent_name: str,
+        request_id: str,
+        requester_name: str,
+    ) -> None:
+        """Approve shutdown and notify gateway."""
+        self.approve_shutdown(agent_name, request_id, requester_name)
+        _notify_gateway_shutdown(agent_name, self.team_name)
+
     @staticmethod
     def cleanup_team(team_name: str) -> bool:
         validate_identifier(team_name, "team name")
@@ -101,3 +116,25 @@ class LifecycleManager:
                 shutil.rmtree(d)
                 cleaned = True
         return cleaned
+
+
+def _notify_gateway_shutdown(agent_name: str, team_name: str) -> None:
+    """Best-effort notify gateway of agent shutdown via env-configured URL."""
+    gateway_url = os.environ.get("CLAWTEAM_GATEWAY_URL", "")
+    if not gateway_url:
+        return
+    try:
+        from clawteam.team.gateway import notify_gateway_agent_status
+        from clawteam.team.manager import TeamManager
+
+        member = TeamManager.get_member(team_name, agent_name)
+        agent_id = member.agent_id if member else ""
+        notify_gateway_agent_status(
+            gateway_url=gateway_url,
+            agent_name=agent_name,
+            agent_id=agent_id,
+            status="shutdown",
+            team_name=team_name,
+        )
+    except Exception as exc:
+        logger.debug("Gateway shutdown notification failed (best-effort): %s", exc)

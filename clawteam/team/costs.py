@@ -308,6 +308,45 @@ class CostStore:
     def summary(self) -> CostSummary:
         return _cache_to_summary(_sync_summary_cache(self.team_name))
 
+    def ingest_external_event(
+        self,
+        agent_name: str,
+        provider: str = "",
+        model: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cost_cents: float = 0.0,
+        task_id: str = "",
+        source: str = "a2a-gateway",
+    ) -> CostEvent:
+        """Ingest a cost event from an external source (e.g. A2A Gateway).
+
+        Identical to :meth:`report` but tags the event with an external source
+        via a ``ext-`` filename prefix so it can be distinguished from local events.
+        """
+        event = CostEvent(
+            agent_name=agent_name,
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
+            task_id=task_id,
+        )
+        ts = event.reported_at.replace(":", "-").replace("+", "p")
+        filename = f"cost-ext-{source}-{ts}-{event.id}.json"
+        path = _costs_root(self.team_name) / filename
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(
+            event.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
+        )
+        tmp.replace(path)
+        try:
+            _record_event_in_summary_cache(self.team_name, path, event)
+        except Exception:
+            pass
+        return event
+
     def cost_rate(self, window_minutes: int = 5) -> float:
         """Return cost per minute over the last `window_minutes` minutes."""
         events = self.list_events()
