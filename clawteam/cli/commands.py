@@ -1907,7 +1907,7 @@ def spawn_agent(
         current_count = len(get_registry(_team))
         warning = check_agent_count(current_count, max_agents=DEFAULT_MAX_AGENTS)
         if warning:
-            console.print(f"[yellow]{warning}[/yellow]", err=True)
+            console.print(f"[yellow]{warning}[/yellow]")
 
     # Resolve skip_permissions from config
     if skip_permissions is None:
@@ -2457,7 +2457,7 @@ def launch_team(
         total_agents = len(tmpl.agents) + 1  # agents + leader
         warning = check_agent_count(total_agents - 1, tmpl.max_agents)
         if warning:
-            console.print(f"[yellow]{warning}[/yellow]", err=True)
+            console.print(f"[yellow]{warning}[/yellow]")
 
     # 2. Determine team name
     t_name = team_name or f"{tmpl.name}-{uuid.uuid4().hex[:6]}"
