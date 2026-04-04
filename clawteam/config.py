@@ -14,6 +14,7 @@ from clawteam.platform_compat import default_spawn_backend
 
 class AgentProfile(BaseModel):
     """Reusable agent runtime profile for spawn/launch."""
+    manages_projects:bool = True
 
     description: str = ""
     agent: str = ""
