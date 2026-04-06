@@ -31,7 +31,7 @@ def respawn_agent(
         Status string — starts with ``"ok: "`` on success, ``"Error: "`` on failure.
     """
     from clawteam.spawn import get_backend, spawn_with_retry
-    from clawteam.spawn.registry import get_agent_health, get_agent_info, record_outcome
+    from clawteam.spawn.registry import get_agent_info, record_outcome
     from clawteam.team.manager import TeamManager
 
     # Record the crash so consecutive_failures increments.
