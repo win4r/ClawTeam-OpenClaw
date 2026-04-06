@@ -183,6 +183,14 @@ class TaskWaiter:
             if abandoned and self.on_agent_dead:
                 self.on_agent_dead(agent_name, abandoned)
 
+            # Auto-respawn if there are pending tasks (fallback for when on-exit hook didn't fire)
+            if abandoned:
+                try:
+                    from clawteam.spawn.respawn import respawn_agent
+                    respawn_agent(self.team_name, agent_name)
+                except Exception:
+                    pass  # Best-effort; on-exit hook is the primary respawn path
+
 
 def _task_summary(task: TaskItem) -> dict:
     """Summarize a task for the wait result."""

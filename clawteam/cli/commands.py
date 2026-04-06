@@ -1760,6 +1760,9 @@ def lifecycle_on_exit(
         if t.owner == agent and t.status == TaskStatus.in_progress
     ]
 
+    # Save spawn info BEFORE unregistering — needed for auto-respawn.
+    saved_spawn_info = get_agent_info(team, agent)
+
     # Unregister from spawn registry so is_agent_alive returns None for this agent.
     # Guard: only unregister if the agent is already dead (avoids removing a live entry
     # if the hook fires before the process actually exits).
@@ -1819,6 +1822,40 @@ def lifecycle_on_exit(
             f"Reset {len(d['abandoned_tasks'])} task(s) to pending."
         ),
     )
+
+    # --- Auto-respawn: attempt to restart the agent if pending tasks remain ---
+    pending_tasks = [t for t in store.list_tasks() if t.status == TaskStatus.pending]
+    if pending_tasks and saved_spawn_info:
+        from clawteam.spawn.respawn import respawn_agent
+
+        respawn_result = respawn_agent(team, agent, spawn_info=saved_spawn_info)
+        if respawn_result.startswith("ok:"):
+            _output(
+                {"status": "agent_respawned", "agent": agent, "detail": respawn_result},
+                lambda d: console.print(
+                    f"  [green]Auto-respawned agent '{agent}'.[/green] {d['detail']}"
+                ),
+            )
+            if leader_name:
+                mailbox.send(
+                    from_agent=agent,
+                    to=leader_name,
+                    content=f"Agent '{agent}' auto-respawned. {respawn_result}",
+                )
+        else:
+            _output(
+                {"status": "respawn_failed", "agent": agent, "detail": respawn_result},
+                lambda d: console.print(
+                    f"  [red]Auto-respawn failed for '{agent}':[/red] {d['detail']}"
+                ),
+            )
+            if leader_name:
+                mailbox.send(
+                    from_agent=agent,
+                    to=leader_name,
+                    content=f"Auto-respawn failed for '{agent}': {respawn_result}. "
+                            "Manual intervention may be needed.",
+                )
 
 
 @lifecycle_app.command("check-zombies")
