@@ -168,9 +168,10 @@ def register_agent(
 def unregister_agent(team_name: str, agent_name: str) -> None:
     """Remove an agent entry from the spawn registry."""
     path = _registry_path(team_name)
-    registry = _load(path)
-    registry.pop(agent_name, None)
-    _save(path, registry)
+    with file_locked(path):
+        registry = _load(path)
+        registry.pop(agent_name, None)
+        _save(path, registry)
 
 
 def get_registry(team_name: str) -> dict[str, dict]:

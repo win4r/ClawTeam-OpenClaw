@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from clawteam.fileutil import file_locked
 from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.workspace import git
 from clawteam.workspace.models import WorkspaceInfo, WorkspaceRegistry
@@ -139,13 +140,14 @@ class WorkspaceManager:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
-        registry = _load_registry(team_name, str(self.repo_root))
-        # Remove stale entry for the same agent, if any
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
-        registry.workspaces.append(info)
-        _save_registry(registry)
+        with file_locked(_registry_path(team_name)):
+            registry = _load_registry(team_name, str(self.repo_root))
+            # Remove stale entry for the same agent, if any
+            registry.workspaces = [
+                w for w in registry.workspaces if w.agent_name != agent_name
+            ]
+            registry.workspaces.append(info)
+            _save_registry(registry)
 
         return info
 
@@ -195,11 +197,12 @@ class WorkspaceManager:
         except git.GitError as e:
             logger.warning("branch delete failed: %s", e)
 
-        registry = _load_registry(team_name, str(self.repo_root))
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
-        _save_registry(registry)
+        with file_locked(_registry_path(team_name)):
+            registry = _load_registry(team_name, str(self.repo_root))
+            registry.workspaces = [
+                w for w in registry.workspaces if w.agent_name != agent_name
+            ]
+            _save_registry(registry)
         return True
 
     def cleanup_team(self, team_name: str) -> int:

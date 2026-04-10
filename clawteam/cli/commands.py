@@ -1255,15 +1255,11 @@ def cost_budget(
     """Set team budget in dollars."""
     from clawteam.team.manager import TeamManager
 
-    config = TeamManager.get_team(team)
-    if not config:
-        _output({"error": f"Team '{team}' not found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+    try:
+        TeamManager.set_budget(team, dollars)
+    except ValueError as e:
+        _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
-
-    config.budget_cents = dollars * 100
-    # Save config back
-    from clawteam.team.manager import _save_config
-    _save_config(config)
 
     _output(
         {"status": "set", "team": team, "budgetDollars": dollars},

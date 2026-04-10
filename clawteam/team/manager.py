@@ -7,6 +7,7 @@ import os
 import shutil
 from pathlib import Path
 
+from clawteam.fileutil import file_locked
 from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import TeamConfig, TeamMember, get_data_dir
 from clawteam.team.plan import referenced_legacy_plan_paths, team_plans_path
@@ -141,20 +142,21 @@ class TeamManager:
         validate_identifier(team_name, "team name")
         validate_identifier(member_name, "member name")
         validate_identifier(user, "user name", allow_empty=True)
-        config = _load_config(team_name)
-        if not config:
-            raise ValueError(f"Team '{team_name}' not found")
-        for m in config.members:
-            if m.name == member_name and m.user == user:
-                raise ValueError(f"Agent '{member_name}' (user={user or '(none)'}) already in team")
         member = TeamMember(
             name=member_name,
             user=user,
             agent_id=agent_id,
             agent_type=agent_type,
         )
-        config.members.append(member)
-        _save_config(config)
+        with file_locked(_config_path(team_name)):
+            config = _load_config(team_name)
+            if not config:
+                raise ValueError(f"Team '{team_name}' not found")
+            for m in config.members:
+                if m.name == member_name and m.user == user:
+                    raise ValueError(f"Agent '{member_name}' (user={user or '(none)'}) already in team")
+            config.members.append(member)
+            _save_config(config)
         inbox_name = TeamManager.inbox_name_for(member)
         inbox = ensure_within_root(_team_dir(team_name) / "inboxes", inbox_name)
         inbox.mkdir(parents=True, exist_ok=True)
@@ -162,15 +164,26 @@ class TeamManager:
 
     @staticmethod
     def remove_member(team_name: str, member_name: str) -> bool:
-        config = _load_config(team_name)
-        if not config:
+        with file_locked(_config_path(team_name)):
+            config = _load_config(team_name)
+            if not config:
+                return False
+            before = len(config.members)
+            config.members = [m for m in config.members if m.name != member_name]
+            if len(config.members) < before:
+                _save_config(config)
+                return True
             return False
-        before = len(config.members)
-        config.members = [m for m in config.members if m.name != member_name]
-        if len(config.members) < before:
+
+    @staticmethod
+    def set_budget(team_name: str, dollars: float) -> None:
+        """Set team budget in dollars (0 = unlimited). Thread-safe."""
+        with file_locked(_config_path(team_name)):
+            config = _load_config(team_name)
+            if not config:
+                raise ValueError(f"Team '{team_name}' not found")
+            config.budget_cents = dollars * 100
             _save_config(config)
-            return True
-        return False
 
     @staticmethod
     def get_leader_name(team_name: str) -> str | None:
