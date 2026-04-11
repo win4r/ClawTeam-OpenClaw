@@ -25,6 +25,7 @@ from clawteam.spawn.command_validation import (
     is_claude_command,
     is_codex_command,
     is_gemini_command,
+    is_hermes_command,
     is_kimi_command,
     is_nanobot_command,
     is_openclaw_command,
@@ -176,7 +177,7 @@ class TmuxBackend(SpawnBackend):
                 final_command.append("--dangerously-skip-permissions")
             elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command):
+            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command) or is_hermes_command(normalized_command):
                 final_command.append("--yolo")
 
         # Claude Code: pass --model if specified
@@ -209,6 +210,18 @@ class TmuxBackend(SpawnBackend):
                     final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
+
+        # Hermes Agent: ensure 'chat' subcommand, pass prompt via -q, session via --continue
+        if is_hermes_command(normalized_command):
+            if final_command[0].endswith("hermes") and (len(final_command) == 1 or final_command[1] != "chat"):
+                final_command = [final_command[0], "chat"] + final_command[1:]
+            if agent_name and "--continue" not in final_command:
+                session_key = f"clawteam-{team_name}-{agent_name}"
+                final_command.extend(["--continue", session_key])
+            if model:
+                final_command.extend(["-m", model])
+            if prompt:
+                final_command.extend(["-q", prompt])
 
         if is_kimi_command(normalized_command):
             if cwd and not command_has_workspace_arg(normalized_command):
@@ -300,7 +313,7 @@ class TmuxBackend(SpawnBackend):
                 fallback_delay=cfg.spawn_prompt_delay,
             )
             _inject_prompt_via_buffer(target, agent_name, prompt)
-        elif prompt and not is_codex_command(normalized_command) and not is_openclaw_command(normalized_command) and not is_nanobot_command(normalized_command) and not is_gemini_command(normalized_command) and not is_kimi_command(normalized_command) and not is_qwen_command(normalized_command) and not is_opencode_command(normalized_command):
+        elif prompt and not is_codex_command(normalized_command) and not is_openclaw_command(normalized_command) and not is_hermes_command(normalized_command) and not is_nanobot_command(normalized_command) and not is_gemini_command(normalized_command) and not is_kimi_command(normalized_command) and not is_qwen_command(normalized_command) and not is_opencode_command(normalized_command):
             # Generic command: append prompt via send-keys
             _wait_for_tui_ready(
                 target,

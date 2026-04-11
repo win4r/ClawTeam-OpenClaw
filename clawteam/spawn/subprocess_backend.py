@@ -17,6 +17,7 @@ from clawteam.spawn.command_validation import (
     is_claude_command,
     is_codex_command,
     is_gemini_command,
+    is_hermes_command,
     is_kimi_command,
     is_nanobot_command,
     is_openclaw_command,
@@ -95,7 +96,7 @@ class SubprocessBackend(SpawnBackend):
                 final_command.append("--dangerously-skip-permissions")
             elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command):
+            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command) or is_hermes_command(normalized_command):
                 final_command.append("--yolo")
         # Claude Code: pass --model if specified
         # Pass --model if specified (claude, openclaw)
