@@ -1257,6 +1257,80 @@ def test_subprocess_backend_opencode_skip_permissions_and_prompt(monkeypatch, tm
     assert captured["cmd"][-4:] == ["opencode", "--yolo", "-p", "fix the bug"]
 
 
+def test_tmux_backend_hermes_chat_source_and_prompt(monkeypatch, tmp_path):
+    run_calls = _make_tmux_spawn_harness(monkeypatch, tmp_path, "hermes")
+
+    backend = TmuxBackend()
+    result = backend.spawn(
+        command=["hermes"],
+        agent_name="researcher",
+        agent_id="agent-h",
+        agent_type="general-purpose",
+        team_name="demo-team",
+        prompt="do research",
+        cwd="/tmp/demo",
+        skip_permissions=True,
+    )
+
+    assert "spawned" in result
+    new_session = next(c for c in run_calls if c[:3] == ["tmux", "new-session", "-d"])
+    full_cmd = new_session[-1]
+    # Verify: chat subcommand inserted, --yolo (skip_permissions), --source tool,
+    # -q prompt, and NO --continue (which only resumes existing sessions)
+    assert "hermes chat" in full_cmd
+    assert "--yolo" in full_cmd
+    assert "--source tool" in full_cmd
+    assert "-q 'do research'" in full_cmd
+    assert "--continue" not in full_cmd
+
+
+def test_subprocess_backend_hermes_chat_source_and_prompt(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    clawteam_bin = tmp_path / "venv" / "bin" / "clawteam"
+    clawteam_bin.parent.mkdir(parents=True)
+    clawteam_bin.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(sys, "argv", [str(clawteam_bin)])
+
+    captured: dict[str, object] = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return DummyProcess()
+
+    monkeypatch.setattr(
+        "clawteam.spawn.command_validation.shutil.which",
+        lambda name, path=None: "/usr/bin/hermes" if name == "hermes" else None,
+    )
+    monkeypatch.setattr("clawteam.spawn.subprocess_backend.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("clawteam.spawn.registry.register_agent", lambda **_: None)
+
+    backend = SubprocessBackend()
+    backend.spawn(
+        command=["hermes"],
+        agent_name="researcher",
+        agent_id="agent-h",
+        agent_type="general-purpose",
+        team_name="demo-team",
+        prompt="do research",
+        cwd="/tmp/demo",
+        skip_permissions=True,
+    )
+
+    cmd = captured["cmd"]
+    # Find the start of the agent command within the subprocess wrapper args
+    hermes_idx = cmd.index("hermes")
+    agent_cmd = cmd[hermes_idx:]
+    # Verify: chat subcommand, --yolo, --source tool, -q prompt (not -p!)
+    assert agent_cmd[:2] == ["hermes", "chat"]
+    assert "--yolo" in agent_cmd
+    assert "--source" in agent_cmd
+    assert "tool" in agent_cmd
+    assert "-q" in agent_cmd
+    assert "do research" in agent_cmd
+    # Must NOT use -p (that's --profile in Hermes)
+    assert "-p" not in agent_cmd
+
+
 # --- Gateway token propagation (issue #51) ---
 
 

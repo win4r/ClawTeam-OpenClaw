@@ -141,7 +141,7 @@ clawteam board attach my-team   # Linux/macOS/WSL with tmux
 | [Claude Code](https://claude.ai/claude-code) | `clawteam spawn claude --team ...` | Full support |
 | [Codex](https://openai.com/codex) | `clawteam spawn codex --team ...` | Full support |
 | [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn nanobot --team ...` | Full support |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `clawteam spawn hermes --team ...` | Full support |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `clawteam spawn hermes --team ...` | Full support (tmux + subprocess) |
 | [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | Experimental |
 | Custom scripts | `clawteam spawn subprocess python --team ...` | Full support |
 

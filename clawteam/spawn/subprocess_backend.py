@@ -104,7 +104,22 @@ class SubprocessBackend(SpawnBackend):
             final_command.extend(["--model", model])
         if model and is_openclaw_command(normalized_command):
             final_command.extend(["--model", model])
-        if is_kimi_command(normalized_command):
+        # Hermes Agent: insert 'chat' only when the user's original command is
+        # bare `hermes` (don't clobber user-supplied global options or subcommands).
+        # Check normalized_command, not final_command, since skip_permissions
+        # may have already appended --yolo.
+        # Tag with --source tool so clawteam spawns don't pollute user session list.
+        # Pass prompt via -q (Hermes -p is --profile, not prompt).
+        if is_hermes_command(normalized_command):
+            if len(normalized_command) == 1:
+                final_command.insert(1, "chat")
+            if "--source" not in final_command:
+                final_command.extend(["--source", "tool"])
+            if model:
+                final_command.extend(["-m", model])
+            if prompt:
+                final_command.extend(["-q", prompt])
+        elif is_kimi_command(normalized_command):
             if cwd and not command_has_workspace_arg(normalized_command):
                 final_command.extend(["-w", cwd])
             if prompt:

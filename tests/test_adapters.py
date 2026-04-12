@@ -141,6 +141,25 @@ class TestHermesCommandPreparation:
         result = self.adapter.prepare_command(["hermes", "chat"], agent_name="w1")
         assert result.final_command.count("chat") == 1
 
+    def test_hermes_preserves_global_options(self):
+        # If user passes hermes with global options (e.g., --profile), we must
+        # NOT insert 'chat' and break the argv order. Hermes CLI shape is
+        # `hermes [global-options] <command>`.
+        result = self.adapter.prepare_command(
+            ["hermes", "--profile", "foo"], agent_name="w1",
+        )
+        # chat should NOT be injected when the user passed global options
+        assert "chat" not in result.final_command
+        # source tag should still apply
+        assert "--source" in result.final_command
+
+    def test_hermes_preserves_alternate_subcommand(self):
+        # If user passes a non-chat subcommand (e.g., `hermes sessions`),
+        # we must not rewrite it as `hermes chat sessions`.
+        result = self.adapter.prepare_command(["hermes", "sessions"], agent_name="w1")
+        assert result.final_command[1] == "sessions"
+        assert "chat" not in result.final_command
+
     def test_hermes_prompt_via_q_flag(self):
         result = self.adapter.prepare_command(
             ["hermes"], prompt="do work", agent_name="w1",
