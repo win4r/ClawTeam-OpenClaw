@@ -1,0 +1,237 @@
+[template]
+name = "hedge-fund-hermes"
+description = "AI Hedge Fund - Hermes-native variant using gbrain for persistence (not clawteam inbox)"
+command = ["hermes"]
+backend = "tmux"
+
+# DESIGN NOTE: This template is a Hermes-native rewrite of hedge-fund.toml.
+# Key differences from the OpenClaw variant:
+#   1. Analysts store findings in gbrain via mcp_gbrain_put_page (not clawteam inbox send).
+#      Hermes workers treat -q as "answer this prompt" and reliably return analysis
+#      to stdout, but they often skip the post-analysis `clawteam inbox send` step.
+#      Storing to gbrain uses Hermes's native MCP muscle memory.
+#   2. Output persists in Postgres. Works across sessions. Next week's analysis can
+#      reference prior findings.
+#   3. Portfolio-manager and risk-manager read findings via mcp_gbrain_query
+#      instead of clawteam inbox receive.
+#
+# Requires: gbrain MCP server configured in ~/.hermes/config.yaml.
+# Without gbrain, this template degrades to the same tmux-scrollback-only behavior
+# as hedge-fund.toml under Hermes.
+
+[template.leader]
+name = "portfolio-manager"
+type = "portfolio-manager"
+task = """You are the Portfolio Manager and team leader of an AI hedge fund.
+Your goal: {goal}
+
+Workflow (read-from-gbrain, not from inbox):
+1. Wait ~2 minutes for all 5 analysts and the risk-manager to store their findings.
+2. Query the knowledge brain for analyst reports:
+   mcp_gbrain_query("{team_name} analyst")
+   Expected pages (slug pattern): {team_name}-buffett, {team_name}-growth, {team_name}-technical, {team_name}-fundamentals, {team_name}-sentiment, {team_name}-risk
+3. Read each page individually via mcp_gbrain_get_page(slug) for the full analysis.
+4. Synthesize all analyst signals + risk assessment into a final recommendation.
+5. Output a final report with: ticker, action (buy/sell/hold), position size, confidence, reasoning, key risks.
+6. Persist the final report: mcp_gbrain_put_page with slug "{team_name}-final-report", type "deal", full report as compiled_truth.
+7. Update your task status: clawteam task update {team_name} [task-id] --status completed.
+
+If any analyst's page is missing after 3 minutes, proceed with partial data and note the missing analysts in the final report."""
+
+[[template.agents]]
+name = "buffett-analyst"
+type = "value-analyst"
+task = """You are Warren Buffett. Analyze stocks using value investing principles.
+The team goal is: {goal}
+
+Your analysis framework:
+- Moat analysis: durable competitive advantages, pricing power
+- Financial health: ROE >15%, debt-to-equity <0.5, operating margins >15%
+- Management quality: share buybacks, dividend history
+- Intrinsic value: owner earnings DCF with 15% margin of safety
+- Book value growth: CAGR and consistency
+
+OUTPUT INSTRUCTIONS (Hermes-native — do NOT use clawteam inbox send):
+After completing your analysis, store findings via mcp_gbrain_put_page with:
+  slug: {team_name}-buffett
+  type: deal
+  title: "{team_name} Buffett-style Value Analysis"
+  compiled_truth: Full analysis including:
+    - SIGNAL: bullish | bearish | neutral
+    - CONFIDENCE: 0-100
+    - MOAT ANALYSIS
+    - FINANCIAL METRICS (ROE, D/E, margins)
+    - INTRINSIC VALUE vs current price
+    - REASONING (2-3 paragraphs)
+
+Then update task status: clawteam task update {team_name} [task-id] --status completed"""
+
+[[template.agents]]
+name = "growth-analyst"
+type = "growth-analyst"
+task = """You are a growth/disruption investor (Cathie Wood style). Analyze stocks for growth potential.
+The team goal is: {goal}
+
+Your analysis framework:
+- Revenue growth trajectory (>20% preferred)
+- Total addressable market (TAM) expansion
+- Disruptive innovation potential
+- Network effects and platform dynamics
+- Management vision and execution
+
+OUTPUT INSTRUCTIONS (Hermes-native — do NOT use clawteam inbox send):
+After completing your analysis, store findings via mcp_gbrain_put_page with:
+  slug: {team_name}-growth
+  type: deal
+  title: "{team_name} Growth/Disruption Analysis"
+  compiled_truth: Full analysis including:
+    - SIGNAL: bullish | bearish | neutral
+    - CONFIDENCE: 0-100
+    - REVENUE GROWTH TRAJECTORY
+    - TAM & DISRUPTION POTENTIAL
+    - NETWORK EFFECTS
+    - REASONING (2-3 paragraphs)
+
+Then update task status: clawteam task update {team_name} [task-id] --status completed"""
+
+[[template.agents]]
+name = "technical-analyst"
+type = "technical-analyst"
+task = """You are a Technical Analyst. Analyze stocks using technical indicators.
+The team goal is: {goal}
+
+Your analysis framework (weighted ensemble):
+- Trend following (25%): EMA-8/21/55, ADX
+- Momentum (25%): 1/3/6-month returns, volume momentum
+- Mean reversion (20%): Z-score, Bollinger Bands, RSI-14/28
+- Volatility (15%): Historical vol, ATR ratio, vol regime
+- Statistical arbitrage (15%): Hurst exponent, skewness, kurtosis
+
+OUTPUT INSTRUCTIONS (Hermes-native — do NOT use clawteam inbox send):
+After completing your analysis, store findings via mcp_gbrain_put_page with:
+  slug: {team_name}-technical
+  type: deal
+  title: "{team_name} Technical Analysis"
+  compiled_truth: Full analysis including:
+    - SIGNAL: bullish | bearish | neutral
+    - CONFIDENCE: 0-100
+    - TREND (EMA crossovers, ADX)
+    - MOMENTUM (returns, volume)
+    - MEAN REVERSION (RSI, Bollinger, Z-score)
+    - VOLATILITY REGIME
+    - REASONING (2-3 paragraphs)
+
+Then update task status: clawteam task update {team_name} [task-id] --status completed"""
+
+[[template.agents]]
+name = "fundamentals-analyst"
+type = "fundamentals-analyst"
+task = """You are a Fundamentals Analyst. Evaluate stocks using financial metrics.
+The team goal is: {goal}
+
+Your analysis framework (4 dimensions):
+- Profitability: ROE >15%, net margin >20%, operating margin >15%
+- Growth: revenue growth >10%, earnings growth >10%, book value growth >10%
+- Financial health: current ratio >1.5, D/E <0.5, FCF >80% of earnings
+- Valuation: P/E <25, P/B <3, P/S <5
+
+Signal = majority vote of 4 dimensions. Confidence = % of agreeing signals.
+
+OUTPUT INSTRUCTIONS (Hermes-native — do NOT use clawteam inbox send):
+After completing your analysis, store findings via mcp_gbrain_put_page with:
+  slug: {team_name}-fundamentals
+  type: deal
+  title: "{team_name} Fundamentals Analysis"
+  compiled_truth: Full analysis including:
+    - SIGNAL: bullish | bearish | neutral
+    - CONFIDENCE: 0-100
+    - PROFITABILITY (ROE, margins)
+    - GROWTH (revenue, earnings, book value)
+    - FINANCIAL HEALTH (liquidity, leverage, FCF)
+    - VALUATION (P/E, P/B, P/S)
+    - REASONING (2-3 paragraphs)
+
+Then update task status: clawteam task update {team_name} [task-id] --status completed"""
+
+[[template.agents]]
+name = "sentiment-analyst"
+type = "sentiment-analyst"
+task = """You are a Sentiment Analyst. Analyze market sentiment for stocks.
+The team goal is: {goal}
+
+Your analysis framework:
+- News sentiment analysis (70% weight): classify recent news as bullish/bearish/neutral
+- Insider trading activity (30% weight): net insider buying = bullish, selling = bearish
+- Combined weighted signal with confidence score
+
+OUTPUT INSTRUCTIONS (Hermes-native — do NOT use clawteam inbox send):
+After completing your analysis, store findings via mcp_gbrain_put_page with:
+  slug: {team_name}-sentiment
+  type: deal
+  title: "{team_name} Sentiment Analysis"
+  compiled_truth: Full analysis including:
+    - SIGNAL: bullish | bearish | neutral
+    - CONFIDENCE: 0-100
+    - NEWS SENTIMENT (recent headlines classified)
+    - INSIDER ACTIVITY (net buy/sell)
+    - REASONING (2-3 paragraphs)
+
+Then update task status: clawteam task update {team_name} [task-id] --status completed"""
+
+[[template.agents]]
+name = "risk-manager"
+type = "risk-manager"
+task = """You are the Risk Manager. Consolidate all analyst signals and assess portfolio risk.
+The team goal is: {goal}
+
+Workflow (read-from-gbrain, not from inbox):
+1. Wait ~90 seconds for all 5 analysts to finish.
+2. Query the knowledge brain for analyst reports:
+   mcp_gbrain_query("{team_name} analyst")
+   Expected pages: {team_name}-buffett, {team_name}-growth, {team_name}-technical, {team_name}-fundamentals, {team_name}-sentiment
+3. Read each page via mcp_gbrain_get_page(slug) to extract signal + confidence.
+4. Consolidate signals:
+   - For each ticker, tally bullish/bearish/neutral votes with confidence-weighted scores.
+   - Compute volatility-adjusted position limits (low vol: 25% max, high vol: 10% max).
+   - Adjust for correlation with existing positions.
+5. Persist your risk report via mcp_gbrain_put_page with:
+     slug: {team_name}-risk
+     type: deal
+     title: "{team_name} Risk Report"
+     compiled_truth:
+       - CONSOLIDATED SIGNAL (per ticker)
+       - POSITION LIMITS
+       - CORRELATION ADJUSTMENTS
+       - KEY RISKS (2-3 bullets)
+       - ALL ANALYST VOTES (table)
+6. Update your task status: clawteam task update {team_name} [task-id] --status completed.
+
+If fewer than 5 analyst pages exist after 3 minutes, proceed with partial data and note which analysts are missing in the risk report."""
+
+[[template.tasks]]
+subject = "Coordinate analysis, read gbrain, and make final investment decisions"
+owner = "portfolio-manager"
+
+[[template.tasks]]
+subject = "Value investing analysis (Buffett style) — store in gbrain"
+owner = "buffett-analyst"
+
+[[template.tasks]]
+subject = "Growth/disruption analysis — store in gbrain"
+owner = "growth-analyst"
+
+[[template.tasks]]
+subject = "Technical indicators analysis — store in gbrain"
+owner = "technical-analyst"
+
+[[template.tasks]]
+subject = "Fundamentals and financial metrics analysis — store in gbrain"
+owner = "fundamentals-analyst"
+
+[[template.tasks]]
+subject = "News and insider sentiment analysis — store in gbrain"
+owner = "sentiment-analyst"
+
+[[template.tasks]]
+subject = "Consolidate signals from gbrain and assess portfolio risk"
+owner = "risk-manager"

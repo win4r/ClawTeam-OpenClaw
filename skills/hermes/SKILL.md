@@ -40,7 +40,10 @@ For `clawteam spawn` (manual mode):
 ## Launch a Template (Recommended Path)
 
 ```bash
-# Stock analysis (7 specialist analysts: portfolio-manager, buffett, growth, technical, fundamentals, sentiment, risk-manager)
+# Stock analysis (Hermes-native template using gbrain for output — RECOMMENDED for Hermes users)
+clawteam launch hedge-fund-hermes --team-name tesla --goal "Analyze TSLA" --force
+
+# Stock analysis (original OpenClaw-style template — relies on clawteam inbox send which Hermes workers often skip)
 clawteam launch hedge-fund --team-name tesla --goal "Analyze TSLA" --command hermes --force
 
 # Research paper summary
@@ -52,6 +55,31 @@ clawteam launch code-review --team-name review1 --goal "Review PR #42" --command
 # Business strategy
 clawteam launch strategy-room --team-name strat --goal "Q2 planning" --command hermes --force
 ```
+
+## Reading Output from `hedge-fund-hermes` (Preferred Path)
+
+The Hermes-native template stores each analyst's findings as a gbrain page with a predictable slug. After launch + ~2 minutes wait:
+
+```bash
+# Query all findings at once
+mcp_gbrain_query("<team-name> analyst")
+
+# Or read each analyst's page directly
+for analyst in buffett growth technical fundamentals sentiment risk; do
+  mcp_gbrain_get_page("<team-name>-$analyst")
+done
+
+# Portfolio manager stores the final synthesis here
+mcp_gbrain_get_page("<team-name>-final-report")
+```
+
+**Why this works better than `hedge-fund`**: Hermes workers reliably call `mcp_gbrain_put_page` because gbrain is their native MCP surface. They often skip the `clawteam inbox send` step in the OpenClaw-style template.
+
+Benefits:
+- Findings persist in Postgres across sessions
+- No tmux scrollback fragility
+- Next week's analysis can query prior reports
+- Cross-agent memory works natively
 
 ## CRITICAL: Timing Expectations (DO NOT cleanup early)
 
@@ -207,6 +235,37 @@ clawteam spawn -t research -n analyst --task "Research topic X. Query gbrain for
 | `clawteam board live <team>` | Auto-refreshing board |
 | `clawteam board serve --port 8080` | Web dashboard |
 
+## Known Failure Modes
+
+1. **risk-manager crash**: The risk-manager agent is prone to crashing mid-execution (`"Agent 'risk-manager' exited unexpectedly. Reset N task(s) to pending"`). This can leave the team's final synthesis incomplete. If this happens, read tmux scrollback for the portfolio-manager (leader) window first — it may have the final recommendation before the crash.
+
+2. **Inbox empty despite COMPLETED tasks**: Hermes workers write to tmux scrollback, not to the inbox system. The kanban board reflects task state but not content. Always capture tmux panes to read actual output.
+
+3. **Workers do not persist findings**: Unless explicitly instructed to use gbrain, agent outputs exist only in tmux scrollback and are lost when the session is cleaned up. Always include brain-instructions in analysis goals.
+
+## CRITICAL: Inbox Peek Is Unreliable — Use Tmux Capture
+
+`clawteam inbox peek` often returns EMPTY even when tasks show COMPLETED on the board. The actual agent outputs live in **tmux scrollback**, not in the inbox system.
+
+**Always use tmux pane capture to read agent reports:**
+
+```bash
+# List all tmux windows for the team
+tmux list-windows -t clawteam-<team-name> 2>/dev/null
+
+# Capture each window's scrollback (each window = one agent)
+for win in $(tmux list-windows -t clawteam-<team-name> -F '#{window_index}' 2>/dev/null); do
+  echo -e "\n\n=== Window $win ==="
+  tmux capture-pane -t clawteam-<team-name>:$win -p 2>&1 | tail -100
+done
+```
+
+**Also:** When launching a team for analysis work, include brain-instructions in the goal so agents store findings in gbrain — this provides a persistent fallback when tmux sessions are lost:
+
+```bash
+clawteam launch hedge-fund --team-name <name> --goal "Analyze AAPL. IMPORTANT: After completing your analysis, store key findings as brain pages using mcp_gbrain_put_page so findings persist even if the tmux session is lost." --command hermes --force
+```
+
 ## Anti-Patterns (Do Not Do)
 
 - Don't use `delegate_task` when the user asks for multi-agent/swarm/team analysis. Use clawteam.
@@ -214,4 +273,5 @@ clawteam spawn -t research -n analyst --task "Research topic X. Query gbrain for
 - Don't pass `--command hermes` to `spawn` (it's a positional arg at the end). That flag only works on `launch`.
 - Don't forget `--command hermes` on `launch` — templates default to openclaw.
 - Don't assume templates will use Hermes by default. They don't. Always pass `--command hermes`.
-- Don't clean up the team before reading final reports from inboxes.
+- Don't clean up the team before reading final reports — BUT `inbox peek` alone is unreliable; always ALSO capture tmux panes.
+- Don't rely on `clawteam inbox peek` alone — tasks can be COMPLETED on the board while inbox messages are empty. Tmux scrollback capture is the source of truth.

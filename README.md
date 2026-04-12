@@ -370,10 +370,16 @@ Leader agent:
 A TOML template spawns a complete 7-agent investment team with one command:
 
 ```bash
+# OpenClaw (default)
 clawteam launch hedge-fund --team fund1 --goal "Analyze AAPL, MSFT, NVDA for Q2 2026"
+
+# Hermes Agent — use the Hermes-native variant that stores findings in gbrain
+clawteam launch hedge-fund-hermes --team-name fund1 --goal "Analyze AAPL" --force
 ```
 
 5 analyst agents (value, growth, technical, fundamentals, sentiment) work in parallel. Risk manager synthesizes all signals. Portfolio manager makes final decisions.
+
+Hermes users: the `hedge-fund-hermes` variant rewrites each analyst's task to use `mcp_gbrain_put_page` for output persistence instead of `clawteam inbox send`. Findings land in gbrain pages with predictable slugs (`<team-name>-buffett`, `<team-name>-growth`, etc.), persist across sessions, and can be queried later.
 
 Templates are TOML files — **create your own** for any domain.
 
