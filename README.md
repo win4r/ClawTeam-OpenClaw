@@ -26,7 +26,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/agents-OpenClaw_%7C_Claude_Code_%7C_Codex_%7C_nanobot-blueviolet" alt="Agents">
+  <img src="https://img.shields.io/badge/agents-OpenClaw_%7C_Claude_Code_%7C_Codex_%7C_Hermes_%7C_nanobot-blueviolet" alt="Agents">
   <img src="https://img.shields.io/badge/transport-File_%7C_ZeroMQ_P2P-orange" alt="Transport">
   <img src="https://img.shields.io/badge/version-0.3.0-teal" alt="Version">
 </p>
@@ -35,7 +35,7 @@
 
 You set the goal. The agent swarm handles the rest — spawning workers, splitting tasks, coordinating, and merging results.
 
-Works with [OpenClaw](https://openclaw.ai) (default), [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [nanobot](https://github.com/HKUDS/nanobot), [Cursor](https://cursor.com), and any CLI agent.
+Works with [OpenClaw](https://openclaw.ai) (default), [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/codex), [Hermes Agent](https://github.com/NousResearch/hermes-agent), [nanobot](https://github.com/HKUDS/nanobot), [Cursor](https://cursor.com), and any CLI agent.
 
 ## Platform Support
 
@@ -141,6 +141,7 @@ clawteam board attach my-team   # Linux/macOS/WSL with tmux
 | [Claude Code](https://claude.ai/claude-code) | `clawteam spawn claude --team ...` | Full support |
 | [Codex](https://openai.com/codex) | `clawteam spawn codex --team ...` | Full support |
 | [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn nanobot --team ...` | Full support |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `clawteam spawn hermes --team ...` | Full support |
 | [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | Experimental |
 | Custom scripts | `clawteam spawn subprocess python --team ...` | Full support |
 
