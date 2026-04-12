@@ -48,11 +48,14 @@ class NativeCliAdapter:
                 final_command.append("--yolo")
 
         if is_hermes_command(normalized_command):
-            # Hermes: ensure 'chat' subcommand, pass prompt via -q, session via --continue
+            # Hermes: ensure 'chat' subcommand, tag as tool-sourced so clawteam
+            # spawns don't pollute the user's session list, pass prompt via -q.
+            # Do NOT pass --continue -- Hermes --continue resumes EXISTING sessions
+            # only; fresh spawns auto-generate a session ID.
             if len(final_command) < 2 or final_command[1] != "chat":
                 final_command.insert(1, "chat")
-            if agent_name and "--continue" not in final_command:
-                final_command.extend(["--continue", agent_name])
+            if "--source" not in final_command:
+                final_command.extend(["--source", "tool"])
             if prompt:
                 final_command.extend(["-q", prompt])
         elif is_kimi_command(normalized_command):

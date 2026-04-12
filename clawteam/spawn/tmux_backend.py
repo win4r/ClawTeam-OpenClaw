@@ -211,13 +211,15 @@ class TmuxBackend(SpawnBackend):
                 if prompt:
                     final_command.extend(["--message", prompt])
 
-        # Hermes Agent: ensure 'chat' subcommand, pass prompt via -q, session via --continue
+        # Hermes Agent: ensure 'chat' subcommand, tag as tool-sourced so clawteam
+        # spawns don't pollute the user's session list, pass prompt via -q.
+        # Do NOT pass --continue -- Hermes --continue resumes EXISTING sessions
+        # only; fresh spawns auto-generate a session ID.
         if is_hermes_command(normalized_command):
             if final_command[0].endswith("hermes") and (len(final_command) == 1 or final_command[1] != "chat"):
                 final_command = [final_command[0], "chat"] + final_command[1:]
-            if agent_name and "--continue" not in final_command:
-                session_key = f"clawteam-{team_name}-{agent_name}"
-                final_command.extend(["--continue", session_key])
+            if "--source" not in final_command:
+                final_command.extend(["--source", "tool"])
             if model:
                 final_command.extend(["-m", model])
             if prompt:

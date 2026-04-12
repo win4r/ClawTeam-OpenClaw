@@ -122,7 +122,7 @@ class TestPrepareCommandPrompt:
 
 
 class TestHermesCommandPreparation:
-    """Hermes Agent: chat subcommand insertion, -q prompt, --continue session, --yolo."""
+    """Hermes Agent: chat subcommand insertion, --source tool tag, -q prompt, --yolo."""
 
     adapter = NativeCliAdapter()
 
@@ -149,15 +149,17 @@ class TestHermesCommandPreparation:
         assert "do work" in result.final_command
         assert result.post_launch_prompt is None
 
-    def test_hermes_continue_session(self):
-        result = self.adapter.prepare_command(
-            ["hermes"], agent_name="researcher",
-        )
-        assert "--continue" in result.final_command
-        assert "researcher" in result.final_command
+    def test_hermes_tagged_as_tool_source(self):
+        # Hermes spawns from clawteam use --source tool so they don't
+        # pollute the user's session list (which defaults to cli)
+        result = self.adapter.prepare_command(["hermes"], agent_name="w1")
+        assert "--source" in result.final_command
+        assert "tool" in result.final_command
 
-    def test_hermes_no_continue_without_agent_name(self):
-        result = self.adapter.prepare_command(["hermes"])
+    def test_hermes_no_continue_flag(self):
+        # Hermes --continue resumes an existing session; clawteam spawns
+        # are fresh, so we must not pass --continue
+        result = self.adapter.prepare_command(["hermes"], agent_name="w1")
         assert "--continue" not in result.final_command
 
     def test_hermes_yolo_preserved_with_chat(self):
@@ -166,6 +168,5 @@ class TestHermesCommandPreparation:
         )
         assert "--yolo" in result.final_command
         assert "chat" in result.final_command
-        yolo_idx = result.final_command.index("--yolo")
         chat_idx = result.final_command.index("chat")
         assert chat_idx == 1  # chat at position 1
