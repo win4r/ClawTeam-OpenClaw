@@ -271,6 +271,52 @@ openclaw approvals allowlist add --agent "*" "$(which clawteam)"
 
 > If `openclaw approvals` fails, the OpenClaw gateway may not be running. Start it first, then retry.
 
+### Step 5b: Install the Hermes skill (Hermes Agent users only)
+
+The skill file teaches Hermes Agent how to use ClawTeam through natural language. Skip this step if you're not using Hermes.
+
+```bash
+mkdir -p ~/.hermes/skills/autonomous-ai-agents/clawteam
+cat > ~/.hermes/skills/autonomous-ai-agents/clawteam/SKILL.md <<'SKILL_EOF'
+---
+name: clawteam
+description: "Multi-agent swarm coordination via the ClawTeam CLI. Spawn Hermes agents as workers in tmux windows with git worktree isolation. Trigger phrases: team, swarm, multi-agent, clawteam, spawn agents, parallel agents."
+version: 0.3.0
+metadata:
+  hermes:
+    tags: [Multi-Agent, Swarm, Coordination, Teams]
+---
+
+# ClawTeam - Multi-Agent Swarm Coordination
+
+## Spawn Hermes workers
+
+Each worker runs in its own tmux window with git worktree isolation.
+
+```bash
+# Create team
+clawteam team spawn-team my-team -d "Goal description" -n leader
+
+# Spawn Hermes workers (pass 'hermes' as the trailing command)
+clawteam spawn -t my-team -n researcher --task "Research X" --no-workspace hermes
+clawteam spawn -t my-team -n writer --task "Write report" --no-workspace hermes
+
+# Monitor
+clawteam board show my-team        # Kanban view
+clawteam board attach my-team      # Tmux tiled view
+```
+
+## Spawn flags
+
+- `--yolo` is inherited from `--skip-permissions`
+- `-m MODEL` forwards the model (tmux + subprocess backends)
+- Each spawn gets `--source tool` automatically (keeps clawteam spawns out of your user session list)
+- Hermes session ID is auto-generated; resume later via `hermes --resume <id>`
+SKILL_EOF
+```
+
+Spawned Hermes workers automatically inherit MCP servers configured in `~/.hermes/config.yaml`, so any knowledge brain or tool setup is available to every worker.
+
 ### Step 6: Verify
 
 ```bash
