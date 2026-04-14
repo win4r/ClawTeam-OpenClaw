@@ -205,3 +205,46 @@ clawteam --json board overview | jq '.[] | "\(.name): \(.pendingMessages) pendin
 # Get team member names
 clawteam --json team status dev-team | jq -r '.members[].name'
 ```
+
+### Checking If an Agent Has Joined
+
+When a leader agent spawns a worker and then polls to confirm it joined, the
+correct signal is the team's `members` list — **not** a task's `owner` field.
+
+#### ❌ Anti-pattern: relying on task.owner
+
+```bash
+# WRONG — task.owner is declarative, set at task-create time regardless of spawn outcome
+OWNER=$(clawteam --json task get dev-team "$task_id" | jq -r '.owner')
+if [[ -n "$OWNER" ]]; then
+  echo "Agent joined"  # false positive: owner is set even when spawn failed
+fi
+```
+
+A task's `owner` is written when the task is **created** (via `-o`). It declares
+"who *should* do this work", not "who *actually joined the team*". A failed
+`clawteam spawn` leaves the task's owner untouched, so monitor loops that poll
+`task.owner` falsely see "already joined", skip the respawn, and block every
+task that depends on that agent.
+
+#### ✅ Correct pattern: check team.members
+
+```bash
+# `team.members` is backed by the spawn registry + is_agent_alive() — dead or
+# never-joined agents are NOT listed here.
+MEMBERS=$(clawteam --json team status dev-team | jq -r '.members[].name')
+
+if ! grep -qw "db-designer" <<< "$MEMBERS"; then
+  clawteam spawn tmux claude --team dev-team --agent-name db-designer \
+    --task "Design user schema"
+fi
+```
+
+**Rule of thumb:**
+
+| Signal | Answers |
+|--------|---------|
+| `task.owner` | "Who *should* do this?" (declarative, write-once at create time) |
+| `team.members` | "Who *is actually here*?" (live, backed by spawn registry) |
+
+Only `team.members` is a reliable existence check in coordination loops.
