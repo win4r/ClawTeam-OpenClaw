@@ -670,6 +670,17 @@ def inbox_receive(
 
     identity = AgentIdentity.from_env()
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    
+    # Check if resolved agent is actually a team member; fallback to leader if not
+    member = TeamManager.get_member(team, agent_name, identity.user)
+    if member is None:
+        leader_inbox = TeamManager.get_leader_inbox(team)
+        if leader_inbox:
+            click.echo(f"[info] caller '{agent_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox", err=True)
+            agent_name = leader_inbox
+        else:
+            click.echo(f"[warn] caller '{agent_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方", err=True)
+    
     mailbox = MailboxManager(team)
     messages = mailbox.receive(agent_name, limit=limit)
 
@@ -701,6 +712,17 @@ def inbox_peek(
 
     identity = AgentIdentity.from_env()
     agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    
+    # Check if resolved agent is actually a team member; fallback to leader if not
+    member = TeamManager.get_member(team, agent_name, identity.user)
+    if member is None:
+        leader_inbox = TeamManager.get_leader_inbox(team)
+        if leader_inbox:
+            click.echo(f"[info] caller '{agent_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox", err=True)
+            agent_name = leader_inbox
+        else:
+            click.echo(f"[warn] caller '{agent_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方", err=True)
+    
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
 
