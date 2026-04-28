@@ -21,6 +21,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+error_console = Console(stderr=True)
 
 
 # ---------------------------------------------------------------------------
@@ -669,17 +670,21 @@ def inbox_receive(
     from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    caller_name = agent or identity.agent_name
 
-    # Check if resolved agent is actually a team member; fallback to leader if not
-    member = TeamManager.get_member(team, agent_name, identity.user)
+    # Check if caller is a team member BEFORE resolving inbox
+    # (resolve_inbox returns directory name, not logical member name)
+    member = TeamManager.get_member(team, caller_name, identity.user)
     if member is None:
         leader_inbox = TeamManager.get_leader_inbox(team)
         if leader_inbox:
-            console.print(f"[yellow][info][/yellow] caller '{agent_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox", file=sys.stderr)
+            error_console.print(f"[yellow][info][/yellow] caller '{caller_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox")
             agent_name = leader_inbox
         else:
-            console.print(f"[yellow][warn][/yellow] caller '{agent_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方", file=sys.stderr)
+            error_console.print(f"[yellow][warn][/yellow] caller '{caller_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方")
+            agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+    else:
+        agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
 
     mailbox = MailboxManager(team)
     messages = mailbox.receive(agent_name, limit=limit)
@@ -711,17 +716,21 @@ def inbox_peek(
     from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    caller_name = agent or identity.agent_name
 
-    # Check if resolved agent is actually a team member; fallback to leader if not
-    member = TeamManager.get_member(team, agent_name, identity.user)
+    # Check if caller is a team member BEFORE resolving inbox
+    # (resolve_inbox returns directory name, not logical member name)
+    member = TeamManager.get_member(team, caller_name, identity.user)
     if member is None:
         leader_inbox = TeamManager.get_leader_inbox(team)
         if leader_inbox:
-            console.print(f"[yellow][info][/yellow] caller '{agent_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox", file=sys.stderr)
+            error_console.print(f"[yellow][info][/yellow] caller '{caller_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox")
             agent_name = leader_inbox
         else:
-            console.print(f"[yellow][warn][/yellow] caller '{agent_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方", file=sys.stderr)
+            error_console.print(f"[yellow][warn][/yellow] caller '{caller_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方")
+            agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+    else:
+        agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
 
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
