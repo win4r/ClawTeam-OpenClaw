@@ -46,6 +46,7 @@ class ClawTeamConfig(BaseModel):
     task_store: str = ""  # "file" (default) — extensible for redis/sql later
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
     default_backend: str = Field(default_factory=default_spawn_backend)  # "tmux" | "subprocess"
+    team_workspace: bool = True  # also create a shared team workspace alongside per-agent worktrees
     skip_permissions: bool = True  # pass --dangerously-skip-permissions to claude
     spawn_prompt_delay: float = 2.0  # fallback wait (seconds) if TUI ready-detection times out
     spawn_ready_timeout: float = 30.0  # max seconds to poll for TUI readiness before fallback
@@ -90,6 +91,7 @@ def get_effective(key: str) -> tuple[str, str]:
         "transport": "CLAWTEAM_TRANSPORT",
         "task_store": "CLAWTEAM_TASK_STORE",
         "workspace": "CLAWTEAM_WORKSPACE",
+        "team_workspace": "CLAWTEAM_TEAM_WORKSPACE",
         "default_backend": "CLAWTEAM_DEFAULT_BACKEND",
         "skip_permissions": "CLAWTEAM_SKIP_PERMISSIONS",
         "spawn_prompt_delay": "CLAWTEAM_SPAWN_PROMPT_DELAY",

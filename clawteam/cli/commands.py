@@ -21,6 +21,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+error_console = Console(stderr=True)
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +670,22 @@ def inbox_receive(
     from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    caller_name = agent or identity.agent_name
+
+    # Check if caller is a team member BEFORE resolving inbox
+    # (resolve_inbox returns directory name, not logical member name)
+    member = TeamManager.get_member(team, caller_name, identity.user)
+    if member is None:
+        leader_inbox = TeamManager.get_leader_inbox(team)
+        if leader_inbox:
+            error_console.print(f"[yellow][info][/yellow] caller '{caller_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox")
+            agent_name = leader_inbox
+        else:
+            error_console.print(f"[yellow][warn][/yellow] caller '{caller_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方")
+            agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+    else:
+        agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+
     mailbox = MailboxManager(team)
     messages = mailbox.receive(agent_name, limit=limit)
 
@@ -700,7 +716,22 @@ def inbox_peek(
     from clawteam.team.manager import TeamManager
 
     identity = AgentIdentity.from_env()
-    agent_name = TeamManager.resolve_inbox(team, agent or identity.agent_name, identity.user)
+    caller_name = agent or identity.agent_name
+
+    # Check if caller is a team member BEFORE resolving inbox
+    # (resolve_inbox returns directory name, not logical member name)
+    member = TeamManager.get_member(team, caller_name, identity.user)
+    if member is None:
+        leader_inbox = TeamManager.get_leader_inbox(team)
+        if leader_inbox:
+            error_console.print(f"[yellow][info][/yellow] caller '{caller_name}' 非团队成员，回退到 leader '{leader_inbox}' 的 inbox")
+            agent_name = leader_inbox
+        else:
+            error_console.print(f"[yellow][warn][/yellow] caller '{caller_name}' 非团队成员且 team 无 leader 配置，使用 --agent 指定接收方")
+            agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+    else:
+        agent_name = TeamManager.resolve_inbox(team, caller_name, identity.user)
+
     mailbox = MailboxManager(team)
     messages = mailbox.peek(agent_name)
 
@@ -1976,6 +2007,7 @@ def spawn_agent(
     # Workspace: resolve from flag or config (default: auto)
     cwd = None
     ws_branch = ""
+    team_ws_path = ""
     ws_mode = ""
     ws_mgr = None
     if workspace is None:
@@ -1996,6 +2028,7 @@ def spawn_agent(
             ws_info = ws_mgr.create_workspace(team_name=_team, agent_name=_name, agent_id=_id)
             cwd = _workspace_cwd_from_info(repo, ws_info)
             ws_branch = ws_info.branch_name
+            team_ws_path = getattr(ws_info, "team_workspace_path", "")
             console.print(f"[dim]Workspace: {cwd} (branch: {ws_branch})[/dim]")
 
     # Build prompt: identity + task + clawteam coordination guide
@@ -2007,6 +2040,8 @@ def spawn_agent(
         from clawteam.team.manager import TeamManager
 
         leader_name = TeamManager.get_leader_name(_team) or "leader"
+        # Gather full team roster for mesh communication awareness
+        team_members = [m.name for m in TeamManager.list_members(_team)]
         prompt = build_agent_prompt(
             agent_name=_name,
             agent_id=_id,
@@ -2017,7 +2052,10 @@ def spawn_agent(
             user=_os.environ.get("CLAWTEAM_USER", ""),
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
+            team_workspace_dir=team_ws_path,
             memory_scope=f"custom:team-{_team}",
+            team_size=len(team_members),
+            team_members=team_members,
         )
 
     # Session resume: inject --resume flag for claude commands
@@ -2158,10 +2196,18 @@ app.add_typer(board_app, name="board")
 @board_app.command("show")
 def board_show(
     team: str = typer.Argument(..., help="Team name"),
+    mode: str = typer.Option("kanban", "--mode", "-m", help="Display mode: 'kanban' (default, 4-column tasks) or 'agents' (per-agent slots)"),
 ):
-    """Show detailed kanban board for a single team."""
+    """Show detailed kanban board for a single team.
+
+    Use --mode agents for a per-agent grid view showing each agent's current task.
+    """
     from clawteam.board.collector import BoardCollector
     from clawteam.board.renderer import BoardRenderer
+
+    if mode not in ("kanban", "agents"):
+        console.print(f"[red]Invalid mode '{mode}'. Use 'kanban' or 'agents'.[/red]")
+        raise typer.Exit(1)
 
     collector = BoardCollector()
     try:
@@ -2170,7 +2216,7 @@ def board_show(
         _output({"error": str(e)}, lambda d: console.print(f"[red]{d['error']}[/red]"))
         raise typer.Exit(1)
 
-    _output(data, lambda d: BoardRenderer(console).render_team_board(d))
+    _output(data, lambda d: BoardRenderer(console).render_team_board(d, mode=mode))
 
 
 @board_app.command("overview")
@@ -2189,10 +2235,18 @@ def board_overview():
 def board_live(
     team: str = typer.Argument(..., help="Team name"),
     interval: float = typer.Option(2.0, "--interval", "-i", help="Refresh interval in seconds"),
+    mode: str = typer.Option("kanban", "--mode", "-m", help="Display mode: 'kanban' (default, 4-column tasks) or 'agents' (per-agent slots)"),
 ):
-    """Live-refreshing kanban board. Ctrl+C to stop."""
+    """Live-refreshing kanban board. Ctrl+C to stop.
+
+    Use --mode agents for a per-agent grid view showing each agent's current task.
+    """
     from clawteam.board.collector import BoardCollector
     from clawteam.board.renderer import BoardRenderer
+
+    if mode not in ("kanban", "agents"):
+        console.print(f"[red]Invalid mode '{mode}'. Use 'kanban' or 'agents'.[/red]")
+        raise typer.Exit(1)
 
     collector = BoardCollector()
 
@@ -2204,10 +2258,10 @@ def board_live(
         raise typer.Exit(1)
 
     if not _json_output:
-        console.print(f"Live board for '{team}' (interval: {interval}s). Ctrl+C to stop.")
+        console.print(f"Live board for '{team}' (interval: {interval}s, mode: {mode}). Ctrl+C to stop.")
 
     renderer = BoardRenderer(console)
-    renderer.render_team_board_live(collector, team, interval=interval)
+    renderer.render_team_board_live(collector, team, interval=interval, mode=mode)
 
 
 @board_app.command("serve")
@@ -2592,14 +2646,17 @@ def launch_team(
         # Workspace
         cwd = None
         ws_branch = ""
+        team_ws_path = ""
         if ws_mgr:
             ws_info = ws_mgr.create_workspace(
                 team_name=t_name, agent_name=agent.name, agent_id=a_id,
             )
             cwd = _workspace_cwd_from_info(repo, ws_info)
             ws_branch = ws_info.branch_name
+            team_ws_path = getattr(ws_info, "team_workspace_path", "")
 
-        # Build prompt
+        # Build prompt (with full team roster for mesh communication)
+        all_agent_names = [a.name for a in all_agents]
         prompt = build_agent_prompt(
             agent_name=agent.name,
             agent_id=a_id,
@@ -2610,11 +2667,13 @@ def launch_team(
             user=_os.environ.get("CLAWTEAM_USER", ""),
             workspace_dir=cwd or "",
             workspace_branch=ws_branch,
+            team_workspace_dir=team_ws_path,
             memory_scope=f"custom:team-{t_name}",
             intent=agent.intent or "",
             end_state=agent.end_state or "",
             constraints=agent.constraints,
             team_size=len(all_agents),
+            team_members=all_agent_names,
         )
 
         # Resolve skip_permissions from config
