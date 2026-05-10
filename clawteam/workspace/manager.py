@@ -114,15 +114,21 @@ class WorkspaceManager:
             try:
                 git.remove_worktree(self.repo_root, wt_path)
             except git.GitError:
-                pass
+                # force-remove directory when git worktree metadata is corrupted
+                shutil.rmtree(wt_path, ignore_errors=True)
             try:
                 git.delete_branch(self.repo_root, branch)
             except git.GitError:
-                pass
+                pass  # branch may not exist; create_worktree will handle it
 
-        git.create_worktree(
-            self.repo_root, wt_path, branch, base_ref=self.base_branch,
-        )
+        try:
+            git.create_worktree(
+                self.repo_root, wt_path, branch, base_ref=self.base_branch,
+            )
+        except git.GitError as e:
+            logger.warning("git worktree create failed for %s/%s: %s — falling back to plain directory", team_name, agent_name, e)
+            # Fallback: create a plain directory so the agent can still write files
+            wt_path.mkdir(parents=True, exist_ok=True)
 
         if self.repo_subpath:
             self._overlay_untracked_subpath_files(wt_path)

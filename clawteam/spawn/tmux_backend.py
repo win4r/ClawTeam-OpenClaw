@@ -70,6 +70,12 @@ def _ensure_worker_workspace() -> str:
     agents_md = workspace_dir / "AGENTS.md"
     if not agents_md.exists():
         agents_md.write_text(_WORKER_AGENTS_MD)
+    # Create empty placeholder files so OpenClaw doesn't fail looking for
+    # expected workspace files. Without these, the TUI may exit immediately.
+    for placeholder in ("SOUL.md", "USER.md", "IDENTITY.md", "MEMORY.md", "TOOLS.md"):
+        p = workspace_dir / placeholder
+        if not p.exists():
+            p.touch()
     return str(workspace_dir)
 
 
@@ -111,7 +117,24 @@ class TmuxBackend(SpawnBackend):
 
         session_name = f"clawteam-{team_name}"
         clawteam_bin = resolve_clawteam_executable()
-        env_vars = os.environ.copy()
+
+        # Minimal environment: only copy essential system variables.
+        # Copying os.environ wholesale produces a huge export string that can
+        # overflow shell command limits (especially on WSL where Windows vars
+        # like PATH leak in) and cause the shell to crash on startup.
+        _ESSENTIAL_ENV_KEYS = frozenset({
+            "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG",
+            "LC_ALL", "LC_CTYPE", "TZ", "PATH",
+            "DISPLAY", "WAYLAND_DISPLAY",
+            "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+            "XDG_RUNTIME_DIR", "XDG_CACHE_HOME",
+            "DBUS_SESSION_BUS_ADDRESS",
+        })
+        env_vars = {}
+        for key, val in os.environ.items():
+            if key in _ESSENTIAL_ENV_KEYS or key.startswith(("CLAWTEAM_", "OPENCLAW_")):
+                env_vars[key] = val
+
         # Interactive CLIs like Codex refuse to start when TERM=dumb is inherited
         # from a non-interactive shell. tmux provides a real terminal, so we
         # normalize TERM to a sensible value before exporting it into the pane.
@@ -155,6 +178,8 @@ class TmuxBackend(SpawnBackend):
             worker_ws = _ensure_worker_workspace()
             env_vars["OPENCLAW_WORKSPACE"] = worker_ws
             propagate_openclaw_gateway_token(env_vars)
+            if model:
+                env_vars["OPENCLAW_MODEL"] = model
 
         normalized_command = normalize_spawn_command(command)
 
@@ -188,23 +213,17 @@ class TmuxBackend(SpawnBackend):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
-                if model:
-                    final_command.extend(["--model", model])
                 if openclaw_agent:
                     final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "tui" in final_command:
                 final_command.extend(["--session", session_key])
-                if model:
-                    final_command.extend(["--model", model])
                 if openclaw_agent:
                     final_command.extend(["--agent", openclaw_agent])
                 if prompt:
                     final_command.extend(["--message", prompt])
             elif "agent" in final_command:
-                if model:
-                    final_command.extend(["--model", model])
                 if openclaw_agent:
                     final_command.extend(["--agent", openclaw_agent])
                 if prompt:
@@ -228,7 +247,10 @@ class TmuxBackend(SpawnBackend):
             final_command.extend(["-p", prompt])
 
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
-        # Append on-exit hook: runs immediately when agent process exits
+        # Append on-exit hook: runs when the agent process exits.
+        # Use && chaining so the trap is only set when env setup succeeds,
+        # preventing the trap from firing on setup failures and destroying
+        # the last window (which kills the tmux session).
         exit_cmd = shlex.quote(clawteam_bin) if os.path.isabs(clawteam_bin) else "clawteam"
         exit_hook = (
             f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
@@ -238,9 +260,9 @@ class TmuxBackend(SpawnBackend):
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
         if cwd:
-            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{export_str} && cd {shlex.quote(cwd)} && (trap \"{exit_hook}\" EXIT; {cmd_str})"
         else:
-            full_cmd = f"{unset_clause}{export_str}; trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{export_str} && (trap \"{exit_hook}\" EXIT; {cmd_str})"
 
         # Check if tmux session exists
         check = subprocess.run(
@@ -267,6 +289,15 @@ class TmuxBackend(SpawnBackend):
         if launch.returncode != 0:
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
+
+        # Prevent tmux from destroying the session when the last window exits.
+        # This keeps the session alive for debugging even when the agent process
+        # fails on startup (e.g. due to env var issues or CLI flag errors).
+        subprocess.run(
+            ["tmux", "set", "-t", session_name, "remain-on-exit", "on"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
         from clawteam.config import load_config
 
@@ -337,6 +368,20 @@ class TmuxBackend(SpawnBackend):
             pid=pane_pid,
             command=list(normalized_command),
         )
+
+        # Post-spawn liveness check: verify the agent process survived startup.
+        # Prevents false-positives where the tmux pane is briefly visible but
+        # the process died (e.g. CLI flag errors, broken env, command not found).
+        if pane_pid > 0:
+            import time as _time
+            _time.sleep(1.0)
+            try:
+                os.kill(pane_pid, 0)  # signal 0 = existence check only
+            except OSError:
+                return (
+                    f"Error: agent process (PID {pane_pid}) died before spawn completed. "
+                    f"Likely CLI incompatibility. Command: {' '.join(normalized_command)}"
+                )
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"
 
