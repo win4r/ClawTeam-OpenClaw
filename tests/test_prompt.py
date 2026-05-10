@@ -56,7 +56,7 @@ class TestBuildAgentPrompt:
         assert "/tmp/ws" in prompt
         assert "feature-x" in prompt
         assert "Workspace" in prompt
-        assert "isolated git worktree" in prompt
+        assert "isolated worktree" in prompt
 
     def test_prompt_excludes_workspace_when_empty(self):
         prompt = build_agent_prompt(

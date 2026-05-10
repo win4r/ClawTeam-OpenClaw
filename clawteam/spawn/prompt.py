@@ -44,13 +44,20 @@ def build_agent_prompt(
     user: str = "",
     workspace_dir: str = "",
     workspace_branch: str = "",
+    team_workspace_dir: str = "",
     memory_scope: str = "",
     intent: str = "",
     end_state: str = "",
     constraints: list[str] | None = None,
     team_size: int = 1,
+    team_members: list[str] | None = None,
 ) -> str:
-    """Build agent prompt: identity + mission + task + optional workspace info."""
+    """Build agent prompt: identity + mission + task + optional workspace info.
+
+    Args:
+        team_members: Full list of team member names (including self and leader)
+                      for mesh communication awareness.
+    """
     lines = [
         "## Identity\n",
         f"- Name: {agent_name}",
@@ -63,6 +70,16 @@ def build_agent_prompt(
         f"- Team: {team_name}",
         f"- Leader: {leader_name}",
     ])
+    # Team roster — full mesh awareness
+    if team_members and len(team_members) > 1:
+        others = [m for m in team_members if m != agent_name]
+        lines.extend([
+            "",
+            "## Team Roster",
+            f"- You: {agent_name}",
+            f"- Teammates ({len(others)}): {', '.join(others)}",
+            "- You have a direct 1:1 communication link to every teammate via `clawteam inbox send`.",
+        ])
     # Mission section (Auftragstaktik: intent + end_state + constraints)
     if intent or end_state or constraints:
         lines.extend(["", "## Mission\n"])
@@ -74,7 +91,23 @@ def build_agent_prompt(
             lines.append("**Constraints:**")
             for c in constraints:
                 lines.append(f"- {c}")
-    if workspace_dir:
+    if workspace_dir or team_workspace_dir:
+        lines.extend(["", "## Workspace"])
+        if workspace_dir:
+            lines.extend([
+                "- **Your workspace:**",
+                f"  - Path: {workspace_dir}",
+                f"  - Branch: {workspace_branch}",
+                "  - This is your isolated worktree — safe to experiment and develop.",
+            ])
+        if team_workspace_dir:
+            lines.extend([
+                "- **Team shared workspace:**",
+                f"  - Path: {team_workspace_dir}",
+                "  - ALL team members share this directory. Put **deliverables and shared outputs** here.",
+                "  - Coordinate file changes via `clawteam inbox` to avoid conflicts.",
+            ])
+    elif workspace_dir:
         lines.extend([
             "",
             "## Workspace",
@@ -102,13 +135,52 @@ def build_agent_prompt(
         f"- First action: run `clawteam task list {team_name} --owner {agent_name}` to discover your task ID.",
         f"- Starting a task: `clawteam task update {team_name} <task-id> --status in_progress`",
         f"- Finishing a task: `clawteam task update {team_name} <task-id> --status completed`",
-        "- When you finish all tasks, send a summary to the leader:",
+        "",
+        "### Mesh Communication (Full-Connectivity)",
+        "- You have a direct 1:1 communication link to EVERY team member via `clawteam inbox send`.",
+        f"- To message the leader: `clawteam inbox send {team_name} {leader_name} \"<message>\"`",
+    ])
+    # Add per-teammate send instructions if team roster is available
+    if team_members:
+        others = [m for m in team_members if m != agent_name and m != leader_name]
+        if others:
+            lines.append(f"- To message a teammate (e.g., {others[0]}): `clawteam inbox send {team_name} <teammate-name> \"<message>\"`")
+            lines.append(f"  All teammates: {', '.join(others)}")
+            lines.append(f"- You can also message MULTIPLE teammates by sending to each individually.")
+    lines.extend([
+        "- When you finish ALL tasks, send a summary to the leader:",
         f'  `clawteam inbox send {team_name} {leader_name} "All tasks completed. <brief summary>"`',
-        "- If you are blocked or any clawteam command is denied/fails, message the leader immediately with the exact error text:",
-        f'  `clawteam inbox send {team_name} {leader_name} "Blocked: <exact error>"`',
-        f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
-        f"- Before finishing, save your session: `clawteam session save {team_name} --session-id <id>`",
-        "- When you finish all tasks, type `exit` to terminate this session.",
+        "- If you are blocked or need help from any teammate, message them directly.",
+        "- IMPORTANT: After sending a message via `clawteam inbox send`, check your own inbox for replies:",
+        f'  `clawteam inbox receive {team_name}`',
+        f"- To see who else is on the team, use: `clawteam team status {team_name}`",
+        "",
+        "### ClawTeam CLI Reference",
+        "Here are all the clawteam commands you may need during your work:",
+        "",
+        "**Task Management**",
+        f"- `clawteam task list {team_name} --owner <name>` — list tasks assigned to you",
+        f"- `clawteam task list {team_name} --status pending` — list pending tasks",
+        f"- `clawteam task get {team_name} <task-id>` — view task details",
+        f"- `clawteam task update {team_name} <task-id> --status in_progress` — start a task",
+        f"- `clawteam task update {team_name} <task-id> --status completed` — finish a task",
+        f"- `clawteam task wait {team_name}` — wait for ALL tasks to complete",
+        "",
+        "**Communication**",
+        f"- `clawteam inbox send {team_name} <name> \"<message>\"` — send a message to any agent",
+        f"- `clawteam inbox broadcast {team_name} \"<message>\"` — broadcast to all team members",
+        f"- `clawteam inbox receive {team_name}` — read and consume new messages",
+        f"- `clawteam inbox peek {team_name}` — peek at messages without consuming",
+        f"- `clawteam inbox log {team_name}` — view full message history",
+        "",
+        "**Monitoring**",
+        f"- `clawteam board show {team_name}` — kanban board (tasks by status)",
+        f"- `clawteam board show {team_name} --mode agents` — agent grid view (each agent's slot)",
+        "",
+        "**Reporting & Lifecycle**",
+        f"- `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
+        f"- `clawteam session save {team_name} --session-id <id>`",
+        "- When all tasks are done, type `exit` to terminate this session.",
         "",
         METACOGNITION_BLOCK,
         "",

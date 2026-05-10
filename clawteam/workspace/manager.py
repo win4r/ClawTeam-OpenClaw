@@ -139,6 +139,11 @@ class WorkspaceManager:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
+        # Ensure team shared workspace exists alongside per-agent workspace
+        team_ws_path = self._ensure_team_workspace(team_name)
+        if team_ws_path:
+            info.team_workspace_path = str(team_ws_path)
+
         registry = _load_registry(team_name, str(self.repo_root))
         # Remove stale entry for the same agent, if any
         registry.workspaces = [
@@ -203,11 +208,23 @@ class WorkspaceManager:
         return True
 
     def cleanup_team(self, team_name: str) -> int:
-        """Clean up all workspaces for a team. Returns number cleaned."""
+        """Clean up all workspaces for a team (including shared). Returns number cleaned."""
         registry = _load_registry(team_name, str(self.repo_root))
         count = 0
         for ws in list(registry.workspaces):
             if self.cleanup_workspace(team_name, ws.agent_name):
+                count += 1
+        # Clean up shared team workspace if it exists
+        shared_path = ensure_within_root(_workspaces_root(), team_name, "shared")
+        if shared_path.exists():
+            try:
+                git.remove_worktree(self.repo_root, shared_path)
+            except git.GitError:
+                shutil.rmtree(shared_path, ignore_errors=True)
+                try:
+                    git.delete_branch(self.repo_root, f"clawteam/{team_name}/shared")
+                except git.GitError:
+                    pass
                 count += 1
         return count
 
@@ -272,6 +289,50 @@ class WorkspaceManager:
             if ws.agent_name == agent_name:
                 return ws
         return None
+
+    def _ensure_team_workspace(self, team_name: str) -> Path | None:
+        """Create or return the shared team workspace (idempotent).
+
+        Returns the shared workspace path for this team, creating it if needed.
+        A shared workspace is a git worktree at workspaces/{team}/shared/.
+        All agents in the team share this directory.
+        """
+        from clawteam.config import load_config
+
+        config = load_config()
+        if not config.team_workspace:
+            return None
+
+        branch = f"clawteam/{team_name}/shared"
+        wt_path = ensure_within_root(_workspaces_root(), team_name, "shared")
+
+        # Idempotent: if the worktree already exists, just return it
+        if wt_path.exists() and (wt_path / ".git").exists():
+            return wt_path
+
+        # Crash recovery: if the directory exists without .git, remove it
+        if wt_path.exists():
+            try:
+                git.remove_worktree(self.repo_root, wt_path)
+            except git.GitError:
+                shutil.rmtree(wt_path, ignore_errors=True)
+            try:
+                git.delete_branch(self.repo_root, branch)
+            except git.GitError:
+                pass
+
+        try:
+            git.create_worktree(
+                self.repo_root, wt_path, branch, base_ref=self.base_branch,
+            )
+            if self.repo_subpath:
+                self._overlay_untracked_subpath_files(wt_path)
+        except git.GitError as e:
+            logger.warning("team workspace creation failed: %s", e)
+            # Fallback: create plain directory
+            wt_path.mkdir(parents=True, exist_ok=True)
+
+        return wt_path
 
     def _overlay_untracked_subpath_files(self, worktree_root: Path) -> None:
         source_root = self.repo_root / self.repo_subpath
