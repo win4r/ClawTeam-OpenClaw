@@ -96,6 +96,12 @@ class InboxWatcher:
             "CLAWTEAM_MSG_CONTENT": msg.content or "",
             "CLAWTEAM_MSG_TIMESTAMP": msg.timestamp or "",
             "CLAWTEAM_MSG_JSON": msg.model_dump_json(by_alias=True, exclude_none=True),
+            "OH_MSG_FROM": msg.from_agent or "",
+            "OH_MSG_TO": msg.to or "",
+            "OH_MSG_TYPE": msg.type.value,
+            "OH_MSG_CONTENT": msg.content or "",
+            "OH_MSG_TIMESTAMP": msg.timestamp or "",
+            "OH_MSG_JSON": msg.model_dump_json(by_alias=True, exclude_none=True),
         }
         import os
         full_env = {**os.environ, **env_extra}

@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 
+from clawteam.spawn.adapters import NativeCliAdapter
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import (
     build_spawn_path,
@@ -22,10 +23,15 @@ from clawteam.spawn.command_validation import (
     is_nanobot_command,
     is_openclaw_command,
     is_opencode_command,
+    is_pi_command,
     is_qwen_command,
     normalize_spawn_command,
     validate_spawn_command,
 )
+from clawteam.spawn.runtime_notification import render_runtime_notification
+from clawteam.spawn.session_capture import persist_spawned_session, prepare_session_capture
+from clawteam.team.mailbox import MailboxManager
+from clawteam.team.models import MessageType, get_data_dir
 
 
 class SubprocessBackend(SpawnBackend):
@@ -33,6 +39,7 @@ class SubprocessBackend(SpawnBackend):
 
     def __init__(self):
         self._processes: dict[str, subprocess.Popen] = {}
+        self._adapter = NativeCliAdapter()
 
     def spawn(
         self,
@@ -47,6 +54,9 @@ class SubprocessBackend(SpawnBackend):
         skip_permissions: bool = False,
         openclaw_agent: str | None = None,
         model: str | None = None,
+        system_prompt: str | None = None,
+        is_leader: bool = False,
+        keepalive: bool = False,
     ) -> str:
         if openclaw_agent:
             raise NotImplementedError(
@@ -56,12 +66,15 @@ class SubprocessBackend(SpawnBackend):
 
         spawn_env = os.environ.copy()
         clawteam_bin = resolve_clawteam_executable()
+        spawn_env.setdefault("LANG", "en_US.UTF-8")
+        spawn_env.setdefault("LC_CTYPE", "UTF-8")
+        spawn_env.setdefault("CLAWTEAM_DATA_DIR", str(get_data_dir()))
         spawn_env.update({
             "CLAWTEAM_AGENT_ID": agent_id,
             "CLAWTEAM_AGENT_NAME": agent_name,
             "CLAWTEAM_AGENT_TYPE": agent_type,
             "CLAWTEAM_TEAM_NAME": team_name,
-            "CLAWTEAM_AGENT_LEADER": "0",
+            "CLAWTEAM_AGENT_LEADER": "1" if is_leader else "0",
             "CLAWTEAM_MEMORY_SCOPE": f"custom:team-{team_name}",
         })
         # Propagate user if set
@@ -84,6 +97,15 @@ class SubprocessBackend(SpawnBackend):
         if is_openclaw_command(command):
             propagate_openclaw_gateway_token(spawn_env)
 
+        # Session capture before normalizing (upstream PR #154 — locators read original command shape).
+        session_capture = prepare_session_capture(
+            command,
+            team_name=team_name,
+            agent_name=agent_name,
+            cwd=cwd,
+            prompt=prompt,
+        )
+
         normalized_command = normalize_spawn_command(command)
 
         command_error = validate_spawn_command(normalized_command, path=spawn_env["PATH"], cwd=cwd)
@@ -92,13 +114,18 @@ class SubprocessBackend(SpawnBackend):
 
         final_command = list(normalized_command)
         if skip_permissions:
-            if is_claude_command(normalized_command) or is_qwen_command(normalized_command):
+            if is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
             elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command) or is_hermes_command(normalized_command):
+            elif (
+                is_gemini_command(normalized_command)
+                or is_kimi_command(normalized_command)
+                or is_opencode_command(normalized_command)
+                or is_hermes_command(normalized_command)
+                or is_qwen_command(normalized_command)
+            ):
                 final_command.append("--yolo")
-        # Claude Code: pass --model if specified
         # Pass --model if specified (claude, openclaw)
         if model and is_claude_command(normalized_command):
             final_command.extend(["--model", model])
@@ -142,6 +169,17 @@ class SubprocessBackend(SpawnBackend):
             else:
                 final_command.extend(["-p", prompt])
 
+        # System prompt injection for claude/pi (upstream PR #154 — minimal port; keepalive
+        # shell wrapper is intentionally skipped in favour of fork's subprocess_wrapper
+        # + lifecycle on-exit + auto-respawn path).
+        if system_prompt and (
+            is_claude_command(normalized_command) or is_pi_command(normalized_command)
+        ):
+            insert_at = final_command.index("-p") if "-p" in final_command else len(final_command)
+            final_command[insert_at:insert_at] = ["--append-system-prompt", system_prompt]
+        # keepalive=True intentionally falls through to the fork wrapper: respawn_agent
+        # in cli/commands.py handles abnormal-exit recovery via the on-exit hook below.
+
         wrapper_command = [
             sys.executable,
             "-m",
@@ -173,6 +211,13 @@ class SubprocessBackend(SpawnBackend):
             pid=process.pid,
             command=list(final_command),
         )
+        # Persist captured session for resume (upstream PR #154).
+        persist_spawned_session(
+            session_capture,
+            team_name=team_name,
+            agent_name=agent_name,
+            command=list(final_command),
+        )
 
         return f"Agent '{agent_name}' spawned as subprocess (pid={process.pid})"
 
@@ -184,3 +229,21 @@ class SubprocessBackend(SpawnBackend):
             else:
                 self._processes.pop(name, None)
         return result
+
+    def inject_runtime_message(self, team: str, agent_name: str, envelope) -> tuple[bool, str]:
+        """Deliver a runtime notification through the agent inbox for headless workers."""
+        from clawteam.spawn.registry import is_agent_alive
+
+        alive = is_agent_alive(team, agent_name)
+        if alive is False or alive is None:
+            return False, f"subprocess agent '{team}/{agent_name}' is not alive"
+
+        mailbox = MailboxManager(team)
+        mailbox.send(
+            from_agent=str(getattr(envelope, "source", "system") or "system"),
+            to=agent_name,
+            content=render_runtime_notification(envelope),
+            msg_type=MessageType.message,
+            summary=str(getattr(envelope, "summary", "") or "").strip() or "Runtime update",
+        )
+        return True, f"Queued runtime notification in inbox for subprocess agent {agent_name}"

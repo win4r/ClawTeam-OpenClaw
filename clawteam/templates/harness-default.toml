@@ -1,0 +1,22 @@
+[template]
+name = "harness-default"
+description = "Default plan-then-execute harness with planner, executors, and evaluator"
+command = ["claude"]
+backend = "tmux"
+harness = true
+
+[template.harness]
+phases = ["discuss", "plan", "execute", "verify", "ship"]
+human_gates = ["plan"]
+wave_parallelism = 3
+evaluator_count = 1
+
+[template.leader]
+name = "planner"
+type = "planner"
+task = "Analyze the user's goal, discuss requirements, and produce a structured specification with sprint contracts. Each contract must have testable success criteria."
+
+[[template.agents]]
+name = "evaluator"
+type = "evaluator"
+task = "Review the implementation against the sprint contract success criteria. Test thoroughly and report specific, actionable findings for each criterion."

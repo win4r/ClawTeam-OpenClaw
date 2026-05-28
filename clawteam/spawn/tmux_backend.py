@@ -11,9 +11,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from xml.sax.saxutils import escape
 
 from clawteam.platform_compat import is_windows
+from clawteam.spawn.adapters import NativeCliAdapter
 from clawteam.spawn.base import SpawnBackend
 from clawteam.spawn.cli_env import (
     build_spawn_path,
@@ -30,10 +30,14 @@ from clawteam.spawn.command_validation import (
     is_nanobot_command,
     is_openclaw_command,
     is_opencode_command,
+    is_pi_command,
     is_qwen_command,
     normalize_spawn_command,
     validate_spawn_command,
 )
+from clawteam.spawn.runtime_notification import render_runtime_notification
+from clawteam.spawn.session_capture import persist_spawned_session, prepare_session_capture
+from clawteam.team.models import get_data_dir
 
 _SHELL_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -83,6 +87,7 @@ class TmuxBackend(SpawnBackend):
 
     def __init__(self):
         self._agents: dict[str, str] = {}  # agent_name -> tmux target
+        self._adapter = NativeCliAdapter()
 
     def spawn(
         self,
@@ -97,6 +102,9 @@ class TmuxBackend(SpawnBackend):
         skip_permissions: bool = False,
         openclaw_agent: str | None = None,
         model: str | None = None,
+        system_prompt: str | None = None,
+        is_leader: bool = False,
+        keepalive: bool = False,
     ) -> str:
         if not shutil.which("tmux"):
             return _tmux_unavailable_message("spawn")
@@ -118,12 +126,13 @@ class TmuxBackend(SpawnBackend):
         # normalize TERM to a sensible value before exporting it into the pane.
         if env_vars.get("TERM", "").lower() == "dumb":
             env_vars["TERM"] = "xterm-256color"
+        env_vars.setdefault("CLAWTEAM_DATA_DIR", str(get_data_dir()))
         env_vars.update({
             "CLAWTEAM_AGENT_ID": agent_id,
             "CLAWTEAM_AGENT_NAME": agent_name,
             "CLAWTEAM_AGENT_TYPE": agent_type,
             "CLAWTEAM_TEAM_NAME": team_name,
-            "CLAWTEAM_AGENT_LEADER": "0",
+            "CLAWTEAM_AGENT_LEADER": "1" if is_leader else "0",
             "CLAWTEAM_MEMORY_SCOPE": f"custom:team-{team_name}",
         })
         # Propagate user if set
@@ -138,6 +147,8 @@ class TmuxBackend(SpawnBackend):
             env_vars["CLAWTEAM_WORKSPACE_DIR"] = cwd
         if model:
             env_vars["CLAWTEAM_MODEL"] = model
+        # Inject context awareness flags
+        env_vars["CLAWTEAM_CONTEXT_ENABLED"] = "1"
         if env:
             env_vars.update(env)
         env_vars["PATH"] = build_spawn_path(env_vars.get("PATH", os.environ.get("PATH")))
@@ -157,7 +168,18 @@ class TmuxBackend(SpawnBackend):
             env_vars["OPENCLAW_WORKSPACE"] = worker_ws
             propagate_openclaw_gateway_token(env_vars)
 
-        normalized_command = normalize_spawn_command(command)
+        # Session capture hook (upstream PR #154): record session id before spawn for
+        # later resume.  OpenClaw locator's prepare() does not modify command, so
+        # subsequent fork manual flag handling remains valid.
+        session_capture = prepare_session_capture(
+            command,
+            team_name=team_name,
+            agent_name=agent_name,
+            cwd=cwd,
+            prompt=prompt,
+        )
+
+        normalized_command = normalize_spawn_command(session_capture.command)
 
         command_error = validate_spawn_command(normalized_command, path=env_vars["PATH"], cwd=cwd)
         if command_error:
@@ -168,16 +190,35 @@ class TmuxBackend(SpawnBackend):
         # WSL includes names like ``PROGRAMFILES(X86)``, which would abort the
         # shell before the pane becomes observable.
         export_vars = {k: v for k, v in env_vars.items() if _SHELL_ENV_KEY_RE.fullmatch(k)}
-        export_str = "; ".join(f"export {k}={shlex.quote(v)}" for k, v in export_vars.items())
+
+        # Write env vars to a temp file and source it to avoid exceeding
+        # tmux's command-length limit (~16k chars).  The file is deliberately
+        # NOT deleted here — the sourcing shell needs it at startup.  A
+        # self-cleanup line inside the file removes it after it has been read.
+        env_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".env.sh", delete=False, prefix="clawteam-env-"
+        )
+        for k, v in export_vars.items():
+            env_file.write(f"export {k}={shlex.quote(v)}\n")
+        # Self-cleanup: remove the env file after sourcing
+        env_file.write(f"rm -f {shlex.quote(env_file.name)}\n")
+        env_file.close()
+        env_source_cmd = f". {shlex.quote(env_file.name)}"
 
         # Build the command (without prompt -- we'll send it via send-keys)
         final_command = list(normalized_command)
         if skip_permissions:
-            if is_claude_command(normalized_command) or is_qwen_command(normalized_command):
+            if is_claude_command(normalized_command):
                 final_command.append("--dangerously-skip-permissions")
             elif is_codex_command(normalized_command):
                 final_command.append("--dangerously-bypass-approvals-and-sandbox")
-            elif is_gemini_command(normalized_command) or is_kimi_command(normalized_command) or is_opencode_command(normalized_command) or is_hermes_command(normalized_command):
+            elif (
+                is_gemini_command(normalized_command)
+                or is_kimi_command(normalized_command)
+                or is_opencode_command(normalized_command)
+                or is_hermes_command(normalized_command)
+                or is_qwen_command(normalized_command)
+            ):
                 final_command.append("--yolo")
 
         # Claude Code: pass --model if specified
@@ -243,12 +284,24 @@ class TmuxBackend(SpawnBackend):
         elif prompt and is_codex_command(normalized_command):
             final_command.append(prompt)
         elif prompt and is_gemini_command(normalized_command):
-            final_command.extend(["-p", prompt])
+            # Gemini in interactive (tmux) context uses -i; subprocess uses -p.
+            # Aligns with upstream adapter behaviour (per backlog §11 adapters.py).
+            final_command.extend(["-i", prompt])
         elif prompt and (is_qwen_command(normalized_command) or is_opencode_command(normalized_command)):
             final_command.extend(["-p", prompt])
 
+        # system_prompt injection (upstream PR #154): claude/pi only.
+        if system_prompt and (is_claude_command(normalized_command) or is_pi_command(normalized_command)):
+            insert_at = final_command.index("-p") if "-p" in final_command else len(final_command)
+            final_command[insert_at:insert_at] = ["--append-system-prompt", system_prompt]
+
         cmd_str = " ".join(shlex.quote(c) for c in final_command)
-        # Append on-exit hook: runs immediately when agent process exits
+        # Append on-exit hook: runs immediately when agent process exits.  This
+        # is the fork's lifecycle path — invokes `clawteam lifecycle on-exit`
+        # which triggers respawn_agent (PR #60 auto-respawn).  upstream's
+        # build_keepalive_shell_command/resume_command path is NOT used here;
+        # the `keepalive` arg is accepted for signature compatibility but the
+        # fork wrapper + on-exit hook covers the same recovery semantics.
         exit_cmd = shlex.quote(clawteam_bin) if os.path.isabs(clawteam_bin) else "clawteam"
         exit_hook = (
             f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
@@ -258,9 +311,9 @@ class TmuxBackend(SpawnBackend):
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
         if cwd:
-            full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{env_source_cmd}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
         else:
-            full_cmd = f"{unset_clause}{export_str}; trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{env_source_cmd}; trap \"{exit_hook}\" EXIT; {cmd_str}"
 
         # Check if tmux session exists
         check = subprocess.run(
@@ -288,6 +341,14 @@ class TmuxBackend(SpawnBackend):
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
 
+        # Keep leader pane alive even if the agent process exits, so it can be
+        # re-activated or inspected later (upstream PR #154 new feature).
+        if is_leader:
+            subprocess.run(
+                ["tmux", "set-option", "-t", target, "remain-on-exit", "on"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+
         from clawteam.config import load_config
 
         cfg = load_config()
@@ -309,8 +370,13 @@ class TmuxBackend(SpawnBackend):
             timeout_seconds=cfg.spawn_ready_timeout,
         )
 
-        # Send the prompt as input to the interactive session
+        # Send the prompt as input to the interactive session (fork path).
         # OpenClaw TUI, Codex, nanobot, and Gemini already received prompt via command args, skip here.
+        # NOTE: fork uses trap EXIT inside cmd_str + `clawteam lifecycle on-exit`
+        # for cleanup (PR #60 auto-respawn).  upstream's tmux set-hook
+        # pane-exited/pane-died would double-trigger on-exit, so we deliberately
+        # skip those hooks here.  is_leader remain-on-exit above is harmless
+        # additive behaviour.
         if prompt and is_claude_command(normalized_command):
             # Wait for Claude Code to finish startup and show input prompt.
             # Bedrock-backed instances can take 10+ seconds to initialize.
@@ -355,8 +421,28 @@ class TmuxBackend(SpawnBackend):
             backend="tmux",
             tmux_target=target,
             pid=pane_pid,
-            command=list(normalized_command),
+            command=list(final_command),
         )
+        persist_spawned_session(
+            session_capture,
+            team_name=team_name,
+            agent_name=agent_name,
+            command=list(final_command),
+        )
+
+        # Emit AfterWorkerSpawn event
+        try:
+            from clawteam.events.global_bus import get_event_bus
+            from clawteam.events.types import AfterWorkerSpawn
+            get_event_bus().emit_async(AfterWorkerSpawn(
+                team_name=team_name,
+                agent_name=agent_name,
+                agent_id=agent_id,
+                backend="tmux",
+                target=target,
+            ))
+        except Exception:
+            pass
 
         return f"Agent '{agent_name}' spawned in tmux ({target})"
 
@@ -384,7 +470,7 @@ class TmuxBackend(SpawnBackend):
             _inject_prompt_via_buffer(
                 target,
                 agent_name,
-                _render_runtime_notification(envelope),
+                render_runtime_notification(envelope),
             )
         except Exception as exc:
             return False, f"runtime injection failed for '{target}': {exc}"
@@ -466,7 +552,6 @@ class TmuxBackend(SpawnBackend):
         subprocess.run(["tmux", "attach-session", "-t", session])
         return result
 
-
 def _confirm_workspace_trust_if_prompted(
     target: str,
     command: list[str],
@@ -477,7 +562,7 @@ def _confirm_workspace_trust_if_prompted(
 
     Claude Code and Codex can stop at a directory trust prompt when launched in
     a fresh git worktree. Claude can also pause on a confirmation dialog when
-    ``--dangerously-skip-permissions`` is enabled. Detect these screens before
+    `--dangerously-skip-permissions` is enabled. Detect these screens before
     any prompt injection so the interactive TUI remains intact.
     """
     if not (is_claude_command(command) or is_codex_command(command) or is_gemini_command(command)):
@@ -643,9 +728,9 @@ def _wait_for_cli_ready(
 
     Uses two complementary heuristics:
 
-    1. **Prompt indicators** -- common prompt characters or well-known hint
-       lines in the last few visible lines.
-    2. **Content stabilization** -- if the pane output has stopped changing
+    1. **Prompt indicators** — common prompt characters (``❯``, ``>``,
+       ``›``) or well-known hint lines in the last few visible lines.
+    2. **Content stabilization** — if the pane output has stopped changing
        for two consecutive polls and contains visible text, the CLI has
        likely finished initialisation and is waiting for input.
 
@@ -672,7 +757,7 @@ def _wait_for_cli_ready(
 
         for line in tail:
             # Claude Code shows these prompt characters when ready
-            if line.startswith(("\u276f", ">", "\u203a")):
+            if line.startswith(("❯", ">", "›")):
                 return True
             # Also detect the "Try ..." hint line
             if "Try " in line and "write a test" in line:
@@ -703,7 +788,7 @@ def _wait_for_tui_ready(
     injection. When readiness is not detected before ``timeout``, we keep the
     previous fallback behaviour and sleep for ``fallback_delay`` seconds.
     """
-    ready_hints = ("\u256d", "\u2554", "\u250c", "\u2502", "\u2551", "\u2713", ">", "\u276f", "\u203a")
+    ready_hints = ("╭", "╔", "┌", "│", "║", "✓", ">", "❯", "›")
     time.sleep(0.5)
 
     deadline = time.time() + timeout
@@ -771,41 +856,6 @@ def _inject_prompt_via_buffer(
     finally:
         os.unlink(tmp_path)
 
-def _render_runtime_notification(envelope) -> str:
-    summary = str(getattr(envelope, "summary", "") or "").strip()
-    if not summary:
-        summary = "Runtime update"
-
-    evidence = getattr(envelope, "evidence", []) or []
-    if isinstance(evidence, str):
-        evidence = [evidence]
-    evidence_block = "\n".join(str(item) for item in evidence if item)
-
-    lines = [
-        '<clawteam_notification version="1"',
-        f'  source="{escape(str(getattr(envelope, "source", "system") or "system"))}"',
-        f'  target="{escape(str(getattr(envelope, "target", "") or ""))}"',
-        f'  channel="{escape(str(getattr(envelope, "channel", "direct") or "direct"))}"',
-        f'  priority="{escape(str(getattr(envelope, "priority", "medium") or "medium"))}">',
-        "<summary>",
-        escape(summary),
-        "</summary>",
-    ]
-
-    if evidence_block:
-        lines.extend(["<evidence>", escape(evidence_block), "</evidence>"])
-    recommended_next_action = str(getattr(envelope, "recommended_next_action", "") or "").strip()
-    if recommended_next_action:
-        lines.extend(
-            [
-                "<recommended_next_action>",
-                escape(recommended_next_action),
-                "</recommended_next_action>",
-            ]
-        )
-
-    lines.append("</clawteam_notification>")
-    return "\n".join(lines)
 
 def _tmux_unavailable_message(context: str) -> str:
     """Return a helpful error when tmux is unavailable."""

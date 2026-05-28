@@ -38,10 +38,21 @@ class AgentPreset(BaseModel):
     client_overrides: dict[str, AgentProfile] = Field(default_factory=dict)
 
 
+class HookDef(BaseModel):
+    """A user-configurable event hook (stored in config)."""
+
+    event: str = ""
+    action: str = "shell"  # "shell" | "python"
+    command: str = ""
+    priority: int = 0
+    enabled: bool = True
+
+
 class ClawTeamConfig(BaseModel):
     data_dir: str = ""
     user: str = ""
     default_team: str = ""
+    default_profile: str = ""
     transport: str = ""
     task_store: str = ""  # "file" (default) — extensible for redis/sql later
     workspace: str = "auto"  # "auto" | "always" | "never" | ""
@@ -51,6 +62,18 @@ class ClawTeamConfig(BaseModel):
     spawn_ready_timeout: float = 30.0  # max seconds to poll for TUI readiness before fallback
     default_model: str = ""  # default model for all agents (fallback)
     model_tiers: dict[str, str] = {}  # custom tier overrides: {"strong": "opus", ...}
+    timezone: str = "UTC"  # display timezone for human-readable timestamps
+    gource_path: str = ""  # custom path to gource binary (auto-detected if empty)
+    gource_resolution: str = "1280x720"  # default viewport resolution
+    gource_seconds_per_day: float = 0.5  # animation speed
+    profiles: dict[str, AgentProfile] = Field(default_factory=dict)
+    presets: dict[str, AgentPreset] = Field(default_factory=dict)
+    hooks: list[HookDef] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
+
+
+# Alias for code that uses the harness naming
+HarnessConfig = ClawTeamConfig
 
 
 def config_path() -> Path:
@@ -87,6 +110,7 @@ def get_effective(key: str) -> tuple[str, str]:
         "data_dir": "CLAWTEAM_DATA_DIR",
         "user": "CLAWTEAM_USER",
         "default_team": "CLAWTEAM_TEAM_NAME",
+        "default_profile": "CLAWTEAM_DEFAULT_PROFILE",
         "transport": "CLAWTEAM_TRANSPORT",
         "task_store": "CLAWTEAM_TASK_STORE",
         "workspace": "CLAWTEAM_WORKSPACE",
@@ -95,6 +119,10 @@ def get_effective(key: str) -> tuple[str, str]:
         "spawn_prompt_delay": "CLAWTEAM_SPAWN_PROMPT_DELAY",
         "spawn_ready_timeout": "CLAWTEAM_SPAWN_READY_TIMEOUT",
         "default_model": "CLAWTEAM_DEFAULT_MODEL",
+        "timezone": "CLAWTEAM_TIMEZONE",
+        "gource_path": "CLAWTEAM_GOURCE_PATH",
+        "gource_resolution": "CLAWTEAM_GOURCE_RESOLUTION",
+        "gource_seconds_per_day": "CLAWTEAM_GOURCE_SECONDS_PER_DAY",
     }
     defaults = ClawTeamConfig()
     cfg = load_config()
@@ -111,3 +139,12 @@ def get_effective(key: str) -> tuple[str, str]:
         return str(file_val), "file"
 
     return str(default_val), "default"
+
+
+def scalar_config_keys() -> list[str]:
+    """Return user-facing scalar config keys (excluding nested structures)."""
+    return [
+        key
+        for key in ClawTeamConfig.model_fields.keys()
+        if key not in {"profiles", "presets"}
+    ]

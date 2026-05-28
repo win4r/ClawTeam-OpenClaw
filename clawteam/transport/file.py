@@ -149,7 +149,7 @@ class FileTransport(Transport):
         target = inbox / filename
         try:
             tmp.write_bytes(data)
-            tmp.replace(target)
+            os.replace(str(tmp), str(target))
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
@@ -206,7 +206,7 @@ class FileTransport(Transport):
             raw_path = dead_dir / f"{raw_path.stem}-{uuid.uuid4().hex[:8]}{raw_path.suffix}"
 
         if consumed_path is not None and consumed_path.exists():
-            consumed_path.replace(raw_path)
+            os.replace(str(consumed_path), str(raw_path))
         else:
             raw_path.write_bytes(data)
 

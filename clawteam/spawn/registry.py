@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import signal
 import subprocess
 import time
 from enum import Enum
@@ -148,6 +151,7 @@ def register_agent(
     agent_name: str,
     backend: str,
     tmux_target: str = "",
+    block_id: str = "",
     pid: int = 0,
     command: list[str] | None = None,
 ) -> None:
@@ -158,6 +162,7 @@ def register_agent(
         registry[agent_name] = {
             "backend": backend,
             "tmux_target": tmux_target,
+            "block_id": block_id,
             "pid": pid,
             "command": command or [],
             "spawned_at": time.time(),
@@ -207,6 +212,8 @@ def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
         return alive
     elif backend == "subprocess":
         return pid_alive(info.get("pid", 0))
+    elif backend == "wsh":
+        return _wsh_block_alive(info.get("block_id", ""))
     return None
 
 
@@ -219,7 +226,6 @@ def list_dead_agents(team_name: str) -> list[str]:
         if alive is False:
             dead.append(name)
     return dead
-
 
 
 def list_zombie_agents(team_name: str, max_hours: float = 2.0) -> list[dict]:
@@ -250,6 +256,55 @@ def list_zombie_agents(team_name: str, max_hours: float = 2.0) -> list[dict]:
     return zombies
 
 
+def stop_agent(team_name: str, agent_name: str, timeout_seconds: float = 3.0) -> bool | None:
+    """Best-effort stop of a previously registered agent.
+
+    Returns:
+        True if the agent was confirmed stopped.
+        False if it was found but did not stop within the timeout.
+        None if no registry entry exists.
+    """
+    registry = get_registry(team_name)
+    info = registry.get(agent_name)
+    if not info:
+        return None
+
+    backend = info.get("backend", "")
+    if backend == "tmux":
+        target = info.get("tmux_target", "")
+        if target:
+            subprocess.run(
+                ["tmux", "kill-window", "-t", target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+    elif backend == "subprocess":
+        pid = info.get("pid", 0)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False
+    elif backend == "wsh":
+        block_id = info.get("block_id", "")
+        if block_id:
+            subprocess.run(
+                ["wsh", "deleteblock", "-b", block_id],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        alive = is_agent_alive(team_name, agent_name)
+        if alive is False or alive is None:
+            return True
+        time.sleep(0.1)
+
+    return is_agent_alive(team_name, agent_name) in (False, None)
+
 
 def _tmux_pane_alive(target: str) -> bool:
     """Check if a tmux target (session:window) still has a running process."""
@@ -278,6 +333,43 @@ def _tmux_pane_alive(target: str) -> bool:
 def _pid_alive(pid: int) -> bool:
     """Backward-compatible alias for the cross-platform PID liveness helper."""
     return pid_alive(pid)
+
+
+def _wsh_block_alive(block_id: str) -> bool:
+    """Check if a wsh block is still alive."""
+    if not block_id:
+        return False
+
+    wsh_bin = shutil.which("wsh")
+    if not wsh_bin:
+        for p in [
+            Path.home() / ".local/share/tideterm/bin/wsh",
+            Path.home() / ".local/state/waveterm/bin/wsh",
+        ]:
+            if p.is_file() and os.access(p, os.X_OK):
+                wsh_bin = str(p)
+                break
+    if not wsh_bin:
+        return False
+
+    result = subprocess.run(
+        [wsh_bin, "blocks", "list", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    if result.returncode != 0:
+        return False
+
+    try:
+        blocks = json.loads(result.stdout)
+        for block in blocks:
+            if block.get("blockid") == block_id:
+                return True
+    except json.JSONDecodeError:
+        pass
+
+    return False
 
 
 def _load(path: Path) -> dict:

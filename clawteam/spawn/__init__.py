@@ -10,6 +10,14 @@ from clawteam.spawn.base import SpawnBackend
 
 logger = logging.getLogger(__name__)
 
+_BACKEND_REGISTRY: dict[str, type[SpawnBackend]] = {}
+
+
+def register_backend(name: str, cls: type[SpawnBackend]) -> None:
+    """Register a custom spawn backend (e.g. from a plugin)."""
+    _BACKEND_REGISTRY[name] = cls
+
+
 
 def normalize_backend_name(name: str | None) -> str:
     """Resolve backend name with a Windows-safe default/fallback."""
@@ -21,6 +29,8 @@ def normalize_backend_name(name: str | None) -> str:
 
 def get_backend(name: str | None = None) -> SpawnBackend:
     """Factory function to get a spawn backend by name."""
+    if name in _BACKEND_REGISTRY:
+        return _BACKEND_REGISTRY[name]()
     selected = normalize_backend_name(name)
     if selected == "subprocess":
         from clawteam.spawn.subprocess_backend import SubprocessBackend
@@ -60,4 +70,10 @@ def spawn_with_retry(
     return last_result
 
 
-__all__ = ["SpawnBackend", "get_backend", "normalize_backend_name", "spawn_with_retry"]
+__all__ = [
+    "SpawnBackend",
+    "get_backend",
+    "normalize_backend_name",
+    "register_backend",
+    "spawn_with_retry",
+]

@@ -1,12 +1,6 @@
 """Tests for clawteam.team.snapshot — team state checkpoint/restore."""
 
 import json
-import sys
-
-if sys.platform == "win32":
-    import msvcrt
-else:
-    import fcntl
 
 import pytest
 
@@ -15,6 +9,7 @@ from clawteam.team.manager import TeamManager
 from clawteam.team.models import get_data_dir
 from clawteam.team.snapshot import SnapshotManager, SnapshotMeta, _snapshots_root
 from clawteam.team.tasks import TaskStore
+from clawteam.transport.file import try_lock
 
 
 def _setup_team(team_name: str) -> None:
@@ -151,27 +146,12 @@ class TestSnapshotCreate:
             encoding="utf-8",
         )
 
-        with consumed.open("a+b") as locked_file:
-            if sys.platform == "win32":
-                locked_file.seek(0)
-                if consumed.stat().st_size == 0:
-                    locked_file.write(b"0")
-                    locked_file.flush()
-                locked_file.seek(0)
-                msvcrt.locking(locked_file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with consumed.open("rb") as locked_file:
+            try_lock(locked_file)
 
-            try:
-                meta = SnapshotManager(team_with_data).create()
-                path = _snapshots_root(team_with_data) / f"snap-{meta.id}.json"
-                bundle = json.loads(path.read_text("utf-8"))
-            finally:
-                if sys.platform == "win32":
-                    locked_file.seek(0)
-                    msvcrt.locking(locked_file.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(locked_file.fileno(), fcntl.LOCK_UN)
+            meta = SnapshotManager(team_with_data).create()
+            path = _snapshots_root(team_with_data) / f"snap-{meta.id}.json"
+            bundle = json.loads(path.read_text("utf-8"))
 
         inbox_messages = bundle["inboxes"].get("leader", [])
         assert all(message.get("content") != "in flight" for message in inbox_messages)

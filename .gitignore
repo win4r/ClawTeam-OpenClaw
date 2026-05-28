@@ -13,3 +13,4 @@ uv.lock
 .claude/*.local.md
 
 tmp/
+node_modules/

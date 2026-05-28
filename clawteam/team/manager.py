@@ -51,6 +51,11 @@ class TeamManager:
     """Manages team lifecycle operations."""
 
     @staticmethod
+    def team_exists(team_name: str) -> bool:
+        """Return True when a team config exists."""
+        return _load_config(team_name) is not None
+
+    @staticmethod
     def get_member(
         team_name: str,
         member_name: str,
@@ -76,6 +81,7 @@ class TeamManager:
         leader_id: str,
         description: str = "",
         user: str = "",
+        leader_agent_type: str = "leader",
     ) -> TeamConfig:
         validate_identifier(name, "team name")
         validate_identifier(leader_name, "leader name")
@@ -87,7 +93,7 @@ class TeamManager:
             name=leader_name,
             user=user,
             agent_id=leader_id,
-            agent_type="leader",
+            agent_type=leader_agent_type,
         )
         config = TeamConfig(
             name=name,

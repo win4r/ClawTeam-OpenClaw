@@ -14,7 +14,7 @@ def validate_identifier(value: str, kind: str = "identifier", allow_empty: bool 
         return value
     if not value:
         raise ValueError(f"Invalid {kind}: value must not be empty")
-    if value in (".", ".."):
+    if value in {".", ".."}:
         raise ValueError(f"Invalid {kind}: '.' and '..' are not allowed")
     if not _IDENTIFIER_RE.fullmatch(value):
         raise ValueError(

@@ -1,0 +1,19 @@
+{
+  "name": "clawteam-website",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config website/vite.config.mjs",
+    "build": "vite build --config website/vite.config.mjs",
+    "preview": "vite preview --config website/vite.config.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

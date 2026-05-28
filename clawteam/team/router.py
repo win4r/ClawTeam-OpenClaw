@@ -1,11 +1,12 @@
-"""Thin runtime router for tmux live injection."""
+"""Thin runtime router for live injection across interactive backends."""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
 
-from clawteam.spawn.tmux_backend import TmuxBackend
+from clawteam.spawn import get_backend
+from clawteam.spawn.registry import get_registry
 from clawteam.team.models import MessageType, TeamMessage
 from clawteam.team.routing_policy import DefaultRoutingPolicy, RouteDecision, RuntimeEnvelope
 
@@ -17,14 +18,14 @@ class RuntimeRouter:
         self,
         team_name: str,
         agent_name: str,
-        backend: TmuxBackend | None = None,
+        backend=None,
         policy: DefaultRoutingPolicy | None = None,
         session_agent_name: str | None = None,
     ):
         self.team_name = team_name
         self.inbox_agent_name = agent_name
         self.agent_name = session_agent_name or agent_name
-        self.backend = backend or TmuxBackend()
+        self.backend = backend
         self.policy = policy or DefaultRoutingPolicy(team_name=team_name)
 
     def normalize_message(self, message: TeamMessage) -> RuntimeEnvelope:
@@ -87,7 +88,8 @@ class RuntimeRouter:
         if decision.action != "inject" or not decision.envelope.requires_injection:
             return False
 
-        if not hasattr(self.backend, "inject_runtime_message"):
+        backend = self._resolve_backend()
+        if not hasattr(backend, "inject_runtime_message"):
             self.policy.record_dispatch_result(
                 decision,
                 success=False,
@@ -96,7 +98,7 @@ class RuntimeRouter:
             )
             return False
 
-        ok, reason = self.backend.inject_runtime_message(
+        ok, reason = backend.inject_runtime_message(
             self.team_name,
             decision.envelope.target,
             decision.envelope,
@@ -108,6 +110,16 @@ class RuntimeRouter:
             error="" if ok else reason,
         )
         return ok
+
+    def _resolve_backend(self):
+        if self.backend is not None:
+            return self.backend
+
+        registry = get_registry(self.team_name)
+        info = registry.get(self.agent_name) or registry.get(self.inbox_agent_name) or {}
+        backend_name = info.get("backend", "tmux") or "tmux"
+        self.backend = get_backend(backend_name)
+        return self.backend
 
     @staticmethod
     def _priority_for_message(message: TeamMessage) -> str:

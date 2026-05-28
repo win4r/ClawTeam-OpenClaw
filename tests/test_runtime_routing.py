@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from clawteam.spawn.registry import register_agent
+from clawteam.team.manager import TeamManager
 from clawteam.team.models import MessageType, TeamMessage
 from clawteam.team.router import RuntimeRouter
 from clawteam.team.routing_policy import DefaultRoutingPolicy, RuntimeEnvelope
@@ -102,6 +104,30 @@ def test_runtime_router_dispatches_and_flushes_aggregated_messages(tmp_path, mon
     assert route["pendingCount"] == 0
     assert route["lastDispatchStatus"] == "flushed"
     assert route["lastInjectedAt"] == _utc(10, 0, 31).isoformat()
+
+
+def test_runtime_router_resolves_registered_backend_for_runtime_injection(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
+    TeamManager.create_team(name="demo", leader_name="leader", leader_id="leader001")
+    register_agent("demo", "worker", backend="wsh", block_id="block-1")
+    calls: list[tuple[str, str, RuntimeEnvelope]] = []
+
+    class StubBackend:
+        def inject_runtime_message(self, team, agent_name, envelope):
+            calls.append((team, agent_name, envelope))
+            return True, "ok"
+
+    monkeypatch.setattr("clawteam.team.router.get_backend", lambda name: StubBackend() if name == "wsh" else None)
+
+    router = RuntimeRouter(team_name="demo", agent_name="worker")
+    decision = router.route_message(
+        TeamMessage(type=MessageType.message, from_agent="leader", to="worker", content="Heads up"),
+        now=_utc(10, 0, 0),
+    )
+
+    assert decision.action == "inject"
+    assert calls[0][0:2] == ("demo", "worker")
+    assert calls[0][2].summary == "Heads up"
 
 
 def test_default_routing_policy_failed_initial_injection_uses_retry_backoff(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from clawteam.team.models import TaskItem, TaskStatus
+from clawteam.team.models import TaskItem, TaskPriority, TaskStatus
 from clawteam.team.tasks import TaskLockError, TaskStore
 
 
@@ -23,6 +23,10 @@ class TestTaskCreate:
     def test_create_with_owner(self, store):
         t = store.create("Fix bug", owner="alice")
         assert t.owner == "alice"
+
+    def test_create_with_priority(self, store):
+        t = store.create("urgent item", priority=TaskPriority.urgent)
+        assert t.priority == TaskPriority.urgent
 
     def test_create_with_blocked_by_sets_blocked_status(self, store):
         t1 = store.create("first task")
@@ -71,6 +75,23 @@ class TestTaskUpdate:
         updated = store.update(t.id, owner="bob")
         assert updated.owner == "bob"
 
+    def test_update_in_progress_auto_claims_owner_from_caller(self, store):
+        t = store.create("task")
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            updated = store.update(t.id, status=TaskStatus.in_progress, caller="bob")
+        assert updated.owner == "bob"
+
+    def test_update_in_progress_keeps_existing_owner(self, store):
+        t = store.create("task", owner="alice")
+        with patch("clawteam.spawn.registry.is_agent_alive", return_value=None):
+            updated = store.update(t.id, status=TaskStatus.in_progress, caller="bob")
+        assert updated.owner == "alice"
+
+    def test_update_priority(self, store):
+        t = store.create("task")
+        updated = store.update(t.id, priority=TaskPriority.high)
+        assert updated.priority == TaskPriority.high
+
     def test_update_add_blocks(self, store):
         t1 = store.create("blocker")
         t2 = store.create("other")
@@ -82,6 +103,18 @@ class TestTaskUpdate:
         t2 = store.create("main")
         updated = store.update(t2.id, add_blocked_by=[t1.id])
         assert t1.id in updated.blocked_by
+        assert updated.status == TaskStatus.blocked
+
+    def test_update_rejects_self_cycle(self, store):
+        t1 = store.create("self")
+        with pytest.raises(ValueError, match="cannot be blocked by itself"):
+            store.update(t1.id, add_blocked_by=[t1.id])
+
+    def test_update_rejects_two_task_cycle(self, store):
+        t1 = store.create("a")
+        t2 = store.create("b", blocked_by=[t1.id])
+        with pytest.raises(ValueError, match="cannot contain cycles"):
+            store.update(t1.id, add_blocked_by=[t2.id])
 
     def test_update_metadata_merge(self, store):
         t = store.create("m", metadata={"a": 1})
@@ -130,6 +163,27 @@ class TestTaskList:
 
     def test_list_empty(self, store):
         assert store.list_tasks() == []
+
+    def test_list_filter_by_priority(self, store):
+        store.create("urgent-task", priority=TaskPriority.urgent)
+        store.create("low-task", priority=TaskPriority.low)
+        tasks = store.list_tasks(priority=TaskPriority.urgent)
+        assert len(tasks) == 1
+        assert tasks[0].priority == TaskPriority.urgent
+
+    def test_list_sort_by_priority(self, store):
+        store.create("medium-task")
+        store.create("low-task", priority=TaskPriority.low)
+        store.create("urgent-task", priority=TaskPriority.urgent)
+        store.create("high-task", priority=TaskPriority.high)
+
+        tasks = store.list_tasks(sort_by_priority=True)
+        assert [task.priority for task in tasks] == [
+            TaskPriority.urgent,
+            TaskPriority.high,
+            TaskPriority.medium,
+            TaskPriority.low,
+        ]
 
 
 class TestDependencyResolution:
