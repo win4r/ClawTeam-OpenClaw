@@ -1,0 +1,47 @@
+"""Event bus and hook system for ClawTeam."""
+
+from clawteam.events.bus import EventBus
+from clawteam.events.types import (
+    AfterInboxReceive,
+    AfterTaskUpdate,
+    AfterWorkerSpawn,
+    AfterWorkspaceCleanup,
+    AgentIdle,
+    BeforeInboxSend,
+    BeforeTaskCreate,
+    BeforeWorkerSpawn,
+    BeforeWorkspaceMerge,
+    BoardAttach,
+    HarnessEvent,
+    HeartbeatTimeout,
+    PhaseTransition,
+    TaskCompleted,
+    TeamLaunch,
+    TeamShutdown,
+    TransportFallback,
+    WorkerCrash,
+    WorkerExit,
+)
+
+__all__ = [
+    "EventBus",
+    "HarnessEvent",
+    "BeforeWorkerSpawn",
+    "AfterWorkerSpawn",
+    "WorkerExit",
+    "WorkerCrash",
+    "BeforeTaskCreate",
+    "AfterTaskUpdate",
+    "TaskCompleted",
+    "BeforeInboxSend",
+    "AfterInboxReceive",
+    "BeforeWorkspaceMerge",
+    "AfterWorkspaceCleanup",
+    "TeamLaunch",
+    "TeamShutdown",
+    "AgentIdle",
+    "HeartbeatTimeout",
+    "PhaseTransition",
+    "TransportFallback",
+    "BoardAttach",
+]

@@ -1,0 +1,7 @@
+interface:
+  display_name: "ClawTeam"
+  short_description: "Create and coordinate multi-agent teams from Codex."
+  default_prompt: "Use $clawteam to create a team, split this task into tracked work items, spawn workers, coordinate them, and deliver the result."
+
+policy:
+  allow_implicit_invocation: true

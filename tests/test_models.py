@@ -6,6 +6,7 @@ from clawteam.team.models import (
     MemberStatus,
     MessageType,
     TaskItem,
+    TaskPriority,
     TaskStatus,
     TeamConfig,
     TeamMember,
@@ -18,6 +19,7 @@ class TestTaskItem:
         t = TaskItem(subject="do something")
         assert t.subject == "do something"
         assert t.status == TaskStatus.pending
+        assert t.priority == TaskPriority.medium
         assert t.owner == ""
         assert t.blocks == []
         assert t.blocked_by == []
@@ -143,3 +145,9 @@ class TestEnums:
         assert MessageType.broadcast.value == "broadcast"
         assert MessageType.join_request.value == "join_request"
         assert MessageType.idle.value == "idle"
+
+    def test_task_priority_values(self):
+        assert TaskPriority.low.value == "low"
+        assert TaskPriority.medium.value == "medium"
+        assert TaskPriority.high.value == "high"
+        assert TaskPriority.urgent.value == "urgent"

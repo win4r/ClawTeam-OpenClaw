@@ -22,6 +22,9 @@ class SpawnBackend(ABC):
         skip_permissions: bool = False,
         openclaw_agent: str | None = None,
         model: str | None = None,
+        system_prompt: str | None = None,
+        is_leader: bool = False,
+        keepalive: bool = False,
     ) -> str:
         """Spawn a new agent process. Returns a status message."""
 

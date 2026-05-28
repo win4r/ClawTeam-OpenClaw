@@ -144,8 +144,16 @@ def test_tmux_backend_sets_openclaw_workspace_env(monkeypatch):
 
     spawn_cmd = captured.get("spawn_cmd", [])
     full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
-    assert "OPENCLAW_WORKSPACE=" in full_shell_cmd, (
-        f"Expected OPENCLAW_WORKSPACE in exports, got: {full_shell_cmd!r}"
+    # Env vars now live in a sourced temp file (upstream PR #154 — avoids the
+    # ~16k tmux command-length limit), so we extract that path and check the
+    # file contents instead of the inline shell string.
+    import re
+    m = re.search(r"\. (/[^\s;]+\.env\.sh)", full_shell_cmd)
+    assert m, f"No env file source in {full_shell_cmd!r}"
+    env_file_path = m.group(1)
+    env_content = open(env_file_path).read()
+    assert "OPENCLAW_WORKSPACE=" in env_content, (
+        f"Expected OPENCLAW_WORKSPACE in env file, got: {env_content!r}"
     )
 
 

@@ -124,6 +124,28 @@ class MailboxManager:
         data = msg.model_dump_json(indent=2, by_alias=True, exclude_none=True).encode("utf-8")
         self._transport.deliver(delivery_target, data)
         self._log_event(msg)
+        try:
+            from clawteam.team.redis_wakeup import agent_channel, publish_wakeup, team_channel
+            payload = {
+                "from": from_agent,
+                "to": to,
+                "deliveryTarget": delivery_target,
+                "type": msg_type.value,
+                "requestId": msg.request_id,
+            }
+            publish_wakeup(self.team_name, agent_channel(self.team_name, delivery_target), "inbox", payload)
+            publish_wakeup(self.team_name, team_channel(self.team_name, "events"), "inbox", payload)
+        except Exception:
+            pass
+        try:
+            from clawteam.events.global_bus import get_event_bus
+            from clawteam.events.types import BeforeInboxSend
+            get_event_bus().emit_async(BeforeInboxSend(
+                team_name=self.team_name, from_agent=from_agent,
+                to=to, msg_type=msg_type.value,
+            ))
+        except Exception:
+            pass
         return msg
 
     def broadcast(
@@ -141,7 +163,7 @@ class MailboxManager:
         # Build a mapping from inbox directory name to logical agent name
         # so we can correctly exclude the sender even when inbox names
         # use user-prefixed format (e.g. "alice_worker").
-        exclude_inboxes = set()
+        exclude_inboxes: set[str] = set()
         for name in exclude_set:
             inbox = TeamManager.resolve_inbox(self.team_name, name)
             exclude_inboxes.add(inbox)
@@ -161,6 +183,23 @@ class MailboxManager:
                 ).encode("utf-8")
                 self._transport.deliver(recipient, data)
                 self._log_event(msg)
+                try:
+                    from clawteam.team.redis_wakeup import (
+                        agent_channel,
+                        publish_wakeup,
+                        team_channel,
+                    )
+                    payload = {
+                        "from": from_agent,
+                        "to": recipient,
+                        "deliveryTarget": recipient,
+                        "type": msg_type.value,
+                        "requestId": msg.request_id,
+                    }
+                    publish_wakeup(self.team_name, agent_channel(self.team_name, recipient), "inbox", payload)
+                    publish_wakeup(self.team_name, team_channel(self.team_name, "events"), "inbox", payload)
+                except Exception:
+                    pass
                 messages.append(msg)
         return messages
 
@@ -194,14 +233,25 @@ class MailboxManager:
         """
         claim_messages = getattr(self._transport, "claim_messages", None)
         if callable(claim_messages):
-            return self._parse_claimed_messages(claim_messages(agent_name, limit))
-        raw = self._transport.fetch(agent_name, limit=limit, consume=True)
-        return [TeamMessage.model_validate(json.loads(r)) for r in raw]
+            msgs = self._parse_claimed_messages(claim_messages(agent_name, limit))
+        else:
+            raw = self._transport.fetch(agent_name, limit=limit, consume=True)
+            msgs = self._parse_messages(raw)
+        if msgs:
+            try:
+                from clawteam.events.global_bus import get_event_bus
+                from clawteam.events.types import AfterInboxReceive
+                get_event_bus().emit_async(AfterInboxReceive(
+                    team_name=self.team_name, agent_name=agent_name, count=len(msgs),
+                ))
+            except Exception:
+                pass
+        return msgs
 
     def peek(self, agent_name: str) -> list[TeamMessage]:
         """Return pending messages without consuming them."""
         raw = self._transport.fetch(agent_name, consume=False)
-        return [TeamMessage.model_validate(json.loads(r)) for r in raw]
+        return self._parse_messages(raw)
 
     def _find_by_idempotency_key(self, key: str) -> TeamMessage | None:
         """Check event log for a message with the same idempotency key."""

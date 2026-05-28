@@ -22,6 +22,7 @@ ClawTeam agents use these environment variables for identity:
 | `CLAWTEAM_DATA_DIR` | Override data directory | `/tmp/clawteam-data` |
 
 When spawning agents via `clawteam spawn`, these are set automatically.
+Legacy `OH_*` aliases remain accepted for compatibility.
 
 ---
 
@@ -172,6 +173,7 @@ clawteam task create <team> <subject> [options]
 |--------|-------------|---------|
 | `--description, -d` | Task description | `""` |
 | `--owner, -o` | Owner agent name | `""` |
+| `--priority, -p` | Task priority: `low`, `medium`, `high`, `urgent` | `"medium"` |
 | `--blocks` | Comma-separated task IDs this blocks | `None` |
 | `--blocked-by` | Comma-separated task IDs blocking this | `None` |
 
@@ -202,8 +204,10 @@ clawteam task update <team> <task-id> [options]
 | `--owner, -o` | New owner |
 | `--subject` | New subject |
 | `--description, -d` | New description |
+| `--priority, -p` | New priority: `low`, `medium`, `high`, `urgent` |
 | `--add-blocks` | Comma-separated task IDs to add to blocks |
 | `--add-blocked-by` | Comma-separated task IDs to add to blocked-by |
+| `--force, -f` | Force override task lock |
 
 When a task is marked `completed`, any tasks blocked by it are automatically unblocked (moved from `blocked` to `pending` if no other blockers remain).
 
@@ -212,7 +216,7 @@ When a task is marked `completed`, any tasks blocked by it are automatically unb
 List all tasks for a team, with optional filters.
 
 ```bash
-clawteam task list <team> [--status STATUS] [--owner NAME]
+clawteam task list <team> [--status STATUS] [--owner NAME] [--priority LEVEL] [--sort-priority]
 ```
 
 ---
@@ -221,12 +225,16 @@ clawteam task list <team> [--status STATUS] [--owner NAME]
 
 ### `board show`
 
-Show detailed kanban board for a team: header, members with inbox counts, 4-column task board.
+Show detailed team board data. Human output renders the kanban board; JSON output also includes
+members with inbox identity fields plus persistent message history from the event log.
 
 ```bash
 clawteam board show <team>
 clawteam --json board show <team>
 ```
+
+Recent board payloads include member-aware message aliases such as `memberKey`, `inboxName`,
+`fromLabel`, and `toLabel`, which are used by the browser board to filter inbox history.
 
 ### `board overview`
 

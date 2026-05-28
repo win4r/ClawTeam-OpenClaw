@@ -11,7 +11,6 @@ from clawteam.team.mailbox import MailboxManager
 from clawteam.team.manager import TeamManager
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: collect_overview leader/pendingMessages fields")
 def test_collect_overview_does_not_call_collect_team(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -40,7 +39,6 @@ def test_collect_overview_does_not_call_collect_team(monkeypatch, tmp_path: Path
     ]
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: collect_overview inbox count summing")
 def test_collect_overview_sums_inbox_counts_for_all_members(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -113,7 +111,6 @@ def test_team_snapshot_cache_expires_after_ttl(monkeypatch):
     assert calls["count"] == 2
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: collect_team conflicts field")
 def test_collect_team_preserves_conflicts_field(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -128,7 +125,6 @@ def test_collect_team_preserves_conflicts_field(monkeypatch, tmp_path: Path):
     assert "conflicts" in data
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: collect_team memberKey/inboxName fields")
 def test_collect_team_exposes_member_inbox_identity(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -146,7 +142,6 @@ def test_collect_team_exposes_member_inbox_identity(monkeypatch, tmp_path: Path)
     assert worker["inboxName"] == "alice_worker"
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: collect_team message participant normalization")
 def test_collect_team_normalizes_message_participants(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(tmp_path))
     TeamManager.create_team(
@@ -180,7 +175,6 @@ def test_collect_team_normalizes_message_participants(monkeypatch, tmp_path: Pat
     assert broadcast["isBroadcast"] is True
 
 
-@pytest.mark.skip(reason="upstream feature not yet synced: BoardCollector.collect_team_summary method")
 def test_collect_overview_preserves_broken_team_fallback(monkeypatch):
     def fake_discover():
         return [
@@ -302,6 +296,44 @@ def test_proxy_rejects_localhost_targets():
         _normalize_proxy_target("https://127.0.0.1/admin")
 
 
+def test_proxy_rejects_non_https_targets():
+    with pytest.raises(ValueError, match="https"):
+        _normalize_proxy_target("http://raw.githubusercontent.com/org/repo/main/README.md")
+
+
+def test_proxy_rejects_metadata_targets():
+    with pytest.raises(ValueError, match="not allowed"):
+        _normalize_proxy_target("https://169.254.169.254/latest/meta-data")
+
+
+def test_proxy_rejects_redirect_to_disallowed_host(monkeypatch):
+    class FakeResponse:
+        def __init__(self, url: str, payload: bytes):
+            self._url = url
+            self._payload = payload
+
+        def geturl(self):
+            return self._url
+
+        def read(self):
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeOpener:
+        def open(self, req, timeout=10):
+            return FakeResponse("https://example.com/payload", b"redirected")
+
+    monkeypatch.setattr("clawteam.board.server.urllib.request.build_opener", lambda *_: FakeOpener())
+
+    with pytest.raises(ValueError, match="GitHub-hosted"):
+        _fetch_proxy_content("https://raw.githubusercontent.com/org/repo/main/README.md")
+
+
 def test_proxy_fetches_allowed_github_content(monkeypatch):
     seen = {}
 
@@ -343,3 +375,5 @@ def test_board_ui_escapes_attacker_controlled_fields():
     assert "escapeHtml(t.owner || 'Unassigned')" in html
     assert "t.blockedBy.map(v => escapeHtml(v)).join(', ')" in html
     assert "option.textContent =" in html
+    assert "document.getElementById('ui-meta').innerText =" in html
+    assert "`${t.name || ''}${t.description ? ` - ${t.description}` : ''}`" in html

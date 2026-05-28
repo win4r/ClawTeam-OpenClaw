@@ -7,6 +7,7 @@ from clawteam.spawn.registry import (
     get_registry,
     is_agent_alive,
     list_dead_agents,
+    list_zombie_agents,
     register_agent,
 )
 from clawteam.team.manager import TeamManager
@@ -26,6 +27,7 @@ class TestRegisterAgent:
         assert registry["worker-1"]["backend"] == "tmux"
         assert registry["worker-1"]["pid"] == 1234
         assert registry["worker-1"]["tmux_target"] == "ct:w1"
+        assert "spawned_at" in registry["worker-1"]
 
     def test_register_overwrites_existing(self, team_name):
         _create_team(team_name)
@@ -114,6 +116,47 @@ class TestListDeadAgents:
         dead = list_dead_agents(team_name)
         assert "dead" in dead
         assert "alive" not in dead
+
+
+class TestListZombieAgents:
+    def test_skips_legacy_entries_without_spawned_at(self, team_name, isolated_data_dir, monkeypatch):
+        import os
+
+        _create_team(team_name)
+        register_agent(team_name, "worker", backend="subprocess", pid=os.getpid())
+        path = isolated_data_dir / "teams" / team_name / "spawn_registry.json"
+        registry = _load(path)
+        registry["worker"].pop("spawned_at", None)
+        _save(path, registry)
+
+        monkeypatch.setattr("clawteam.spawn.registry.is_agent_alive", lambda _team, _agent: True)
+
+        assert list_zombie_agents(team_name, max_hours=2.0) == []
+
+    def test_returns_only_long_running_alive_agents(self, team_name, isolated_data_dir, monkeypatch):
+        _create_team(team_name)
+        register_agent(team_name, "old-worker", backend="subprocess", pid=111)
+        register_agent(team_name, "fresh-worker", backend="subprocess", pid=222)
+        register_agent(team_name, "dead-worker", backend="subprocess", pid=333)
+
+        path = isolated_data_dir / "teams" / team_name / "spawn_registry.json"
+        registry = _load(path)
+        registry["old-worker"]["spawned_at"] = 1
+        registry["fresh-worker"]["spawned_at"] = 9_000
+        registry["dead-worker"]["spawned_at"] = 1
+        _save(path, registry)
+
+        monkeypatch.setattr(
+            "clawteam.spawn.registry.is_agent_alive",
+            lambda _team, agent: {"old-worker": True, "fresh-worker": True, "dead-worker": False}[agent],
+        )
+        monkeypatch.setattr("clawteam.spawn.registry.time.time", lambda: 10_800)
+
+        zombies = list_zombie_agents(team_name, max_hours=2.0)
+
+        assert len(zombies) == 1
+        assert zombies[0]["agent_name"] == "old-worker"
+        assert zombies[0]["running_hours"] == 3.0
 
 
 class TestLoadSave:

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ClawTeam user-level installer.
+#
+# Installs the PyPI package into ~/.clawteam/.venv, links ~/.local/bin/clawteam,
+# and installs the ClawTeam skill into detected agent clients.
+
+set -euo pipefail
+
+CLAWTEAM_HOME="${CLAWTEAM_HOME:-$HOME/.clawteam}"
+VENV_PATH="${CLAWTEAM_HOME}/.venv"
+BIN_DIR="${HOME}/.local/bin"
+PYTHON_BIN="${PYTHON_BIN:-}"
+SKILLS_BASE="${CLAWTEAM_SKILLS_BASE:-https://raw.githubusercontent.com/HKUDS/ClawTeam/main/skills/clawteam}"
+SKILL_SLUG="clawteam"
+SKILL_FILES=(
+  "SKILL.md:SKILL.md"
+  "agents/openai.yaml:agents/openai.yaml"
+  "references/cli-reference.md:references/cli-reference.md"
+  "references/workflows.md:references/workflows.md"
+)
+
+log() { printf '%s\n' "$*"; }
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+python_version_ok() {
+  local bin="$1"
+  "$bin" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
+try_python_bin() {
+  local bin="$1"
+  [ -n "$bin" ] || return 1
+  command -v "$bin" >/dev/null 2>&1 || return 1
+  python_version_ok "$bin" || return 1
+  command -v "$bin"
+}
+
+detect_python_bin() {
+  if [ -n "$PYTHON_BIN" ]; then
+    try_python_bin "$PYTHON_BIN" && return 0
+    log "Requested PYTHON_BIN=$PYTHON_BIN is not Python 3.10+"
+  fi
+  for candidate in python3.12 python3.11 python3.10 python3; do
+    try_python_bin "$candidate" && return 0
+  done
+  return 1
+}
+
+install_clawteam_skills() {
+  local skill_source_dir="${1:-}"
+  local clients=(
+    "Claude Code|${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills|${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    "Codex CLI|${CODEX_HOME:-$HOME/.codex}/skills|${CODEX_HOME:-$HOME/.codex}"
+    "Gemini CLI|$HOME/.gemini/skills|$HOME/.gemini"
+    "OpenClaw|$HOME/.openclaw/skills|$HOME/.openclaw"
+    "OpenCode|$HOME/.config/opencode/skills|$HOME/.config/opencode"
+    "Nanobot|$HOME/.nanobot/skills|$HOME/.nanobot"
+    "Cursor|$HOME/.cursor/skills|$HOME/.cursor"
+    "OpenHarness|${OPENHARNESS_CONFIG_DIR:-$HOME/.openharness}/skills|${OPENHARNESS_CONFIG_DIR:-$HOME/.openharness}"
+    "Ohmo|${OHMO_WORKSPACE:-$HOME/.ohmo}/skills|${OHMO_WORKSPACE:-$HOME/.ohmo}"
+  )
+
+  local detected=()
+  local entry client_name skills_dir probe_path
+  for entry in "${clients[@]}"; do
+    IFS='|' read -r client_name skills_dir probe_path <<<"$entry"
+    if [ -d "$probe_path" ]; then
+      detected+=("${client_name}|${skills_dir}")
+    fi
+  done
+
+  if [ ${#detected[@]} -eq 0 ]; then
+    log "No supported agent client config directories detected; skipping ClawTeam skill install."
+    return 0
+  fi
+
+  log "Installing ClawTeam skill into detected clients:"
+  for entry in "${detected[@]}"; do
+    IFS='|' read -r client_name skills_dir <<<"$entry"
+    install_clawteam_skill_into "$client_name" "$skills_dir" "$skill_source_dir"
+  done
+}
+
+install_clawteam_skill_into() {
+  local client_name="$1"
+  local skill_root="$2"
+  local skill_source_dir="$3"
+  local target="${skill_root}/${SKILL_SLUG}"
+  local failed=0
+
+  mkdir -p "$target"
+
+  local pair dest_rel remote_rel dest_path
+  for pair in "${SKILL_FILES[@]}"; do
+    IFS=':' read -r dest_rel remote_rel <<<"$pair"
+    dest_path="${target}/${dest_rel}"
+    mkdir -p "$(dirname "$dest_path")"
+
+    if [ -n "$skill_source_dir" ] && [ -f "${skill_source_dir}/${remote_rel}" ]; then
+      cp "${skill_source_dir}/${remote_rel}" "$dest_path" || failed=1
+    elif ! curl -fsSL "${SKILLS_BASE}/${remote_rel}" -o "$dest_path"; then
+      log "Failed to fetch ${SKILLS_BASE}/${remote_rel}; skipping ${client_name} skill file ${dest_rel}."
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -eq 0 ]; then
+    log "  Installed ${client_name}: ${target}"
+  else
+    log "  Partially installed ${client_name}: ${target}"
+  fi
+}
+
+if ! PYTHON_BIN="$(detect_python_bin)"; then
+  fail "Python 3.10+ is required to install ClawTeam"
+fi
+
+log "Using Python: $("$PYTHON_BIN" --version 2>&1)"
+mkdir -p "$CLAWTEAM_HOME" "$BIN_DIR"
+
+if [ ! -x "${VENV_PATH}/bin/python" ]; then
+  log "Creating virtual environment at ${VENV_PATH}"
+  "$PYTHON_BIN" -m venv "$VENV_PATH"
+fi
+
+log "Installing latest clawteam from PyPI"
+"${VENV_PATH}/bin/pip" install --upgrade pip >/dev/null
+"${VENV_PATH}/bin/pip" install --upgrade clawteam
+
+ln -sf "${VENV_PATH}/bin/clawteam" "${BIN_DIR}/clawteam"
+log "Linked clawteam -> ${BIN_DIR}/clawteam"
+
+install_clawteam_skills ""
+
+case ":${PATH}:" in
+  *":${BIN_DIR}:"*) ;;
+  *) log "Add ${BIN_DIR} to PATH to use clawteam in every shell." ;;
+esac
+
+log "ClawTeam is ready."

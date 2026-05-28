@@ -116,7 +116,6 @@ class TestPeek:
         mb.send(from_agent="a", to="bob", content="2")
         assert mb.peek_count("bob") == 2
 
-    @pytest.mark.skip(reason="upstream feature not yet synced: peek() corrupt message resilience")
     def test_peek_skips_corrupt_messages(self, team_name):
         mb = _make_mailbox(team_name)
         mb.send(from_agent="a", to="bob", content="good")
@@ -247,7 +246,6 @@ class TestReceiveQuarantine:
         dead_letters = _dead_letter_root(team_name, "bob")
         assert dead_letters.exists()
 
-    @pytest.mark.skip(reason="upstream feature not yet synced: peek() schema-invalid message handling")
     def test_peek_schema_invalid_message_does_not_quarantine_or_consume(self, team_name):
         mb = _make_mailbox(team_name)
         inbox = _inbox_path(team_name, "bob")
@@ -370,7 +368,6 @@ class TestReceiveQuarantine:
 
 
 class TestFileTransport:
-    @pytest.mark.skip(reason="upstream feature not yet synced: FileTransport claim-fail skip behavior")
     def test_fetch_consume_skips_message_if_claim_fails(self, team_name, monkeypatch):
         transport = FileTransport(team_name)
         transport.deliver("bob", b'{"type":"message","from":"alice","to":"bob","content":"hello"}')
@@ -381,14 +378,14 @@ class TestFileTransport:
         message_files = list(inbox.glob("msg-*.json"))
         assert len(message_files) == 1
 
-        original_replace = Path.replace
+        original_replace = os.replace
 
-        def fake_replace(self, target):
-            if self == message_files[0]:
+        def fake_replace(src, target):
+            if src == str(message_files[0]):
                 raise OSError("claimed by another consumer")
-            return original_replace(self, target)
+            return original_replace(src, target)
 
-        monkeypatch.setattr(Path, "replace", fake_replace)
+        monkeypatch.setattr(os, "replace", fake_replace)
 
         assert transport.fetch("bob", consume=True) == []
         assert len(list(inbox.glob("msg-*.json"))) == 1

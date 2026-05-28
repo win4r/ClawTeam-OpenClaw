@@ -15,6 +15,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAWTEAM_DATA_DIR", str(data_dir))
     # Also override HOME so config_path() doesn't hit real ~/.clawteam/config.json
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     return data_dir
 
 

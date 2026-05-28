@@ -105,6 +105,26 @@ class FileTaskStore(BaseTaskStore):
                 if existing is not None:
                     return existing
             self._save_unlocked(task)
+        try:
+            from clawteam.team.redis_wakeup import publish_wakeup, team_channel
+            payload = {
+                "taskId": task.id,
+                "owner": task.owner,
+                "status": task.status.value,
+                "subject": task.subject,
+            }
+            publish_wakeup(self.team_name, team_channel(self.team_name, "tasks"), "task_created", payload)
+            publish_wakeup(self.team_name, team_channel(self.team_name, "events"), "task_created", payload)
+        except Exception:
+            pass
+        try:
+            from clawteam.events.global_bus import get_event_bus
+            from clawteam.events.types import BeforeTaskCreate
+            get_event_bus().emit_async(BeforeTaskCreate(
+                team_name=self.team_name, subject=subject, owner=owner,
+            ))
+        except Exception:
+            pass
         return task
 
     def _find_by_idempotency_key(self, key: str) -> TaskItem | None:
@@ -151,11 +171,14 @@ class FileTaskStore(BaseTaskStore):
             task = self._get_unlocked(task_id)
             if not task:
                 return None
+            _old_status = task.status.value
 
             if status == TaskStatus.in_progress:
                 self._acquire_lock(task, caller, force)
                 if not task.started_at:
                     task.started_at = _now_iso()
+                if owner is None and caller and not task.owner:
+                    task.owner = caller
 
             if status in (TaskStatus.completed, TaskStatus.pending):
                 task.locked_by = ""
@@ -201,7 +224,39 @@ class FileTaskStore(BaseTaskStore):
                 self._resolve_dependents_unlocked(task_id)
 
             self._save_unlocked(task)
-            return task
+
+        # Emit events outside the lock
+        try:
+            from clawteam.events.global_bus import get_event_bus
+            from clawteam.events.types import AfterTaskUpdate, TaskCompleted
+            bus = get_event_bus()
+            bus.emit_async(AfterTaskUpdate(
+                team_name=self.team_name, task_id=task_id,
+                old_status=_old_status, new_status=task.status.value,
+                owner=task.owner,
+            ))
+            if task.status == TaskStatus.completed:
+                bus.emit_async(TaskCompleted(
+                    team_name=self.team_name, task_id=task_id,
+                    owner=task.owner,
+                    duration_seconds=task.metadata.get("duration_seconds", 0.0),
+                ))
+        except Exception:
+            pass
+        try:
+            from clawteam.team.redis_wakeup import publish_wakeup, team_channel
+            payload = {
+                "taskId": task.id,
+                "owner": task.owner,
+                "oldStatus": _old_status,
+                "newStatus": task.status.value,
+                "subject": task.subject,
+            }
+            publish_wakeup(self.team_name, team_channel(self.team_name, "tasks"), "task_updated", payload)
+            publish_wakeup(self.team_name, team_channel(self.team_name, "events"), "task_updated", payload)
+        except Exception:
+            pass
+        return task
 
     def _acquire_lock(self, task: TaskItem, caller: str, force: bool) -> None:
         if task.locked_by and task.locked_by != caller and not force:
@@ -319,7 +374,7 @@ class FileTaskStore(BaseTaskStore):
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
                 tmp_file.write(task.model_dump_json(indent=2, by_alias=True))
-            Path(tmp_name).replace(path)
+            os.replace(tmp_name, str(path))
         except BaseException:
             Path(tmp_name).unlink(missing_ok=True)
             raise
