@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from clawteam.cli import commands
+from clawteam.cli import _helpers
 from clawteam.cli.commands import app
 from clawteam.config import AgentProfile
 from clawteam.spawn.profiles import apply_profile
@@ -220,8 +220,8 @@ def test_profile_wizard_generates_profile_from_preset(monkeypatch, tmp_path):
         def confirm(cls, *args, **kwargs):
             return _Prompt(cls._next())
 
-    monkeypatch.setattr(commands, "_load_questionary", lambda: FakeQuestionary)
-    monkeypatch.setattr(commands, "_profile_wizard_style", lambda _questionary: None)
+    monkeypatch.setattr(_helpers, "_load_questionary", lambda: FakeQuestionary)
+    monkeypatch.setattr(_helpers, "_profile_wizard_style", lambda _questionary: None)
 
     result = runner.invoke(app, ["profile", "wizard"], env=env)
 

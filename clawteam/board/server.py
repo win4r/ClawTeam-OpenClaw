@@ -132,6 +132,14 @@ class BoardHandler(BaseHTTPRequestHandler):
             self._serve_static("index.html", "text/html")
         elif path == "/api/overview":
             self._serve_json(self.collector.collect_overview())
+        elif path == "/api/templates":
+            self._serve_json(self._list_templates())
+        elif path.startswith("/api/templates/"):
+            name = path[len("/api/templates/"):].strip("/")
+            if not name:
+                self.send_error(400, "Template name required")
+                return
+            self._serve_template(name)
         elif path.startswith("/api/team/"):
             team_name = path[len("/api/team/"):].strip("/")
             if not team_name:
@@ -165,25 +173,73 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length else "{}"
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON body")
+            return
+
+        # Create task
         if path.startswith("/api/team/") and path.endswith("/task"):
             parts = path.strip("/").split("/")
             if len(parts) == 4 and parts[3] == "task":
                 team_name = parts[2]
-                content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length).decode("utf-8")
                 try:
-                    payload = json.loads(body)
                     from clawteam.team.tasks import TaskStore
                     store = TaskStore(team_name)
                     task = store.create(
                         subject=payload.get("subject", ""),
                         description=payload.get("description", ""),
-                        owner=payload.get("owner", "")
+                        owner=payload.get("owner", ""),
                     )
                     self._serve_json({"status": "ok", "task_id": task.id})
                 except Exception as e:
                     self.send_error(400, str(e))
                 return
+
+        # Create team
+        elif path == "/api/team/create":
+            try:
+                result = self._create_team(payload)
+                self._serve_json(result)
+            except Exception as e:
+                self.send_error(400, str(e))
+            return
+
+        # Spawn agent
+        elif path.startswith("/api/team/") and path.endswith("/spawn"):
+            team_name = path[len("/api/team/"):-len("/spawn")]
+            try:
+                result = self._spawn_agent(team_name, payload)
+                self._serve_json(result)
+            except Exception as e:
+                self.send_error(400, str(e))
+            return
+
+        # Move task
+        elif path.startswith("/api/task/") and path.endswith("/move"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[4] == "move":
+                team_name, task_id = parts[2], parts[3]
+                try:
+                    result = self._move_task(team_name, task_id, payload)
+                    self._serve_json(result)
+                except Exception as e:
+                    self.send_error(400, str(e))
+                return
+
+        # Cleanup team
+        elif path.startswith("/api/team/") and path.endswith("/cleanup"):
+            team_name = path[len("/api/team/"):-len("/cleanup")]
+            try:
+                result = self._cleanup_team(team_name)
+                self._serve_json(result)
+            except Exception as e:
+                self.send_error(400, str(e))
+            return
+
         self.send_error(404)
 
     def _serve_static(self, filename: str, content_type: str):
@@ -241,6 +297,165 @@ class BoardHandler(BaseHTTPRequestHandler):
                 time.sleep(self.interval)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+    # ── API helper methods ──────────────────────────────────────────────
+
+    def _list_templates(self):
+        from pathlib import Path
+
+        import tomllib
+
+        templates_dir = Path(__file__).parent.parent / "templates"
+        result = []
+        for f in sorted(templates_dir.glob("*.toml")):
+            with open(f, "rb") as fp:
+                tpl = tomllib.load(fp)
+            t = tpl["template"]
+            agents = t.get("agents", []) + ([t["leader"]] if "leader" in t else [])
+            result.append({
+                "name": t["name"],
+                "description": t["description"],
+                "agents": len(agents),
+                "command": t.get("command", ["openclaw"])[0],
+                "agentNames": [a["name"] for a in agents],
+                "agentTypes": [a["type"] for a in agents],
+            })
+        return result
+
+    def _serve_template(self, name: str):
+        from pathlib import Path
+
+        import tomllib
+
+        templates_dir = Path(__file__).parent.parent / "templates"
+        tpl_path = templates_dir / f"{name}.toml"
+        if not tpl_path.exists():
+            self.send_error(404, f"Template '{name}' not found")
+            return
+        with open(tpl_path, "rb") as fp:
+            data = tomllib.load(fp)
+        self._serve_json(data)
+
+    def _create_team(self, payload):
+        import uuid
+
+        from clawteam.team.manager import TeamManager
+        from clawteam.team.tasks import TaskStore
+        from clawteam.templates import load_template
+
+        name = payload.get("name", f"team-{uuid.uuid4().hex[:6]}")
+        template_name = payload.get("template", "")
+        goal = payload.get("goal", "")
+
+        if template_name:
+            tmpl = load_template(template_name)
+            leader_id = uuid.uuid4().hex[:12]
+            TeamManager.create_team(
+                name=name,
+                leader_name=tmpl.leader.name,
+                leader_id=leader_id,
+                description=tmpl.description,
+                user=payload.get("user", ""),
+            )
+            for agent in tmpl.agents:
+                TeamManager.add_member(
+                    team_name=name,
+                    member_name=agent.name,
+                    agent_id=uuid.uuid4().hex[:12],
+                    agent_type=agent.type,
+                    user=payload.get("user", ""),
+                )
+            ts = TaskStore(name)
+            for task_def in tmpl.tasks:
+                ts.create(
+                    subject=task_def.subject,
+                    description=task_def.description,
+                    owner=task_def.owner,
+                )
+        else:
+            leader_name = payload.get("leaderName", "lead")
+            TeamManager.create_team(
+                name=name,
+                leader_name=leader_name,
+                leader_id=uuid.uuid4().hex[:12],
+                description=goal,
+            )
+            agents = payload.get("agents", [])
+            for a in agents:
+                TeamManager.add_member(
+                    team_name=name,
+                    member_name=a["name"],
+                    agent_id=uuid.uuid4().hex[:12],
+                    agent_type=a.get("type", "general-purpose"),
+                )
+
+        return {"status": "ok", "team": name}
+
+    def _spawn_agent(self, team_name, payload):
+        import os as _os
+        import uuid
+
+        from clawteam.config import load_config
+        from clawteam.spawn import get_backend
+        from clawteam.spawn.profiles import apply_profile, load_profile
+
+        agent_name = payload.get("agent", f"agent-{uuid.uuid4().hex[:6]}")
+        agent_type = payload.get("agentType", "general-purpose")
+        task = payload.get("task", "")
+        profile_name = payload.get("profile")
+
+        cfg = load_config()
+        backend = get_backend(cfg.default_backend or "tmux")
+
+        command = payload.get("command", ["openclaw"])
+        profile_env = {}
+        if profile_name:
+            resolved = load_profile(profile_name)
+            command, profile_env, _ = apply_profile(resolved, command=list(command))
+
+        agent_id = uuid.uuid4().hex[:12]
+        from clawteam.team.manager import TeamManager
+
+        if TeamManager.get_team(team_name) is None:
+            TeamManager.create_team(
+                name=team_name,
+                leader_name=agent_name,
+                leader_id=agent_id,
+                description="Auto-created via Web UI",
+                user=_os.environ.get("CLAWTEAM_USER", ""),
+            )
+
+        result = backend.spawn(
+            command=command,
+            agent_name=agent_name,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            team_name=team_name,
+            prompt=task or None,
+            env=profile_env,
+            skip_permissions=cfg.skip_permissions,
+        )
+        return {"status": "ok" if not result.startswith("Error") else "error", "output": result}
+
+    def _move_task(self, team_name, task_id, payload):
+        from clawteam.team.tasks import TaskStore
+
+        store = TaskStore(team_name)
+        task = store.get(task_id)
+        if not task:
+            raise ValueError(f"Task '{task_id}' not found")
+        task.status = payload["status"]
+        store.update(task)
+        return {"status": "ok"}
+
+    def _cleanup_team(self, team_name):
+        from clawteam.team.manager import TeamManager
+
+        config = TeamManager.get_team(team_name)
+        if not config:
+            raise ValueError(f"Team '{team_name}' not found")
+        TeamManager.cleanup_team(team_name)
+        return {"status": "ok"}
 
     def log_message(self, format, *args):
         # Suppress default stderr logging for SSE connections

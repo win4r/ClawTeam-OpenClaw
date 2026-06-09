@@ -392,7 +392,7 @@ def test_runtime_inject_cli_uses_registered_backend(monkeypatch, tmp_path):
             captured["envelope"] = envelope
             return True, "ok"
 
-    monkeypatch.setattr("clawteam.cli.commands._resolve_runtime_backend", lambda team, agent: ("wsh", StubBackend()))
+    monkeypatch.setattr("clawteam.cli.runtime._resolve_runtime_backend", lambda team, agent: ("wsh", StubBackend()))
 
     result = runner.invoke(
         app,
