@@ -1337,11 +1337,10 @@
         if (!currentTeam) return;
         const btn = document.getElementById('btn-spawn-all');
         const oldHtml = btn.innerHTML;
-        btn.innerHTML = t('spawningStatus';
+        btn.innerHTML = t('spawningStatus');
         btn.disabled = true;
 
         try {
-            // Get team members
             const res = await fetch('/api/team/' + encodeURIComponent(currentTeam));
             const data = await res.json();
             const members = data.members || [];
@@ -1357,10 +1356,10 @@
                     if (j.status === 'ok') ok++; else fail++;
                 } catch(e) { fail++; }
             }
-            if (ok > 0) alert(t('spawned' + ok + ' agent(s)' + (fail > 0 ? ', ' + fail + ' failed.' : '.'));
-            else alert(t('noSpawn. Make sure the team has members.');
+            if (ok > 0) alert(t('spawned') + ok + t('agentS') + (fail > 0 ? ', ' + fail + ' failed.' : '.'));
+            else alert(t('noSpawn'));
         } catch(e) {
-            alert(t('cleanupError' + e.message);
+            alert(t('cleanupError') + e.message);
         } finally {
             btn.innerHTML = oldHtml;
             btn.disabled = false;
@@ -1369,27 +1368,26 @@
 
     async function cleanupTeam() {
         if (!currentTeam) return;
-        if (!confirm('Delete team "' + currentTeam + '" and all its data? This cannot be undone.')) return;
+        if (!confirm(t('confirmCleanup') + currentTeam + t('confirmCleanup2'))) return;
         const btn = document.getElementById('btn-cleanup');
-        btn.innerHTML = t('cleaning';
+        btn.innerHTML = t('cleaning');
         btn.disabled = true;
         try {
             const res = await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/cleanup', { method: 'POST' });
             const j = await res.json();
             if (j.status === 'ok') {
-                alert('Team cleaned up.');
                 currentTeam = '';
                 await init();
                 mainView.innerHTML = `
                     <div class="empty-state" style="margin-top:10vh;">
                         <svg class="empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        <div class="empty-title">Team cleaned up</div>
-                        <p style="font-size:16px; margin-bottom:24px;">Create a new team or select one from the sidebar.</p>
-                        <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">Create New Team</button>
+                        <div class="empty-title">${t('teamCleaned')}</div>
+                        <p style="font-size:16px; margin-bottom:24px;">${t('teamCleanedSub')}</p>
+                        <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">${t('createNew')}</button>
                     </div>`;
             }
-        } catch(e) { alert(t('cleanupError' + e.message); }
-        finally { btn.innerHTML = t('cleanup'; btn.disabled = false; }
+        } catch(e) { alert(t('cleanupError') + e.message); }
+        finally { btn.innerHTML = t('cleanup'); btn.disabled = false; }
     }
 
     // ── Create Team Wizard ──────────────────────────────────────────
