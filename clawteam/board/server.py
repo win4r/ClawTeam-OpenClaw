@@ -308,9 +308,14 @@ class BoardHandler(BaseHTTPRequestHandler):
         templates_dir = Path(__file__).parent.parent / "templates"
         result = []
         for f in sorted(templates_dir.glob("*.toml")):
-            with open(f, "rb") as fp:
-                tpl = tomllib.load(fp)
-            t = tpl["template"]
+            try:
+                with open(f, "rb") as fp:
+                    tpl = tomllib.load(fp)
+            except Exception:
+                continue
+            t = tpl.get("template")
+            if not t:
+                continue
             agents = t.get("agents", []) + ([t["leader"]] if "leader" in t else [])
             result.append({
                 "name": t["name"],
@@ -373,15 +378,17 @@ class BoardHandler(BaseHTTPRequestHandler):
                     owner=task_def.owner,
                 )
         else:
-            leader_name = payload.get("leaderName", "lead")
+            agents = payload.get("agents", [])
+            leader_name = payload.get("leaderName", agents[0]["name"] if agents else "lead")
             TeamManager.create_team(
                 name=name,
                 leader_name=leader_name,
                 leader_id=uuid.uuid4().hex[:12],
                 description=goal,
             )
-            agents = payload.get("agents", [])
             for a in agents:
+                if a["name"] == leader_name:
+                    continue  # leader already created above
                 TeamManager.add_member(
                     team_name=name,
                     member_name=a["name"],
@@ -454,7 +461,7 @@ class BoardHandler(BaseHTTPRequestHandler):
         config = TeamManager.get_team(team_name)
         if not config:
             raise ValueError(f"Team '{team_name}' not found")
-        TeamManager.cleanup_team(team_name)
+        TeamManager.cleanup(team_name)
         return {"status": "ok"}
 
     def log_message(self, format, *args):

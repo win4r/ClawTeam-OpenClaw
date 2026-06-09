@@ -400,6 +400,26 @@
         .btn-cancel { background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 10px 20px; border-radius: var(--radius-sm); cursor: pointer; transition: 0.2s;}
         .btn-cancel:hover { background: rgba(255,255,255,0.1); color: white; }
 
+        /* Drag & Drop */
+        .task-card { cursor: grab; }
+        .task-card:active { cursor: grabbing; }
+        .task-card.dragging { opacity: 0.4; transform: scale(0.95); }
+        .k-body.drag-over { background: rgba(59, 130, 246, 0.08); border-radius: var(--radius-sm); }
+
+        /* Agent Status */
+        .agent-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .agent-status-dot.alive { background: var(--color-completed); box-shadow: 0 0 8px var(--color-completed); }
+        .agent-status-dot.dead { background: var(--text-tertiary); }
+
+        /* Cost Badge */
+        .cost-badge { font-size: 13px; color: var(--color-pending); background: rgba(245,158,11,0.1); padding: 6px 12px; border-radius: 20px; font-weight: 600; }
+
+        /* Agent Detail Panel */
+        .member-card { cursor: pointer; }
+        #agent-detail-modal .modal-content { width: 640px; max-height: 85vh; overflow-y: auto; }
+        .agent-task-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-bottom: 8px; }
+        .agent-msg-item { padding: 12px 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-bottom: 8px; }
+
     </style>
 </head>
 <body>
@@ -423,9 +443,15 @@
 
             <div class="team-selector">
                 <label for="team-select">Active Swarm</label>
-                <select id="team-select" class="custom-select">
-                    <option value="">Initializing Core...</option>
-                </select>
+                <div style="display:flex; gap:8px;">
+                    <select id="team-select" class="custom-select" style="flex:1;">
+                        <option value="">Initializing Core...</option>
+                    </select>
+                    <button id="btn-create-team" class="action-btn" style="padding:14px 16px; white-space:nowrap;" onclick="openCreateWizard()" title="Create a new team">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        New
+                    </button>
+                </div>
             </div>
 
             <div class="connection-status">
@@ -443,7 +469,11 @@
                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
                 </svg>
                 <div class="empty-title">Welcome to ClawTeam Nexus</div>
-                <p style="font-size: 16px;">Select a highly-intelligent swarm to begin real-time monitoring.</p>
+                <p style="font-size: 16px; margin-bottom: 24px;">Create your first AI agent team to get started.</p>
+                <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    Create Your First Team
+                </button>
             </div>
         </main>
     </div>
@@ -457,6 +487,62 @@
             <div class="modal-actions">
                 <button class="btn-cancel" onclick="closeTaskModal()">Cancel</button>
                 <button class="action-btn" onclick="submitTask(event)">Deploy Task</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Detail Modal -->
+    <div class="modal-overlay" id="agent-detail-modal">
+        <div class="modal-content glass-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h3 id="agent-detail-title">Agent Details</h3>
+                <button class="btn-cancel" onclick="closeAgentDetail()">Close</button>
+            </div>
+            <div id="agent-detail-body"></div>
+        </div>
+    </div>
+
+    <!-- Create Team Wizard Modal -->
+    <div class="modal-overlay" id="create-wizard">
+        <div class="modal-content glass-panel" style="width:640px; max-height:85vh; overflow-y:auto;">
+            <div id="wizard-step-1">
+                <h3 style="margin-bottom:6px;">Step 1: Choose How to Build Your Team</h3>
+                <p style="color:var(--text-secondary); margin-bottom:20px; font-size:14px;">Start from a template or build your own team from scratch.</p>
+                <div id="wizard-templates" style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
+                    <div style="text-align:center; color:var(--text-tertiary); padding:40px;">Loading templates...</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:12px;">
+                    <button class="btn-cancel" onclick="closeCreateWizard()">Cancel</button>
+                </div>
+            </div>
+            <div id="wizard-step-2" style="display:none;">
+                <h3 style="margin-bottom:6px;">Step 2: Configure Your Team</h3>
+                <p style="color:var(--text-secondary); margin-bottom:20px; font-size:14px;">Give your team a name and describe what you want to achieve.</p>
+                <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Team Name</label>
+                <input type="text" id="wiz-team-name" class="modal-input" placeholder="e.g. my-startup-project" autocomplete="off">
+                <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Mission Goal</label>
+                <textarea id="wiz-goal" class="modal-input" placeholder="What do you want this team to build or accomplish? Be specific..." rows="3" style="resize:vertical;"></textarea>
+
+                <div id="wiz-custom-agents" style="display:none;">
+                    <label style="color:white; font-size:13px; margin-bottom:8px; display:block;">Team Members</label>
+                    <div id="wiz-agent-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+                    <button class="action-btn" style="font-size:12px; padding:8px 16px;" onclick="addAgentRow()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Member
+                    </button>
+                </div>
+
+                <div id="wiz-preview" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:16px; margin:16px 0;">
+                    <div style="font-size:13px; color:var(--text-tertiary); margin-bottom:8px;">TEAM PREVIEW</div>
+                    <div style="font-size:14px; color:var(--text-secondary);" id="wiz-preview-text">Select a template first.</div>
+                </div>
+                <div style="display:flex; justify-content:space-between; gap:12px;">
+                    <button class="btn-cancel" onclick="wizardBack()">Back</button>
+                    <div>
+                        <button class="btn-cancel" onclick="closeCreateWizard()" style="margin-right:8px;">Cancel</button>
+                        <button class="action-btn" id="btn-create-submit" onclick="submitCreateTeam()" disabled>Create Team</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -596,7 +682,7 @@
                     <div class="header-title" id="ui-title">Syncing Swarm Data...</div>
                     <div class="header-meta" id="ui-meta">Establishing neural connection...</div>
                 </div>
-                <div style="display:flex; gap:12px;">
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
                     <button onclick="openContextModal()" style="display:none; background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);" id="btn-provide-context" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                         Set Context
@@ -604,6 +690,14 @@
                     <button onclick="openTaskModal()" style="display:none;" id="btn-create-task" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                         New Task
+                    </button>
+                    <button onclick="spawnAllAgents()" style="display:none; background:rgba(16,185,129,0.2); border-color:var(--color-completed); color:var(--color-completed);" id="btn-spawn-all" class="action-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        Spawn All Agents
+                    </button>
+                    <button onclick="cleanupTeam()" style="display:none; background:rgba(239,68,68,0.2); border-color:var(--color-blocked); color:var(--color-blocked);" id="btn-cleanup" class="action-btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        Cleanup
                     </button>
                 </div>
             </div>
@@ -633,10 +727,10 @@
             </div>
 
             <div class="kanban-board" id="ui-kanban">
-                <div class="kanban-col"><div class="k-head k-head-pending"><span>Pending Intake</span><span id="c-pending">0</span></div><div class="k-body" id="col-pending"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-progress"><span>In Progress</span><span id="c-progress">0</span></div><div class="k-body" id="col-progress"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-completed"><span>Completed</span><span id="c-completed">0</span></div><div class="k-body" id="col-completed"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-blocked"><span>Blocked / Anomalies</span><span id="c-blocked">0</span></div><div class="k-body" id="col-blocked"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-pending"><span>Pending Intake</span><span id="c-pending">0</span></div><div class="k-body" id="col-pending" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'pending')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-progress"><span>In Progress</span><span id="c-progress">0</span></div><div class="k-body" id="col-progress" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'in_progress')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-completed"><span>Completed</span><span id="c-completed">0</span></div><div class="k-body" id="col-completed" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'completed')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-blocked"><span>Blocked / Anomalies</span><span id="c-blocked">0</span></div><div class="k-body" id="col-blocked" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'blocked')"></div></div>
             </div>
         `;
     }
@@ -653,9 +747,13 @@
 
         // Header
         document.getElementById('ui-title').innerText = team.name;
-        document.getElementById('ui-meta').innerText = `Orchestrated by ${team.leaderName || 'unknown leader'} • ${members.length} members • ${team.description || 'Active Protocol'}`;
+        const costCents = (data.cost && data.cost.totalCostCents) || 0;
+        const costStr = costCents > 0 ? `$${(costCents / 100).toFixed(2)}` : '$0.00';
+        document.getElementById('ui-meta').innerHTML = `${team.leaderName || 'unknown'} • ${members.length} agents • <span class="cost-badge">${costStr}</span>`;
         document.getElementById('btn-create-task').style.display = 'inline-flex';
         document.getElementById('btn-provide-context').style.display = 'inline-flex';
+        document.getElementById('btn-spawn-all').style.display = 'inline-flex';
+        document.getElementById('btn-cleanup').style.display = 'inline-flex';
 
         // Summary Cards
         document.getElementById('ui-summary').innerHTML = `
@@ -682,8 +780,11 @@
         document.getElementById('ui-members').innerHTML = `
             <div class="members-grid">
                 ${members.map(m => `
-                    <div class="member-card">
-                        <div class="member-name">${escapeHtml(m.name)}</div>
+                    <div class="member-card" onclick="openAgentDetail('${escapeHtml(m.name)}', '${escapeHtml(m.agentType || '')}', ${m.inboxCount || 0}, ${m.alive ? 'true' : 'false'})">
+                        <div class="member-name">
+                            <span class="agent-status-dot ${m.alive ? 'alive' : 'dead'}"></span>
+                            ${escapeHtml(m.name)}
+                        </div>
                         <div class="member-role">${escapeHtml(m.agentType || 'Agent')} ${m.user ? `(${escapeHtml(m.user)})` : ''}</div>
                         <div class="member-inbox ${m.inboxCount > 0 ? 'has-msgs' : ''}">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
@@ -733,7 +834,9 @@
             document.getElementById(`col-${safeKey}`).innerHTML = list.length === 0 ? 
                 '<div style="text-align:center;color:var(--text-tertiary);margin-top:24px;font-size:13px;letter-spacing:0.05em;">NO DATA</div>' :
                 list.map(t => `
-                    <div class="task-card ${key === 'blocked' ? 'blocked-card' : ''}">
+                    <div class="task-card ${key === 'blocked' ? 'blocked-card' : ''}" draggable="true"
+                         ondragstart="handleDragStart(event, '${escapeHtml(t.id || '')}')"
+                         ondragend="handleDragEnd(event)">
                         <div class="task-id">#${escapeHtml((t.id || '').substring(0,8))}</div>
                         <div class="task-subj">${escapeHtml(t.subject || '')}</div>
                         <div class="task-own">${escapeHtml(t.owner || 'Unassigned')}</div>
@@ -842,6 +945,396 @@
             btn.disabled = false;
         }
     }
+
+    // ── Drag & Drop ─────────────────────────────────────────────────
+
+    let draggedTaskId = null;
+
+    function handleDragStart(e, taskId) {
+        draggedTaskId = taskId;
+        e.target.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', taskId);
+    }
+
+    function handleDragEnd(e) {
+        e.target.classList.remove('dragging');
+        draggedTaskId = null;
+    }
+
+    function handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        e.currentTarget.classList.add('drag-over');
+    }
+
+    function handleDragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
+    }
+
+    async function handleDrop(e, newStatus) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        if (!draggedTaskId || !currentTeam) return;
+
+        // Optimistic UI
+        const card = document.querySelector(`.task-card[draggable]`);
+        if (card) card.style.opacity = '0.3';
+
+        try {
+            await fetch('/api/task/' + encodeURIComponent(currentTeam) + '/' + encodeURIComponent(draggedTaskId) + '/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+        } catch(e) {
+            console.error('Move failed:', e);
+            alert('Failed to move task: ' + e.message);
+        } finally {
+            draggedTaskId = null;
+        }
+    }
+
+    // ── Agent Detail ─────────────────────────────────────────────────
+
+    function openAgentDetail(name, agentType, inboxCount, alive) {
+        document.getElementById('agent-detail-modal').style.display = 'flex';
+        document.getElementById('agent-detail-title').innerHTML = `
+            <span class="agent-status-dot ${alive ? 'alive' : 'dead'}"></span>
+            ${escapeHtml(name)}
+            <span style="font-size:14px; color:var(--text-secondary); font-weight:400;"> — ${escapeHtml(agentType)}</span>
+        `;
+
+        // Find agent's tasks
+        const taskCols = ['pending', 'in_progress', 'completed', 'blocked'];
+        let agentTasks = [];
+        document.querySelectorAll('.task-card').forEach(card => {
+            const ownerEl = card.querySelector('.task-own');
+            if (ownerEl && ownerEl.textContent.trim() === name) {
+                const subjEl = card.querySelector('.task-subj');
+                const idEl = card.querySelector('.task-id');
+                // Find which column this card is in
+                let status = 'unknown';
+                const col = card.closest('.k-body');
+                if (col) {
+                    if (col.id === 'col-pending') status = 'pending';
+                    else if (col.id === 'col-progress') status = 'in_progress';
+                    else if (col.id === 'col-completed') status = 'completed';
+                    else if (col.id === 'col-blocked') status = 'blocked';
+                }
+                agentTasks.push({
+                    id: idEl ? idEl.textContent.replace('#','') : '',
+                    subject: subjEl ? subjEl.textContent : '',
+                    status: status
+                });
+            }
+        });
+
+        const statusLabel = { pending: 'Pending', in_progress: 'In Progress', completed: 'Completed', blocked: 'Blocked' };
+        const statusColor = { pending: 'var(--color-pending)', in_progress: 'var(--color-progress)', completed: 'var(--color-completed)', blocked: 'var(--color-blocked)' };
+
+        document.getElementById('agent-detail-body').innerHTML = `
+            <div style="margin-bottom:24px;">
+                <div style="display:flex; gap:20px; margin-bottom:20px;">
+                    <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
+                        <div style="font-size:24px; font-weight:700;">${agentTasks.filter(t => t.status === 'completed').length}</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">Done</div>
+                    </div>
+                    <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
+                        <div style="font-size:24px; font-weight:700;">${agentTasks.filter(t => t.status === 'in_progress').length}</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">Active</div>
+                    </div>
+                    <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
+                        <div style="font-size:24px; font-weight:700; color:var(--color-blocked);">${inboxCount}</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">Unread</div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-bottom:16px; font-weight:600;">Assigned Tasks</div>
+            ${agentTasks.length === 0 ? '<div style="color:var(--text-tertiary); padding:16px;">No tasks assigned.</div>' :
+                agentTasks.map(t => `
+                    <div class="agent-task-item">
+                        <div>
+                            <span style="font-family:monospace; font-size:12px; color:var(--text-tertiary);">#${escapeHtml(t.id).substring(0,8)}</span>
+                            <span style="margin-left:12px;">${escapeHtml(t.subject)}</span>
+                        </div>
+                        <span style="font-size:12px; color:${statusColor[t.status] || 'var(--text-tertiary)'}; background:rgba(255,255,255,0.05); padding:4px 10px; border-radius:10px;">${statusLabel[t.status] || t.status}</span>
+                    </div>
+                `).join('')
+            }
+        `;
+    }
+
+    function closeAgentDetail() {
+        document.getElementById('agent-detail-modal').style.display = 'none';
+    }
+
+    // ── Team Actions ────────────────────────────────────────────────
+
+    async function spawnAllAgents() {
+        if (!currentTeam) return;
+        const btn = document.getElementById('btn-spawn-all');
+        const oldHtml = btn.innerHTML;
+        btn.innerHTML = 'Spawning...';
+        btn.disabled = true;
+
+        try {
+            // Get team members
+            const res = await fetch('/api/team/' + encodeURIComponent(currentTeam));
+            const data = await res.json();
+            const members = data.members || [];
+            let ok = 0, fail = 0;
+            for (const m of members) {
+                try {
+                    const r = await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/spawn', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ agent: m.name, agentType: m.agentType })
+                    });
+                    const j = await r.json();
+                    if (j.status === 'ok') ok++; else fail++;
+                } catch(e) { fail++; }
+            }
+            if (ok > 0) alert('Spawned ' + ok + ' agent(s)' + (fail > 0 ? ', ' + fail + ' failed.' : '.'));
+            else alert('No agents spawned. Make sure the team has members.');
+        } catch(e) {
+            alert('Error: ' + e.message);
+        } finally {
+            btn.innerHTML = oldHtml;
+            btn.disabled = false;
+        }
+    }
+
+    async function cleanupTeam() {
+        if (!currentTeam) return;
+        if (!confirm('Delete team "' + currentTeam + '" and all its data? This cannot be undone.')) return;
+        const btn = document.getElementById('btn-cleanup');
+        btn.innerHTML = 'Cleaning...';
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/cleanup', { method: 'POST' });
+            const j = await res.json();
+            if (j.status === 'ok') {
+                alert('Team cleaned up.');
+                currentTeam = '';
+                await init();
+                mainView.innerHTML = `
+                    <div class="empty-state" style="margin-top:10vh;">
+                        <svg class="empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <div class="empty-title">Team cleaned up</div>
+                        <p style="font-size:16px; margin-bottom:24px;">Create a new team or select one from the sidebar.</p>
+                        <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">Create New Team</button>
+                    </div>`;
+            }
+        } catch(e) { alert('Error: ' + e.message); }
+        finally { btn.innerHTML = 'Cleanup'; btn.disabled = false; }
+    }
+
+    // ── Create Team Wizard ──────────────────────────────────────────
+
+    let wizardTemplate = null;
+
+    async function openCreateWizard() {
+        wizardTemplate = null;
+        document.getElementById('create-wizard').style.display = 'flex';
+        document.getElementById('wizard-step-1').style.display = 'block';
+        document.getElementById('wizard-step-2').style.display = 'none';
+        document.getElementById('wiz-team-name').value = '';
+        document.getElementById('wiz-goal').value = '';
+
+        // Load templates
+        const tplDiv = document.getElementById('wizard-templates');
+        tplDiv.innerHTML = '<div style="text-align:center; color:var(--text-tertiary); padding:40px;">Loading templates...</div>';
+        try {
+            const res = await fetch('/api/templates');
+            const templates = await res.json();
+            if (templates.length === 0) {
+                tplDiv.innerHTML = '<div style="text-align:center; color:var(--text-tertiary); padding:40px;">No templates available.</div>';
+                return;
+            }
+            // Custom team card
+            let html = `
+                <div class="template-option" data-name="__custom__"
+                     style="background:rgba(255,255,255,0.03); border:2px dashed var(--border-color); border-radius:var(--radius-md); padding:20px; cursor:pointer; transition:all 0.2s;"
+                     onmouseenter="this.style.borderColor='var(--color-pending)';this.style.background='rgba(245,158,11,0.08)'"
+                     onmouseleave="if(!this.classList.contains('selected')){this.style.borderColor='var(--border-color)';this.style.background='rgba(255,255,255,0.03)'}"
+                     onclick="selectTemplate('__custom__', this)">
+                    <div style="font-size:16px; font-weight:600; margin-bottom:4px; color:var(--color-pending);">Build Your Own</div>
+                    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">Define every team member manually — full control over roles and responsibilities.</div>
+                    <div style="display:flex; gap:12px; font-size:12px; color:var(--text-tertiary);">
+                        <span>You choose the agents</span>
+                        <span>Any CLI: openclaw, claude, codex, hermes...</span>
+                    </div>
+                </div>
+            `;
+
+            html += templates.map(t => `
+                <div class="template-option" data-name="${escapeHtml(t.name)}"
+                     style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:20px; cursor:pointer; transition:all 0.2s;"
+                     onmouseenter="this.style.borderColor='var(--color-progress)';this.style.background='rgba(59,130,246,0.08)'"
+                     onmouseleave="if(!this.classList.contains('selected')){this.style.borderColor='var(--border-color)';this.style.background='rgba(255,255,255,0.03)'}"
+                     onclick="selectTemplate('${escapeHtml(t.name)}', this)">
+                    <div style="font-size:16px; font-weight:600; margin-bottom:4px;">${escapeHtml(t.name)}</div>
+                    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">${escapeHtml(t.description)}</div>
+                    <div style="display:flex; gap:12px; font-size:12px; color:var(--text-tertiary);">
+                        <span>${t.agents} agents</span>
+                        <span>CLI: ${escapeHtml(t.command)}</span>
+                    </div>
+                    <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+                        ${(t.agentTypes || []).map(a => `<span style="background:rgba(255,255,255,0.06); padding:3px 8px; border-radius:10px; font-size:11px; color:var(--text-secondary);">${escapeHtml(a)}</span>`).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            tplDiv.innerHTML = html;
+        } catch(e) {
+            tplDiv.innerHTML = '<div style="text-align:center; color:var(--color-blocked); padding:40px;">Failed to load templates.</div>';
+        }
+    }
+
+    function selectTemplate(name, el) {
+        document.querySelectorAll('.template-option').forEach(d => {
+            d.classList.remove('selected');
+            d.style.borderColor = d.dataset.name === '__custom__' ? 'var(--border-color)' : 'var(--border-color)';
+            d.style.background = 'rgba(255,255,255,0.03)';
+        });
+        el.classList.add('selected');
+        const isCustom = (name === '__custom__');
+        el.style.borderColor = isCustom ? 'var(--color-pending)' : 'var(--color-progress)';
+        el.style.background = isCustom ? 'rgba(245,158,11,0.12)' : 'rgba(59,130,246,0.12)';
+        wizardTemplate = name;
+
+        // Show/hide custom agent editor
+        document.getElementById('wiz-custom-agents').style.display = isCustom ? 'block' : 'none';
+        if (isCustom) {
+            // Reset agent list to a starter row
+            document.getElementById('wiz-agent-list').innerHTML = '';
+            addAgentRow();
+        }
+
+        // Go to step 2
+        document.getElementById('wizard-step-1').style.display = 'none';
+        document.getElementById('wizard-step-2').style.display = 'block';
+        const previewText = isCustom
+            ? `<strong style="color:var(--color-pending);">Custom Team</strong><br><span style="color:var(--text-tertiary);">Define your own agents below.</span>`
+            : `<strong>Template:</strong> ${escapeHtml(name)}<br><span style="color:var(--text-tertiary);">Fill in your team name and mission goal below.</span>`;
+        document.getElementById('wiz-preview-text').innerHTML = previewText;
+        document.getElementById('btn-create-submit').disabled = false;
+        document.getElementById('wiz-team-name').focus();
+    }
+
+    function wizardBack() {
+        document.getElementById('wizard-step-1').style.display = 'block';
+        document.getElementById('wizard-step-2').style.display = 'none';
+        document.getElementById('btn-create-submit').disabled = true;
+    }
+
+    function closeCreateWizard() {
+        document.getElementById('create-wizard').style.display = 'none';
+    }
+
+    let agentRowCounter = 0;
+
+    function addAgentRow() {
+        agentRowCounter++;
+        const row = document.createElement('div');
+        row.className = 'agent-row';
+        row.style.cssText = 'display:flex; gap:8px; align-items:center;';
+        row.innerHTML = `
+            <input type="text" class="modal-input agent-name-input" placeholder="Name (e.g. backend-dev)" style="flex:1; margin:0;">
+            <input type="text" class="modal-input agent-type-input" placeholder="Role (e.g. backend-developer)" style="flex:1; margin:0;">
+            <button class="btn-cancel" onclick="this.closest('.agent-row').remove()" style="padding:12px; flex-shrink:0;" title="Remove">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        `;
+        document.getElementById('wiz-agent-list').appendChild(row);
+    }
+
+    function getCustomAgents() {
+        const rows = document.querySelectorAll('#wiz-agent-list .agent-row');
+        const agents = [];
+        rows.forEach(row => {
+            const inputs = row.querySelectorAll('input');
+            const name = (inputs[0] || {}).value || '';
+            const type = (inputs[1] || {}).value || '';
+            if (name.trim()) {
+                agents.push({ name: name.trim(), type: type.trim() || 'general-purpose' });
+            }
+        });
+        return agents;
+    }
+
+    async function submitCreateTeam() {
+        const teamName = document.getElementById('wiz-team-name').value.trim();
+        const goal = document.getElementById('wiz-goal').value.trim();
+
+        if (!teamName) {
+            alert('Please enter a team name.');
+            return;
+        }
+        if (!wizardTemplate) {
+            alert('Please select a template or custom option.');
+            return;
+        }
+
+        const isCustom = (wizardTemplate === '__custom__');
+        const body = { name: teamName, goal: goal };
+        if (isCustom) {
+            body.agents = getCustomAgents();
+            if (body.agents.length === 0) {
+                alert('Please add at least one team member.');
+                return;
+            }
+            body.leaderName = body.agents[0].name;
+        } else {
+            body.template = wizardTemplate;
+        }
+
+        const btn = document.getElementById('btn-create-submit');
+        const oldText = btn.innerText;
+        btn.innerText = 'Creating...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/team/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                closeCreateWizard();
+                // Reload team list and switch to new team
+                await init();
+                teamSelect.value = result.team;
+                switchTeam(result.team);
+            } else {
+                alert('Failed: ' + (result.output || 'Unknown error'));
+            }
+        } catch(e) {
+            alert('Error creating team: ' + e.message);
+        } finally {
+            btn.innerText = oldText;
+            btn.disabled = false;
+        }
+    }
+
+    // ── Keyboard: Enter in wizard fields triggers create ──────────────
+    document.getElementById('wiz-team-name').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') submitCreateTeam();
+    });
+    document.getElementById('wiz-goal').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitCreateTeam(); }
+    });
+
+    // ── Click-outside closes modals ──────────────────────────────────
+
+    document.getElementById('agent-detail-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeAgentDetail();
+    });
+    document.getElementById('create-wizard').addEventListener('click', function(e) {
+        if (e.target === this) closeCreateWizard();
+    });
 
     // Startup
     init();
