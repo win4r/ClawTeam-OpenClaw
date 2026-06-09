@@ -450,7 +450,7 @@
                 <label for="team-select" id="label-active-swarm" data-i18n="activeSwarm">Active Swarm</label>
                 <div style="display:flex; gap:8px;">
                     <select id="team-select" class="custom-select" style="flex:1;">
-                        <option value="">Initializing Core...</option>
+                        <option value="" id="opt-init-core">Initializing Core...</option>
                     </select>
                     <button id="btn-create-team" class="action-btn" style="padding:14px 16px; white-space:nowrap;" onclick="openCreateWizard()" title="Create a new team">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -477,11 +477,11 @@
                     <line x1="12" y1="8" x2="12" y2="12"></line>
                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
                 </svg>
-                <div class="empty-title">Welcome to ClawTeam Nexus</div>
-                <p style="font-size: 16px; margin-bottom: 24px;">Create your first AI agent team to get started.</p>
+                <div class="empty-title" data-i18n="welcome">Welcome to ClawTeam Nexus</div>
+                <p style="font-size: 16px; margin-bottom: 24px;" data-i18n="welcomeSub">Create your first AI agent team to get started.</p>
                 <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    Create Your First Team
+                    <span data-i18n="createFirst">Create Your First Team</span>
                 </button>
             </div>
         </main>
@@ -490,12 +490,12 @@
     <!-- Task Modal -->
     <div class="modal-overlay" id="task-modal">
         <div class="modal-content glass-panel">
-            <h3>Inject New Task</h3>
-            <input type="text" id="task-subj" class="modal-input" placeholder="Task description..." autocomplete="off">
-            <input type="text" id="task-owner" class="modal-input" placeholder="Agent Owner (e.g. tech-lead)" autocomplete="off">
+            <h3 data-i18n="taskModalTitle">Inject New Task</h3>
+            <input type="text" id="task-subj" class="modal-input" data-i18n="taskDesc" placeholder="Task description..." autocomplete="off">
+            <input type="text" id="task-owner" class="modal-input" data-i18n="agentOwner" placeholder="Agent Owner (e.g. tech-lead)" autocomplete="off">
             <div class="modal-actions">
-                <button class="btn-cancel" onclick="closeTaskModal()">Cancel</button>
-                <button class="action-btn" onclick="submitTask(event)">Deploy Task</button>
+                <button class="btn-cancel" onclick="closeTaskModal()" data-i18n="cancel">Cancel</button>
+                <button class="action-btn" onclick="submitTask(event)" data-i18n="deployTask">Deploy Task</button>
             </div>
         </div>
     </div>
@@ -559,21 +559,21 @@
     <!-- Context Modal -->
     <div class="modal-overlay" id="context-modal">
         <div class="modal-content glass-panel" style="width: 600px;">
-            <h3>Set Mission Context</h3>
-            <p style="color:var(--text-secondary); margin-bottom:16px;">Feed a massive project specification or a GitHub README directly to the Lead Agent.</p>
-            
-            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Raw URL (e.g. GitHub raw.githubusercontent.com)</label>
+            <h3 data-i18n="contextModalTitle">Set Mission Context</h3>
+            <p style="color:var(--text-secondary); margin-bottom:16px;" data-i18n="missionDesc">Feed a massive project specification or a GitHub README directly to the Lead Agent.</p>
+
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;" data-i18n="rawUrl">Raw URL (e.g. GitHub raw.githubusercontent.com)</label>
             <input type="text" id="ctx-url" class="modal-input" placeholder="https://raw.githubusercontent.com/..." autocomplete="off">
-            
-            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Or Direct Text Input</label>
-            <textarea id="ctx-text" class="modal-input" placeholder="Paste your detailed project requirements here..." rows="6" style="resize:vertical;"></textarea>
-            
-            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;">Assign To Agent</label>
+
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;" data-i18n="orDirectText">Or Direct Text Input</label>
+            <textarea id="ctx-text" class="modal-input" data-i18n="pasteHere" placeholder="Paste your detailed project requirements here..." rows="6" style="resize:vertical;"></textarea>
+
+            <label style="color:white; font-size:13px; margin-bottom:6px; display:block;" data-i18n="assignTo">Assign To Agent</label>
             <input type="text" id="ctx-owner" class="modal-input" value="tech-lead" autocomplete="off">
-            
+
             <div class="modal-actions">
-                <button class="btn-cancel" onclick="closeContextModal()">Cancel</button>
-                <button class="action-btn" onclick="submitContext(event)" style="background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);">Initialize Protocol</button>
+                <button class="btn-cancel" onclick="closeContextModal()" data-i18n="cancel">Cancel</button>
+                <button class="action-btn" onclick="submitContext(event)" style="background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);" data-i18n="initProtocol">Initialize Protocol</button>
             </div>
         </div>
     </div>
@@ -686,6 +686,23 @@
             cleanupError: 'Error: ',
             initialized: 'Initialized',
             spawningStatus: 'Spawning...',
+            selectATeam: 'Select Team',
+            initializing: 'Initializing Core...',
+            statusLive: 'Receiving Live Data',
+            statusReconnecting: 'Disconnected / Reconnecting...',
+            taskModalTitle: 'Inject New Task',
+            contextModalTitle: 'Set Mission Context',
+            createTaskFailed: 'Failed to create task',
+            setContextFailed: 'Failed to set context: ',
+            provideUrlOrText: 'Please provide either a URL or text input.',
+            injectContext: 'Injecting Context...',
+            moveTaskFailed: 'Failed to move task: ',
+            unassigned: 'Unassigned',
+            failedStr: ' failed.',
+            allFailed: 'No agents spawned. Make sure the team has members.',
+            noTeamSelected: 'No team selected.',
+            agentTypeLabel: 'Agent',
+            unknownLeader: 'unknown leader',
         },
         zh: {
             activeSwarm: '活跃团队',
@@ -791,6 +808,23 @@
             cleanupError: '出错：',
             initialized: '已初始化',
             spawningStatus: '启动中...',
+            selectATeam: '选择团队',
+            initializing: '正在初始化...',
+            statusLive: '正在接收实时数据',
+            statusReconnecting: '已断开 / 重连中...',
+            taskModalTitle: '注入新任务',
+            contextModalTitle: '设定任务上下文',
+            createTaskFailed: '创建任务失败',
+            setContextFailed: '设定上下文失败：',
+            provideUrlOrText: '请提供 URL 或直接粘贴文本。',
+            injectContext: '注入上下文中...',
+            moveTaskFailed: '移动任务失败：',
+            unassigned: '未分配',
+            failedStr: ' 失败。',
+            allFailed: '没有 Agent 被启动，请确认团队有成员。',
+            noTeamSelected: '未选择团队。',
+            agentTypeLabel: 'Agent',
+            unknownLeader: '未知 Leader',
         }
     };
 
@@ -857,7 +891,7 @@
             teamSelect.replaceChildren();
             const defaultOption = document.createElement('option');
             defaultOption.value = '';
-            defaultOption.textContent = 'Select Team';
+            defaultOption.textContent = t('selectATeam');
             teamSelect.appendChild(defaultOption);
             teams.forEach((t) => {
                 const option = document.createElement('option');
@@ -872,9 +906,10 @@
             }
             
             teamSelect.addEventListener('change', (e) => switchTeam(e.target.value));
+            applyTranslations();
         } catch (e) {
-            console.error("Failed to load overview", e);
-            teamSelect.innerHTML = '<option value="">Error loading teams</option>';
+            console.error('Failed to load overview', e);
+            teamSelect.innerHTML = '<option value="">' + t('errorTeams') + '</option>';
         }
     }
 
@@ -895,7 +930,7 @@
                         <line x1="12" y1="16" x2="12.01" y2="16"></line>
                     </svg>
                     <div class="empty-title">ClawTeam Nexus</div>
-                    <p style="font-size: 16px;">Select a swarm to begin real-time monitoring.</p>
+                    <p style="font-size: 16px;">${t('welcomeSub')}</p>
                 </div>`;
             return;
         }
@@ -927,10 +962,10 @@
     function setConnectionStatus(live) {
         if (live) {
             statusDot.className = 'status-dot live';
-            statusText.innerText = 'Receiving Live Data';
+            statusText.innerText = t('statusLive');
         } else {
             statusDot.className = 'status-dot';
-            statusText.innerText = 'Disconnected / Reconnecting...';
+            statusText.innerText = t('statusReconnecting');
         }
     }
 
@@ -1009,7 +1044,7 @@
         document.getElementById('ui-title').innerText = team.name;
         const costCents = (data.cost && data.cost.totalCostCents) || 0;
         const costStr = costCents > 0 ? `$${(costCents / 100).toFixed(2)}` : '$0.00';
-        document.getElementById('ui-meta').innerHTML = `${team.leaderName || 'unknown'} • ${members.length} agents • <span class="cost-badge">${costStr}</span>`;
+        document.getElementById('ui-meta').innerHTML = `${team.leaderName || t('unknownLeader')} • ${members.length} agents • <span class="cost-badge">${costStr}</span>`;
         document.getElementById('btn-create-task').style.display = 'inline-flex';
         document.getElementById('btn-provide-context').style.display = 'inline-flex';
         document.getElementById('btn-spawn-all').style.display = 'inline-flex';
@@ -1099,7 +1134,7 @@
                          ondragend="handleDragEnd(event)">
                         <div class="task-id">#${escapeHtml((t.id || '').substring(0,8))}</div>
                         <div class="task-subj">${escapeHtml(t.subject || '')}</div>
-                        <div class="task-own">${escapeHtml(t.owner || 'Unassigned')}</div>
+                        <div class="task-own">${escapeHtml(t.owner || t('unassigned'))}</div>
                         ${key === 'blocked' && t.blockedBy && t.blockedBy.length ? `<div class="blocked-label">Blocked by: ${t.blockedBy.map(v => escapeHtml(v)).join(', ')}</div>` : ''}
                     </div>
                 `).join('');
@@ -1132,7 +1167,7 @@
         
         const btn = event && event.target && event.target.tagName === 'BUTTON' ? event.target : document.querySelector('.modal-actions .action-btn');
         const oldText = btn.innerText;
-        btn.innerText = 'Deploying...';
+        btn.innerText = t('deploying');
         btn.disabled = true;
 
         try {
@@ -1144,7 +1179,7 @@
             closeTaskModal();
         } catch(e) {
             console.error("Error creating task", e);
-            alert("Failed to create task");
+            alert(t('createTaskFailed'));
         } finally {
             btn.innerText = oldText;
             btn.disabled = false;
@@ -1169,12 +1204,12 @@
         
         const btn = event.target;
         const oldText = btn.innerText;
-        btn.innerText = 'Processing...';
+        btn.innerText = t('processing');
         btn.disabled = true;
 
         try {
             if (url) {
-                btn.innerText = 'Fetching Data...';
+                btn.innerText = t('fetching');
                 const proxyUrl = '/api/proxy?url=' + encodeURIComponent(url);
                 const resp = await fetch(proxyUrl);
                 if (!resp.ok) {
@@ -1184,11 +1219,11 @@
                 description += "\\n\\n--- Extracted Context ---\\n\\n" + text;
             }
             if (!description.trim()) {
-                alert("Please provide either a URL or text input.");
+                alert(t('provideUrlOrText'));
                 return;
             }
 
-            btn.innerText = 'Injecting Context...';
+            btn.innerText = t('injectContext');
             await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1201,7 +1236,7 @@
             closeContextModal();
         } catch(e) {
             console.error("Error setting context", e);
-            alert("Failed to set context: " + e.message);
+            alert(t('setContextFailed') + e.message);
         } finally {
             btn.innerText = oldText;
             btn.disabled = false;
@@ -1251,7 +1286,7 @@
             });
         } catch(e) {
             console.error('Move failed:', e);
-            alert('Failed to move task: ' + e.message);
+            alert(t('moveTaskFailed') + e.message);
         } finally {
             draggedTaskId = null;
         }
@@ -1292,7 +1327,7 @@
             }
         });
 
-        const statusLabel = { pending: 'Pending', in_progress: 'In Progress', completed: 'Completed', blocked: 'Blocked' };
+        const statusLabel = { pending: t('pending'), in_progress: t('inProgress'), completed: t('completed'), blocked: t('blocked') };
         const statusColor = { pending: 'var(--color-pending)', in_progress: 'var(--color-progress)', completed: 'var(--color-completed)', blocked: 'var(--color-blocked)' };
 
         document.getElementById('agent-detail-body').innerHTML = `
@@ -1300,20 +1335,20 @@
                 <div style="display:flex; gap:20px; margin-bottom:20px;">
                     <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
                         <div style="font-size:24px; font-weight:700;">${agentTasks.filter(t => t.status === 'completed').length}</div>
-                        <div style="font-size:12px; color:var(--text-tertiary);">Done</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">${t('done')}</div>
                     </div>
                     <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
                         <div style="font-size:24px; font-weight:700;">${agentTasks.filter(t => t.status === 'in_progress').length}</div>
-                        <div style="font-size:12px; color:var(--text-tertiary);">Active</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">${t('active')}</div>
                     </div>
                     <div style="flex:1; text-align:center; padding:16px; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm);">
                         <div style="font-size:24px; font-weight:700; color:var(--color-blocked);">${inboxCount}</div>
-                        <div style="font-size:12px; color:var(--text-tertiary);">Unread</div>
+                        <div style="font-size:12px; color:var(--text-tertiary);">${t('unread')}</div>
                     </div>
                 </div>
             </div>
-            <div style="margin-bottom:16px; font-weight:600;">Assigned Tasks</div>
-            ${agentTasks.length === 0 ? '<div style="color:var(--text-tertiary); padding:16px;">No tasks assigned.</div>' :
+            <div style="margin-bottom:16px; font-weight:600;">${t('assignedTasks')}</div>
+            ${agentTasks.length === 0 ? '<div style="color:var(--text-tertiary); padding:16px;">${t('noTasksAssigned')}</div>' :
                 agentTasks.map(t => `
                     <div class="agent-task-item">
                         <div>
@@ -1422,8 +1457,8 @@
                     <div style="font-size:16px; font-weight:600; margin-bottom:4px; color:var(--color-pending);">Build Your Own</div>
                     <div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">Define every team member manually — full control over roles and responsibilities.</div>
                     <div style="display:flex; gap:12px; font-size:12px; color:var(--text-tertiary);">
-                        <span>You choose the agents</span>
-                        <span>Any CLI: openclaw, claude, codex, hermes...</span>
+                        <span>${t('buildYourOwnSub')}</span>
+                        <span>${t('buildYourOwnCLI')}</span>
                     </div>
                 </div>
             `;
@@ -1529,11 +1564,11 @@
         const goal = document.getElementById('wiz-goal').value.trim();
 
         if (!teamName) {
-            alert('Please enter a team name.');
+            alert(t('enterTeamName'));
             return;
         }
         if (!wizardTemplate) {
-            alert('Please select a template or custom option.');
+            alert(t('selectOption'));
             return;
         }
 
@@ -1542,7 +1577,7 @@
         if (isCustom) {
             body.agents = getCustomAgents();
             if (body.agents.length === 0) {
-                alert('Please add at least one team member.');
+                alert(t('addOneMember'));
                 return;
             }
             body.leaderName = body.agents[0].name;
@@ -1569,10 +1604,10 @@
                 teamSelect.value = result.team;
                 switchTeam(result.team);
             } else {
-                alert('Failed: ' + (result.output || 'Unknown error'));
+                alert(t('createFailed') + (result.output || t('unknown')));
             }
         } catch(e) {
-            alert('Error creating team: ' + e.message);
+            alert(t('createError') + e.message);
         } finally {
             btn.innerText = oldText;
             btn.disabled = false;
