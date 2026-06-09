@@ -420,6 +420,11 @@
         .agent-task-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-bottom: 8px; }
         .agent-msg-item { padding: 12px 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-bottom: 8px; }
 
+        /* Language toggle */
+        .lang-btn { padding: 6px 14px; border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; font-family: inherit; }
+        .lang-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
+        .lang-active { background: rgba(59,130,246,0.2); border-color: var(--color-progress); color: var(--color-progress); }
+
     </style>
 </head>
 <body>
@@ -442,7 +447,7 @@
             </div>
 
             <div class="team-selector">
-                <label for="team-select">Active Swarm</label>
+                <label for="team-select" id="label-active-swarm" data-i18n="activeSwarm">Active Swarm</label>
                 <div style="display:flex; gap:8px;">
                     <select id="team-select" class="custom-select" style="flex:1;">
                         <option value="">Initializing Core...</option>
@@ -454,6 +459,10 @@
                 </div>
             </div>
 
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+                <button onclick="switchLang('en')" id="lang-en" class="lang-btn lang-active">EN</button>
+                <button onclick="switchLang('zh')" id="lang-zh" class="lang-btn">中文</button>
+            </div>
             <div class="connection-status">
                 <div class="status-dot" id="status-dot"></div>
                 <div class="status-text" id="status-text">Disconnected</div>
@@ -570,7 +579,258 @@
     </div>
 
 <script>
-    // Elements
+    // ── i18n ──────────────────────────────────────────────────────────
+
+    const I18N = {
+        en: {
+            activeSwarm: 'Active Swarm',
+            newBtn: 'New',
+            selectTeam: 'Select Team',
+            disconnected: 'Disconnected',
+            reconnecting: 'Disconnected / Reconnecting...',
+            receiving: 'Receiving Live Data',
+            welcome: 'Welcome to ClawTeam Nexus',
+            welcomeSub: 'Create your first AI agent team to get started.',
+            createFirst: 'Create Your First Team',
+            teamCleaned: 'Team cleaned up',
+            teamCleanedSub: 'Create a new team or select one from the sidebar.',
+            createNew: 'Create New Team',
+            syncing: 'Syncing Swarm Data...',
+            connecting: 'Establishing neural connection...',
+            step1Title: 'Step 1: Choose How to Build Your Team',
+            step1Desc: 'Start from a template or build your own team from scratch.',
+            step2Title: 'Step 2: Configure Your Team',
+            step2Desc: 'Give your team a name and describe what you want to achieve.',
+            teamName: 'Team Name',
+            missionGoal: 'Mission Goal',
+            teamPreview: 'TEAM PREVIEW',
+            teamMembers: 'Team Members',
+            addMember: 'Add Member',
+            selectTemplateFirst: 'Select a template first.',
+            fillNameGoal: 'Fill in your team name and mission goal below.',
+            customTeam: 'Custom Team',
+            customDesc: 'Define your own agents below.',
+            buildYourOwn: 'Build Your Own',
+            buildYourOwnDesc: 'Define every team member manually — full control over roles and responsibilities.',
+            buildYourOwnSub: 'You choose the agents',
+            buildYourOwnCLI: 'Any CLI: openclaw, claude, codex, hermes...',
+            back: 'Back',
+            cancel: 'Cancel',
+            createTeam: 'Create Team',
+            creating: 'Creating...',
+            loading: 'Loading templates...',
+            noTemplates: 'No templates available.',
+            loadError: 'Failed to load templates.',
+            enterTeamName: 'Please enter a team name.',
+            selectOption: 'Please select a template or custom option.',
+            addOneMember: 'Please add at least one team member.',
+            createFailed: 'Failed: ',
+            createError: 'Error creating team: ',
+            namePlaceholder: 'e.g. my-startup-project',
+            goalPlaceholder: 'What do you want this team to build or accomplish? Be specific...',
+            agentNamePlaceholder: 'Name (e.g. backend-dev)',
+            agentRolePlaceholder: 'Role (e.g. backend-developer)',
+            initCore: 'Initializing Core...',
+            errorTeams: 'Error loading teams',
+            newTask: 'New Task',
+            setContext: 'Set Context',
+            spawnAll: 'Spawn All Agents',
+            spawning: 'Spawning...',
+            cleanup: 'Cleanup',
+            cleaning: 'Cleaning...',
+            spawned: 'Spawned ',
+            agentS: ' agent(s)',
+            noSpawn: 'No agents spawned. Make sure the team has members.',
+            confirmCleanup: 'Delete team ',
+            confirmCleanup2: ' and all its data? This cannot be undone.',
+            activeProtocol: 'Active Protocol Stream',
+            agentRegistry: 'Agent Registry',
+            noSwarm: 'No swarm activity recorded yet.',
+            missionControl: 'Mission Control',
+            missionControlSub: 'Real-time distributed task execution',
+            pendingIntake: 'Pending Intake',
+            inProgress: 'In Progress',
+            completed: 'Completed',
+            blockedAnomalies: 'Blocked / Anomalies',
+            noData: 'NO DATA',
+            pending: 'Pending',
+            blocked: 'Blocked',
+            done: 'Done',
+            active: 'Active',
+            unread: 'Unread',
+            assignedTasks: 'Assigned Tasks',
+            noTasksAssigned: 'No tasks assigned.',
+            unknown: 'unknown',
+            messages: 'messages',
+            msgs: 'events',
+            activeLower: 'active',
+            agentDetails: 'Agent Details',
+            close: 'Close',
+            moveFailed: 'Failed to move task: ',
+            injectTask: 'Inject New Task',
+            taskDesc: 'Task description...',
+            agentOwner: 'Agent Owner (e.g. tech-lead)',
+            deployTask: 'Deploy Task',
+            deploying: 'Deploying...',
+            setMission: 'Set Mission Context',
+            missionDesc: 'Feed a massive project specification or a GitHub README directly to the Lead Agent.',
+            rawUrl: 'Raw URL (e.g. GitHub raw.githubusercontent.com)',
+            orDirectText: 'Or Direct Text Input',
+            pasteHere: 'Paste your detailed project requirements here...',
+            assignTo: 'Assign To Agent',
+            initProtocol: 'Initialize Protocol',
+            processing: 'Processing...',
+            fetching: 'Fetching Data...',
+            noUrlOrText: 'Please provide either a URL or text input.',
+            spawnAllFailed: 'Failed to spawn agents.',
+            cleanupError: 'Error: ',
+            initialized: 'Initialized',
+            spawningStatus: 'Spawning...',
+        },
+        zh: {
+            activeSwarm: '活跃团队',
+            newBtn: '新建',
+            selectTeam: '选择团队',
+            disconnected: '已断开',
+            reconnecting: '已断开 / 重连中...',
+            receiving: '正在接收实时数据',
+            welcome: '欢迎使用 ClawTeam Nexus',
+            welcomeSub: '创建你的第一个 AI Agent 团队开始工作。',
+            createFirst: '创建第一个团队',
+            teamCleaned: '团队已清理',
+            teamCleanedSub: '创建一个新团队，或从侧边栏选择已有团队。',
+            createNew: '创建新团队',
+            syncing: '正在同步团队数据...',
+            connecting: '正在建立连接...',
+            step1Title: '第一步：选择建队方式',
+            step1Desc: '从预设模板开始，或从头自定义你的团队。',
+            step2Title: '第二步：配置团队',
+            step2Desc: '为你的团队命名并描述要完成的目标。',
+            teamName: '团队名称',
+            missionGoal: '任务目标',
+            teamPreview: '团队预览',
+            teamMembers: '团队成员',
+            addMember: '添加成员',
+            selectTemplateFirst: '请先选择模板。',
+            fillNameGoal: '请在下方的填写团队名称和任务目标。',
+            customTeam: '自定义团队',
+            customDesc: '在下方定义你的 Agent 成员。',
+            buildYourOwn: '自定义团队',
+            buildYourOwnDesc: '手动定义每个团队成员 — 完全掌控角色和职责。',
+            buildYourOwnSub: '由你决定 Agent 配置',
+            buildYourOwnCLI: '支持任意 CLI：openclaw, claude, codex, hermes...',
+            back: '返回',
+            cancel: '取消',
+            createTeam: '创建团队',
+            creating: '创建中...',
+            loading: '加载模板中...',
+            noTemplates: '没有可用模板。',
+            loadError: '加载模板失败。',
+            enterTeamName: '请输入团队名称。',
+            selectOption: '请选择模板或自定义选项。',
+            addOneMember: '请至少添加一个团队成员。',
+            createFailed: '创建失败：',
+            createError: '创建团队出错：',
+            namePlaceholder: '例如：my-startup-project',
+            goalPlaceholder: '你想让这个团队构建或完成什么？尽量具体描述...',
+            agentNamePlaceholder: '名称（如 backend-dev）',
+            agentRolePlaceholder: '角色（如 backend-developer）',
+            initCore: '正在初始化...',
+            errorTeams: '加载团队列表失败',
+            newTask: '新建任务',
+            setContext: '设定上下文',
+            spawnAll: '一键启动所有 Agent',
+            spawning: '启动中...',
+            cleanup: '清理团队',
+            cleaning: '清理中...',
+            spawned: '已启动 ',
+            agentS: ' 个 Agent',
+            noSpawn: '没有 Agent 被启动，请确认团队有成员。',
+            confirmCleanup: '删除团队 ',
+            confirmCleanup2: ' 及其所有数据？此操作不可撤销。',
+            activeProtocol: '实时消息流',
+            agentRegistry: 'Agent 列表',
+            noSwarm: '暂无团队活动记录。',
+            missionControl: '任务看板',
+            missionControlSub: '分布式实时任务执行',
+            pendingIntake: '待处理',
+            inProgress: '进行中',
+            completed: '已完成',
+            blockedAnomalies: '阻塞 / 异常',
+            noData: '暂无数据',
+            pending: '待处理',
+            blocked: '已阻塞',
+            done: '已完成',
+            active: '进行中',
+            unread: '未读',
+            assignedTasks: '分配的任务',
+            noTasksAssigned: '没有分配的任务。',
+            unknown: '未知',
+            messages: '条消息',
+            msgs: '个事件',
+            activeLower: '个活跃',
+            agentDetails: 'Agent 详情',
+            close: '关闭',
+            moveFailed: '移动任务失败：',
+            injectTask: '注入新任务',
+            taskDesc: '任务描述...',
+            agentOwner: 'Agent 负责人（如 tech-lead）',
+            deployTask: '部署任务',
+            deploying: '部署中...',
+            setMission: '设定任务上下文',
+            missionDesc: '将大规模项目规约或 GitHub README 直接传递给 Lead Agent。',
+            rawUrl: '原始 URL（如 GitHub raw.githubusercontent.com）',
+            orDirectText: '或直接粘贴文本',
+            pasteHere: '在此粘贴详细项目需求...',
+            assignTo: '分配给 Agent',
+            initProtocol: '初始化协议',
+            processing: '处理中...',
+            fetching: '获取数据中...',
+            noUrlOrText: '请提供 URL 或直接粘贴文本。',
+            spawnAllFailed: '启动 Agent 失败。',
+            cleanupError: '出错：',
+            initialized: '已初始化',
+            spawningStatus: '启动中...',
+        }
+    };
+
+    let currentLang = localStorage.getItem('clawteam-lang') || 'zh';
+
+    function t(key) {
+        return (I18N[currentLang] && I18N[currentLang][key]) || (I18N.en[key]) || key;
+    }
+
+    function switchLang(lang) {
+        currentLang = lang;
+        localStorage.setItem('clawteam-lang', lang);
+        document.getElementById('lang-en').className = 'lang-btn' + (lang === 'en' ? ' lang-active' : '');
+        document.getElementById('lang-zh').className = 'lang-btn' + (lang === 'zh' ? ' lang-active' : '');
+        applyTranslations();
+    }
+
+    function applyTranslations() {
+        // Walk all elements with data-i18n attribute and set text
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            const text = t(key);
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                el.placeholder = text;
+            } else {
+                el.textContent = text;
+            }
+        });
+        // Update title attributes
+        document.querySelectorAll('[data-i18n-title]').forEach(el => {
+            el.title = t(el.getAttribute('data-i18n-title'));
+        });
+    }
+
+    // Init lang toggle state
+    document.getElementById('lang-en').className = 'lang-btn' + (currentLang === 'en' ? ' lang-active' : '');
+    document.getElementById('lang-zh').className = 'lang-btn' + (currentLang === 'zh' ? ' lang-active' : '');
+
+    // ── Elements ──────────────────────────────────────────────────────
+
     const teamSelect = document.getElementById('team-select');
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
@@ -679,25 +939,25 @@
         mainView.innerHTML = `
             <div class="header-info" style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div>
-                    <div class="header-title" id="ui-title">Syncing Swarm Data...</div>
-                    <div class="header-meta" id="ui-meta">Establishing neural connection...</div>
+                    <div class="header-title" id="ui-title">${t('syncing')}</div>
+                    <div class="header-meta" id="ui-meta">${t('connecting')}</div>
                 </div>
                 <div style="display:flex; gap:12px; flex-wrap:wrap;">
                     <button onclick="openContextModal()" style="display:none; background:rgba(168, 85, 247, 0.2); border-color:var(--color-completed); color:var(--color-completed);" id="btn-provide-context" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                        Set Context
+                        ${t('setContext')}
                     </button>
                     <button onclick="openTaskModal()" style="display:none;" id="btn-create-task" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                        New Task
+                        ${t('newTask')}
                     </button>
                     <button onclick="spawnAllAgents()" style="display:none; background:rgba(16,185,129,0.2); border-color:var(--color-completed); color:var(--color-completed);" id="btn-spawn-all" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        Spawn All Agents
+                        ${t('spawnAll')}
                     </button>
                     <button onclick="cleanupTeam()" style="display:none; background:rgba(239,68,68,0.2); border-color:var(--color-blocked); color:var(--color-blocked);" id="btn-cleanup" class="action-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        Cleanup
+                        ${t('cleanup')}
                     </button>
                 </div>
             </div>
@@ -707,30 +967,30 @@
             <div class="content-grid">
                 <div class="section-panel glass-panel">
                     <div class="panel-header">
-                        <span class="panel-title">Active Protocol Stream</span>
-                        <span class="badge" id="ui-msg-count">0 messages</span>
+                        <span class="panel-title">${t('activeProtocol')}</span>
+                        <span class="badge" id="ui-msg-count">0 ${t('msgs')}</span>
                     </div>
                     <div class="panel-body" id="ui-msg-list"></div>
                 </div>
                 <div class="section-panel glass-panel">
                     <div class="panel-header">
-                        <span class="panel-title">Agent Registry</span>
-                        <span class="badge" id="ui-member-count">0 active</span>
+                        <span class="panel-title">${t('agentRegistry')}</span>
+                        <span class="badge" id="ui-member-count">0 ${t('activeLower')}</span>
                     </div>
                     <div class="panel-body" id="ui-members"></div>
                 </div>
             </div>
 
             <div class="header-info" style="margin-bottom: 24px;">
-                <div class="header-title" style="font-size: 28px;">Mission Control</div>
-                <div class="header-meta">Real-time distributed task execution</div>
+                <div class="header-title" style="font-size: 28px;">${t('missionControl')}</div>
+                <div class="header-meta">${t('missionControlSub')}</div>
             </div>
 
             <div class="kanban-board" id="ui-kanban">
-                <div class="kanban-col"><div class="k-head k-head-pending"><span>Pending Intake</span><span id="c-pending">0</span></div><div class="k-body" id="col-pending" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'pending')"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-progress"><span>In Progress</span><span id="c-progress">0</span></div><div class="k-body" id="col-progress" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'in_progress')"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-completed"><span>Completed</span><span id="c-completed">0</span></div><div class="k-body" id="col-completed" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'completed')"></div></div>
-                <div class="kanban-col"><div class="k-head k-head-blocked"><span>Blocked / Anomalies</span><span id="c-blocked">0</span></div><div class="k-body" id="col-blocked" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'blocked')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-pending"><span>${t('pendingIntake')}</span><span id="c-pending">0</span></div><div class="k-body" id="col-pending" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'pending')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-progress"><span>${t('inProgress')}</span><span id="c-progress">0</span></div><div class="k-body" id="col-progress" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'in_progress')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-completed"><span>${t('completed')}</span><span id="c-completed">0</span></div><div class="k-body" id="col-completed" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'completed')"></div></div>
+                <div class="kanban-col"><div class="k-head k-head-blocked"><span>${t('blockedAnomalies')}</span><span id="c-blocked">0</span></div><div class="k-body" id="col-blocked" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'blocked')"></div></div>
             </div>
         `;
     }
@@ -759,15 +1019,15 @@
         document.getElementById('ui-summary').innerHTML = `
             <div class="stat-card glass-panel pending">
                 <div class="stat-value" style="color: var(--color-pending)">${taskSummary.pending || 0}</div>
-                <div class="stat-label">Pending Intake</div>
+                <div class="stat-label" data-i18n="pendingIntake">Pending Intake</div>
             </div>
             <div class="stat-card glass-panel progress">
                 <div class="stat-value" style="color: var(--color-progress)">${taskSummary.in_progress || 0}</div>
-                <div class="stat-label">In Execution</div>
+                <div class="stat-label" data-i18n="inProgress">In Progress</div>
             </div>
             <div class="stat-card glass-panel completed">
                 <div class="stat-value" style="color: var(--color-completed)">${taskSummary.completed || 0}</div>
-                <div class="stat-label">Missions Accomplished</div>
+                <div class="stat-label" data-i18n="completed">Completed</div>
             </div>
             <div class="stat-card glass-panel blocked">
                 <div class="stat-value" style="color: var(--color-blocked)">${taskSummary.blocked || 0}</div>
@@ -776,7 +1036,7 @@
         `;
 
         // Members
-        document.getElementById('ui-member-count').innerText = members.length + ' active';
+        document.getElementById('ui-member-count').innerText = members.length + ' ' + t('activeLower');
         document.getElementById('ui-members').innerHTML = `
             <div class="members-grid">
                 ${members.map(m => `
@@ -797,11 +1057,11 @@
 
         // Messages
         const sortedMsgs = [...messages].sort((a,b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-        document.getElementById('ui-msg-count').innerText = sortedMsgs.length + ' events';
+        document.getElementById('ui-msg-count').innerText = sortedMsgs.length + ' ' + t('msgs');
         
         const formatTime = ts =>ts ? ts.slice(11, 19) : '';
 
-        const msgHTML = sortedMsgs.length === 0 ? '<div class="empty-state">No swarm activity recorded yet.</div>' :
+        const msgHTML = sortedMsgs.length === 0 ? '<div class="empty-state">' + t('noSwarm') + '</div>' :
             `<div class="msg-list">
                 ${sortedMsgs.map((m, i) => {
                     let tagClass = 'msg-tag-message';
@@ -831,8 +1091,8 @@
             const safeKey = key === 'in_progress' ? 'progress' : key;
             document.getElementById(`c-${safeKey}`).innerText = list.length;
             
-            document.getElementById(`col-${safeKey}`).innerHTML = list.length === 0 ? 
-                '<div style="text-align:center;color:var(--text-tertiary);margin-top:24px;font-size:13px;letter-spacing:0.05em;">NO DATA</div>' :
+            document.getElementById(`col-${safeKey}`).innerHTML = list.length === 0 ?
+                '<div style="text-align:center;color:var(--text-tertiary);margin-top:24px;font-size:13px;letter-spacing:0.05em;">' + t('noData') + '</div>' :
                 list.map(t => `
                     <div class="task-card ${key === 'blocked' ? 'blocked-card' : ''}" draggable="true"
                          ondragstart="handleDragStart(event, '${escapeHtml(t.id || '')}')"
@@ -844,6 +1104,8 @@
                     </div>
                 `).join('');
         });
+        // Apply translations to any data-i18n elements
+        setTimeout(applyTranslations, 0);
     }
 
     // Modal Operations
@@ -1075,7 +1337,7 @@
         if (!currentTeam) return;
         const btn = document.getElementById('btn-spawn-all');
         const oldHtml = btn.innerHTML;
-        btn.innerHTML = 'Spawning...';
+        btn.innerHTML = t('spawningStatus';
         btn.disabled = true;
 
         try {
@@ -1095,10 +1357,10 @@
                     if (j.status === 'ok') ok++; else fail++;
                 } catch(e) { fail++; }
             }
-            if (ok > 0) alert('Spawned ' + ok + ' agent(s)' + (fail > 0 ? ', ' + fail + ' failed.' : '.'));
-            else alert('No agents spawned. Make sure the team has members.');
+            if (ok > 0) alert(t('spawned' + ok + ' agent(s)' + (fail > 0 ? ', ' + fail + ' failed.' : '.'));
+            else alert(t('noSpawn. Make sure the team has members.');
         } catch(e) {
-            alert('Error: ' + e.message);
+            alert(t('cleanupError' + e.message);
         } finally {
             btn.innerHTML = oldHtml;
             btn.disabled = false;
@@ -1109,7 +1371,7 @@
         if (!currentTeam) return;
         if (!confirm('Delete team "' + currentTeam + '" and all its data? This cannot be undone.')) return;
         const btn = document.getElementById('btn-cleanup');
-        btn.innerHTML = 'Cleaning...';
+        btn.innerHTML = t('cleaning';
         btn.disabled = true;
         try {
             const res = await fetch('/api/team/' + encodeURIComponent(currentTeam) + '/cleanup', { method: 'POST' });
@@ -1126,8 +1388,8 @@
                         <button class="action-btn" style="font-size:16px; padding:16px 32px;" onclick="openCreateWizard()">Create New Team</button>
                     </div>`;
             }
-        } catch(e) { alert('Error: ' + e.message); }
-        finally { btn.innerHTML = 'Cleanup'; btn.disabled = false; }
+        } catch(e) { alert(t('cleanupError' + e.message); }
+        finally { btn.innerHTML = t('cleanup'; btn.disabled = false; }
     }
 
     // ── Create Team Wizard ──────────────────────────────────────────
