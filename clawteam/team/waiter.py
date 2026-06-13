@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import dataclass, field
 from typing import Callable
 
 from clawteam.platform_compat import install_signal_handlers, restore_signal_handlers

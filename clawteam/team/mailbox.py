@@ -257,6 +257,16 @@ class MailboxManager:
         else:
             raw = self._transport.fetch(agent_name, limit=limit, consume=True)
             msgs = self._parse_messages(raw)
+
+        # File-only and push-first deliveries may land in the durable file
+        # fallback even when the primary transport is a custom/push transport.
+        # Drain that fallback too so receive() observes messages sent with
+        # transport_preference="file_only".
+        file_transport = self._get_file_transport()
+        if file_transport is not self._transport and len(msgs) < limit:
+            claimed = file_transport.claim_messages(agent_name, limit - len(msgs))
+            msgs.extend(self._parse_claimed_messages(claimed))
+
         if msgs:
             now = datetime.now(timezone.utc)
             for msg in msgs:
@@ -274,7 +284,10 @@ class MailboxManager:
 
     def peek(self, agent_name: str) -> list[TeamMessage]:
         """Return pending messages without consuming them."""
-        raw = self._transport.fetch(agent_name, consume=False)
+        raw = list(self._transport.fetch(agent_name, consume=False))
+        file_transport = self._get_file_transport()
+        if file_transport is not self._transport:
+            raw.extend(file_transport.fetch(agent_name, consume=False))
         return self._parse_messages(raw)
 
     def _find_by_idempotency_key(self, key: str) -> TeamMessage | None:
@@ -290,4 +303,8 @@ class MailboxManager:
         return None
 
     def peek_count(self, agent_name: str) -> int:
-        return self._transport.count(agent_name)
+        count = self._transport.count(agent_name)
+        file_transport = self._get_file_transport()
+        if file_transport is not self._transport:
+            count += file_transport.count(agent_name)
+        return count

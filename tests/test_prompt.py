@@ -203,5 +203,4 @@ class TestBuildAgentPrompt:
             team_name="my-team", leader_name="boss", task="task",
         )
         assert "clawteam lifecycle worker-heartbeat my-team" in prompt
-        assert "--task <task-id> --status in_progress" in prompt
-
+        assert "--agent dev --turn-count <n> --task <task-id> --status in_progress" in prompt

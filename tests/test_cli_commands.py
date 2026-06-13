@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 from clawteam.cli.commands import app
 from clawteam.config import ClawTeamConfig, load_config, save_config
 from clawteam.team.mailbox import MailboxManager
-from clawteam.team.manager import TeamManager
+from clawteam.team.manager import TeamManager, _team_dir
 from clawteam.team.models import MessageType
 from clawteam.team.routing_policy import DefaultRoutingPolicy, RuntimeEnvelope
 
@@ -337,6 +337,56 @@ def test_lifecycle_worker_heartbeat_cli_sends_leader_message(tmp_path):
     assert msgs[0].from_agent == "worker"
     assert msgs[0].status == "in_progress"
     assert "task=task-7" in (msgs[0].content or "")
+
+    from clawteam.team.heartbeat import read_heartbeat
+
+    hb = read_heartbeat(_team_dir("demo"), "worker")
+    assert hb is not None
+    assert hb.agent == "worker"
+    assert hb.alive is True
+    assert hb.turn_count == 0
+    assert hb.task_id == "task-7"
+
+
+def test_lifecycle_worker_heartbeat_cli_supports_explicit_agent_and_turn_count(tmp_path):
+    runner = CliRunner()
+    env = {
+        "HOME": str(tmp_path),
+        "CLAWTEAM_DATA_DIR": str(tmp_path / ".clawteam"),
+        "CLAWTEAM_AGENT_ID": "worker001",
+        "CLAWTEAM_AGENT_NAME": "env-worker",
+    }
+
+    TeamManager.create_team(
+        name="demo",
+        leader_name="leader",
+        leader_id="leader001",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "lifecycle",
+            "worker-heartbeat",
+            "demo",
+            "--agent",
+            "worker-explicit",
+            "--turn-count",
+            "9",
+            "--task-id",
+            "task-9",
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0
+    from clawteam.team.heartbeat import read_heartbeat
+
+    hb = read_heartbeat(_team_dir("demo"), "worker-explicit")
+    assert hb is not None
+    assert hb.turn_count == 9
+    assert hb.task_id == "task-9"
+
 
 def test_team_status_uses_configured_timezone(tmp_path):
     runner = CliRunner()

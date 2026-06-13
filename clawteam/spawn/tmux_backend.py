@@ -309,7 +309,7 @@ class TmuxBackend(SpawnBackend):
         )
         heartbeat_hook = (
             f"{exit_cmd} lifecycle worker-heartbeat {shlex.quote(team_name)} "
-            f"--status spawned >/dev/null 2>&1 || true"
+            f"--agent {shlex.quote(agent_name)} --turn-count -1 --status spawned >/dev/null 2>&1 || true"
         )
         # Unset nesting-detection env vars so spawned agents
         # don't refuse to start when the leader is itself a session.

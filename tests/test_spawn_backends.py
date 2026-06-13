@@ -1886,5 +1886,5 @@ def test_tmux_backend_adds_worker_heartbeat_hook(monkeypatch, tmp_path):
     assert "spawned" in result
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
     full_cmd = new_session[-1]
-    assert "lifecycle worker-heartbeat demo-team --status spawned >/dev/null 2>&1 || true" in full_cmd
+    assert "lifecycle worker-heartbeat demo-team --agent worker1 --turn-count -1 --status spawned >/dev/null 2>&1 || true" in full_cmd
     assert full_cmd.index("worker-heartbeat") < full_cmd.index("trap")

@@ -390,6 +390,21 @@ class TestFileTransport:
         assert transport.fetch("bob", consume=True) == []
         assert len(list(inbox.glob("msg-*.json"))) == 1
 
+    def test_file_transport_watches_inbox_changes(self, team_name):
+        seen = []
+        transport = FileTransport(team_name, watched_agent="bob", on_change=seen.append)
+        transport.start()
+        try:
+            transport.deliver("bob", b'{"type":"message","from":"alice","to":"bob","content":"hello"}')
+            deadline = time.time() + 2
+            while time.time() < deadline and not seen:
+                time.sleep(0.05)
+        finally:
+            transport.stop()
+
+        assert seen
+        assert any(path.name.startswith("msg-") for path in seen)
+
     def test_p2p_fetch_consume_reuses_claim_path(self, team_name, monkeypatch):
         from clawteam.transport.claimed import ClaimedMessage
         from clawteam.transport.p2p import P2PTransport

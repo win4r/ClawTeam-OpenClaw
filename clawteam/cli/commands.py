@@ -3020,38 +3020,55 @@ def lifecycle_worker_heartbeat(
     team: str = typer.Argument(..., help="Team name"),
     task: Optional[str] = typer.Option(None, "--task", help="Current task ID or short description"),
     status: Optional[str] = typer.Option(None, "--status", help="Current worker status"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-n", help="Worker agent name"),
+    turn_count: int = typer.Option(0, "--turn-count", help="Current turn count (-1 = tmux fallback)"),
+    alive: bool = typer.Option(True, "--alive/--no-alive", help="Whether the worker is alive"),
+    task_id: Optional[str] = typer.Option(None, "--task-id", help="Canonical task id"),
 ):
-    """Send a lightweight worker heartbeat notification to the leader."""
+    """Write a heartbeat file and send a lightweight leader notification."""
     from clawteam.identity import AgentIdentity
+    from clawteam.team.heartbeat import write_heartbeat
     from clawteam.team.lifecycle import LifecycleManager
     from clawteam.team.mailbox import MailboxManager
-    from clawteam.team.manager import TeamManager
+    from clawteam.team.manager import TeamManager, _team_dir
 
     identity = AgentIdentity.from_env()
-    leader_name = TeamManager.get_leader_name(team)
-    if not leader_name:
-        _output({"error": "No leader found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
-        raise typer.Exit(1)
-
-    mailbox = MailboxManager(team)
-    lm = LifecycleManager(team, mailbox)
-    lm.send_worker_heartbeat(
-        agent_name=identity.agent_name,
-        agent_id=identity.agent_id,
-        leader_name=leader_name,
-        task=task or "",
-        status=status or "",
+    agent_name = agent or identity.agent_name
+    heartbeat_task = task_id or task
+    write_heartbeat(
+        _team_dir(team),
+        agent=agent_name,
+        alive=alive,
+        turn_count=turn_count,
+        task_id=heartbeat_task,
     )
+
+    leader_name = TeamManager.get_leader_name(team)
+    if leader_name:
+        mailbox = MailboxManager(team)
+        lm = LifecycleManager(team, mailbox)
+        lm.send_worker_heartbeat(
+            agent_name=agent_name,
+            agent_id=identity.agent_id,
+            leader_name=leader_name,
+            task=heartbeat_task or "",
+            status=status or "",
+        )
 
     _output(
         {
             "status": "heartbeat_sent",
-            "agent": identity.agent_name,
-            "leader": leader_name,
-            "task": task or None,
+            "agent": agent_name,
+            "leader": leader_name or None,
+            "task": heartbeat_task or None,
             "workerStatus": status or None,
+            "turnCount": turn_count,
+            "alive": alive,
         },
-        lambda d: console.print(f"[green]OK[/green] Heartbeat sent to '{leader_name}'"),
+        lambda d: console.print(
+            "[green]OK[/green] Heartbeat sent"
+            + (f" to '{d['leader']}'" if d.get("leader") else "")
+        ),
     )
 
 

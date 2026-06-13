@@ -4,6 +4,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Callable
 
 if sys.platform == "win32":
     import msvcrt
@@ -20,6 +21,7 @@ from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import get_data_dir
 from clawteam.transport.base import Transport
 from clawteam.transport.claimed import ClaimedMessage
+from clawteam.transport.dir_watcher import DirectoryMtimeWatcher
 
 
 def unlock(file_handle) -> None:
@@ -107,8 +109,29 @@ class FileTransport(Transport):
     Atomic writes (tmp + rename) prevent partial reads.
     """
 
-    def __init__(self, team_name: str):
+    def __init__(
+        self,
+        team_name: str,
+        watched_agent: str | None = None,
+        on_change: Callable[[Path], None] | None = None,
+    ) -> None:
         self.team_name = team_name
+        self._watched_agent = watched_agent
+        self._on_change = on_change
+        self._watcher: DirectoryMtimeWatcher | None = None
+
+    def start(self) -> None:
+        """Start watching the inbox directory if ``on_change`` is configured."""
+        if self._on_change is not None and self._watched_agent is not None:
+            inbox = _inbox_dir(self.team_name, self._watched_agent)
+            self._watcher = DirectoryMtimeWatcher(inbox, on_change=self._on_change)
+            self._watcher.start()
+
+    def stop(self) -> None:
+        """Stop the inbox directory watcher, if running."""
+        if self._watcher is not None:
+            self._watcher.stop()
+            self._watcher = None
 
     def _make_claimed_message(
         self,
