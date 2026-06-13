@@ -306,6 +306,38 @@ def test_task_cli_rejects_circular_dependencies(tmp_path):
     assert "cannot contain cycles" in result.output
 
 
+
+def test_lifecycle_worker_heartbeat_cli_sends_leader_message(tmp_path):
+    runner = CliRunner()
+    env = {
+        "HOME": str(tmp_path),
+        "CLAWTEAM_DATA_DIR": str(tmp_path / ".clawteam"),
+        "CLAWTEAM_AGENT_ID": "worker001",
+        "CLAWTEAM_AGENT_NAME": "worker",
+    }
+
+    TeamManager.create_team(
+        name="demo",
+        leader_name="leader",
+        leader_id="leader001",
+    )
+    TeamManager.add_member("demo", "worker", agent_id="worker001", agent_type="codex")
+
+    result = runner.invoke(
+        app,
+        ["lifecycle", "worker-heartbeat", "demo", "--task", "task-7", "--status", "in_progress"],
+        env=env,
+    )
+
+    assert result.exit_code == 0
+    assert "Heartbeat sent" in result.output
+    msgs = MailboxManager("demo").receive("leader")
+    assert len(msgs) == 1
+    assert msgs[0].key == "worker_heartbeat"
+    assert msgs[0].from_agent == "worker"
+    assert msgs[0].status == "in_progress"
+    assert "task=task-7" in (msgs[0].content or "")
+
 def test_team_status_uses_configured_timezone(tmp_path):
     runner = CliRunner()
     env = {

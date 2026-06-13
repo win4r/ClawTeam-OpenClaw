@@ -196,3 +196,12 @@ class TestBuildAgentPrompt:
             team_name="team", leader_name="lead", task="task",
         )
         assert prompt.index("## Coordination Protocol") < prompt.index("## Self-Evaluation")
+
+    def test_prompt_includes_worker_heartbeat_guidance(self):
+        prompt = build_agent_prompt(
+            agent_name="dev", agent_id="id", agent_type="t",
+            team_name="my-team", leader_name="boss", task="task",
+        )
+        assert "clawteam lifecycle worker-heartbeat my-team" in prompt
+        assert "--task <task-id> --status in_progress" in prompt
+
