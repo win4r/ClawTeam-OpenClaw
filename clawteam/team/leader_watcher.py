@@ -6,6 +6,7 @@ import json
 import signal
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,103 @@ from clawteam.team.redis_wakeup import (
 )
 from clawteam.team.routing_policy import RuntimeEnvelope
 from clawteam.team.tasks import TaskStore
+
+
+class _SimpleNudgeTracker:
+    def __init__(self) -> None:
+        self._seen: set[tuple[str, str]] = set()
+
+    def should_nudge(self, agent_name: str, text: str) -> bool:
+        key = (agent_name, text.strip()[-240:])
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        return True
+
+
+class _SimpleIdleNudgeTracker:
+    def __init__(self, scan_interval_s: float = 30.0, repeat_interval_s: float = 60.0) -> None:
+        self.scan_interval_s = scan_interval_s
+        self.repeat_interval_s = repeat_interval_s
+        self._last_scan_at = 0.0
+        self._last_nudge_at: dict[str, float] = {}
+        self._idle_agents: set[str] = set()
+
+    def should_scan(self) -> bool:
+        return time.time() - self._last_scan_at >= self.scan_interval_s
+
+    def mark_scan(self) -> None:
+        self._last_scan_at = time.time()
+
+    def mark_idle(self, agent_name: str) -> None:
+        self._idle_agents.add(agent_name)
+
+    def reset_pane(self, agent_name: str) -> None:
+        self._idle_agents.discard(agent_name)
+
+    def should_nudge(self, agent_name: str) -> bool:
+        if agent_name not in self._idle_agents:
+            return False
+        return time.time() - self._last_nudge_at.get(agent_name, 0.0) >= self.repeat_interval_s
+
+    def record_nudge(self, agent_name: str) -> None:
+        self._last_nudge_at[agent_name] = time.time()
+
+
+def _make_nudge_tracker():
+    try:
+        from clawteam.harness.auto_nudge import NudgeTracker
+
+        return NudgeTracker()
+    except Exception:
+        return _SimpleNudgeTracker()
+
+
+def _make_idle_tracker():
+    try:
+        from clawteam.harness.idle_nudge import IdleNudgeTracker
+
+        return IdleNudgeTracker()
+    except Exception:
+        return _SimpleIdleNudgeTracker()
+
+
+def _is_permission_seeking(text: str) -> bool:
+    try:
+        from clawteam.harness.auto_nudge import is_permission_seeking
+
+        return is_permission_seeking(text)
+    except Exception:
+        lowered = text.lower()
+        return any(
+            phrase in lowered
+            for phrase in (
+                "do you want to proceed",
+                "proceed?",
+                "continue?",
+                "yes/no",
+                "permission",
+            )
+        )
+
+
+def _pane_looks_idle(text: str) -> bool:
+    try:
+        from clawteam.harness.idle_nudge import pane_looks_idle
+
+        return pane_looks_idle(text)
+    except Exception:
+        stripped = text.rstrip()
+        return stripped.endswith(("$", "$ ", "%", "% ", ">", "> ")) or stripped.endswith("$")
+
+
+def _read_heartbeat(team_dir: Path, agent_name: str):
+    try:
+        from clawteam.team.heartbeat import read_heartbeat
+
+        return read_heartbeat(team_dir, agent_name)
+    except Exception:
+        return None
 
 
 @dataclass
@@ -59,6 +157,9 @@ class LeaderWatcher:
         self.task_store = TaskStore(team_name)
         self.mailbox = MailboxManager(team_name)
         self.redis: RedisWakeup = RedisWakeup(False)
+        self._nudge_tracker = _make_nudge_tracker()
+        self._idle_tracker = _make_idle_tracker()
+        self._last_stale_leader_nudge_at = 0.0
         self._running = False
 
     def run(self) -> None:
@@ -87,6 +188,7 @@ class LeaderWatcher:
     def check_once(self, *, reason: str = "poll", redis_event: bool = False) -> LeaderWatchResult:
         """Check team state once and inject if state changed or heartbeat is due."""
         snapshot = self._collect_snapshot()
+        reflex_injected = self._run_reflexes(snapshot)
         state = self._read_state()
         signature = self._signature(snapshot)
         now = time.time()
@@ -96,7 +198,13 @@ class LeaderWatcher:
         changed = signature != last_signature
         heartbeat_due = now - last_heartbeat >= self.heartbeat_interval
         if not changed and not heartbeat_due:
-            return LeaderWatchResult(False, "no_change", redis_event=redis_event)
+            result = LeaderWatchResult(
+                reflex_injected,
+                "reflex" if reflex_injected else "no_change",
+                redis_event=redis_event,
+            )
+            self._emit_result(result)
+            return result
 
         summary, evidence = self._render(snapshot, changed=changed, heartbeat_due=heartbeat_due)
         injected, status = self._inject(summary, evidence)
@@ -234,6 +342,188 @@ class LeaderWatcher:
             f"deadAgents: {dead_text}",
         ]
         return summary, evidence
+
+
+    def _run_reflexes(self, snapshot: dict[str, Any]) -> bool:
+        """Run v2 reflex integrations without breaking scheduler checks."""
+        injected = False
+        for reflex in (
+            self._auto_nudge_workers,
+            self._idle_nudge_workers,
+            lambda: self._stale_leader_check(snapshot),
+        ):
+            try:
+                injected = reflex() or injected
+            except Exception:
+                continue
+        return injected
+
+    def _auto_nudge_workers(self) -> bool:
+        injected = False
+        for worker_name, meta in self._worker_registry_items():
+            target = str(meta.get("tmux_target") or "")
+            if not target:
+                continue
+            text = self._capture_pane_text(target)
+            if not _is_permission_seeking(text):
+                continue
+            if not self._nudge_tracker.should_nudge(worker_name, text):
+                continue
+            envelope = RuntimeEnvelope(
+                source="leader_watcher",
+                target=worker_name,
+                channel="reflex",
+                priority="high",
+                message_type="auto_nudge",
+                summary="yes, proceed",
+                evidence=["trigger: permission_seeking_worker", f"pane: {target}"],
+                recommended_next_action="yes, proceed",
+                dedupe_key=f"auto-nudge:{self.team_name}:{worker_name}",
+            )
+            ok, _status = self._inject_runtime(worker_name, meta, envelope)
+            injected = ok or injected
+        return injected
+
+    def _idle_nudge_workers(self) -> bool:
+        if not self._idle_tracker.should_scan():
+            return False
+        self._idle_tracker.mark_scan()
+        injected = False
+        action = (
+            "read your inbox/mailbox, continue your assigned task now, and if blocked send "
+            "the leader a concrete status update"
+        )
+        for worker_name, meta in self._worker_registry_items():
+            target = str(meta.get("tmux_target") or "")
+            if not target:
+                continue
+            text = self._capture_pane_text(target)
+            if _pane_looks_idle(text):
+                self._idle_tracker.mark_idle(worker_name)
+            else:
+                self._idle_tracker.reset_pane(worker_name)
+                continue
+            if not self._idle_tracker.should_nudge(worker_name):
+                continue
+            envelope = RuntimeEnvelope(
+                source="leader_watcher",
+                target=worker_name,
+                channel="reflex",
+                priority="high",
+                message_type="idle_nudge",
+                summary=f"Worker {worker_name} appears idle at a shell prompt; {action}.",
+                evidence=["trigger: idle_worker_shell_prompt", f"pane: {target}"],
+                recommended_next_action=action,
+                dedupe_key=f"idle-nudge:{self.team_name}:{worker_name}",
+            )
+            ok, _status = self._inject_runtime(worker_name, meta, envelope)
+            if ok:
+                self._idle_tracker.record_nudge(worker_name)
+            injected = ok or injected
+        return injected
+
+    def _stale_leader_check(self, snapshot: dict[str, Any] | None = None) -> bool:
+        if snapshot is None:
+            snapshot = self._collect_snapshot()
+        if not (snapshot.get("pending") or snapshot.get("inProgress") or snapshot.get("blocked")):
+            return False
+        heartbeat = _read_heartbeat(self._team_dir(), self.leader_name)
+        if heartbeat is None:
+            return False
+        try:
+            age = (
+                datetime.now(timezone.utc)
+                - heartbeat.last_turn_at.astimezone(timezone.utc)
+            ).total_seconds()
+        except Exception:
+            return False
+        if age <= 180:
+            return False
+        now = time.time()
+        if now - self._last_stale_leader_nudge_at < 60:
+            return False
+
+        meta = self._agent_meta(self.leader_name)
+        target = str(meta.get("tmux_target") or "")
+        if target:
+            text = self._capture_pane_text(target)
+            if text and not _pane_looks_idle(text):
+                return False
+        action = "check messages and redistribute pending tasks"
+        envelope = RuntimeEnvelope(
+            source="leader_watcher",
+            target=self.leader_name,
+            channel="reflex",
+            priority="high",
+            message_type="stale_leader_nudge",
+            summary=f"Leader heartbeat is stale ({age:.0f}s); {action}.",
+            evidence=[
+                "trigger: stale_leader",
+                f"last_turn_age_seconds: {age:.0f}",
+                f"pending: {len(snapshot.get('pending') or [])}",
+                f"inProgress: {len(snapshot.get('inProgress') or [])}",
+                f"blocked: {len(snapshot.get('blocked') or [])}",
+            ],
+            recommended_next_action=action,
+            dedupe_key=f"stale-leader:{self.team_name}:{self.leader_name}",
+        )
+        ok, _status = self._inject_runtime(self.leader_name, meta, envelope)
+        if ok:
+            self._last_stale_leader_nudge_at = now
+        return ok
+
+    def _worker_registry_items(self) -> list[tuple[str, dict[str, Any]]]:
+        try:
+            from clawteam.spawn.registry import get_registry
+
+            registry = get_registry(self.team_name)
+        except Exception:
+            return []
+        return [
+            (name, meta)
+            for name, meta in registry.items()
+            if name != self.leader_name and isinstance(meta, dict)
+        ]
+
+    def _agent_meta(self, agent_name: str) -> dict[str, Any]:
+        try:
+            from clawteam.spawn.registry import get_registry
+
+            meta = get_registry(self.team_name).get(agent_name) or {}
+            return meta if isinstance(meta, dict) else {}
+        except Exception:
+            return {}
+
+    def _capture_pane_text(self, target: str) -> str:
+        try:
+            from clawteam.spawn.tmux_backend import capture_pane_text
+
+            return capture_pane_text(target)
+        except Exception:
+            return ""
+
+    def _inject_runtime(
+        self,
+        agent_name: str,
+        meta: dict[str, Any],
+        envelope: RuntimeEnvelope,
+    ) -> tuple[bool, str]:
+        try:
+            from clawteam.spawn import get_backend
+
+            backend_name = str(meta.get("backend") or "tmux")
+            backend = get_backend(backend_name)
+            if hasattr(backend, "inject_runtime_message"):
+                return backend.inject_runtime_message(self.team_name, agent_name, envelope)
+        except Exception as exc:
+            return False, str(exc)
+        return False, "runtime injection unsupported or failed"
+
+    def _team_dir(self) -> Path:
+        return ensure_within_root(
+            get_data_dir() / "teams",
+            validate_identifier(self.team_name, "team name"),
+        )
 
     def _inject(self, summary: str, evidence: list[str]) -> tuple[bool, str]:
         envelope = RuntimeEnvelope(

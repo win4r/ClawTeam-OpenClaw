@@ -2616,6 +2616,19 @@ def task_wait(
         )
         console.print()
 
+    def _on_worker_stalled(agent_name, seconds):
+        if _json_output:
+            print(json.dumps({
+                "event": "worker_stalled",
+                "agent": agent_name,
+                "seconds_since_last_turn": round(seconds, 1),
+            }), flush=True)
+        else:
+            console.print(
+                f"  [yellow]Worker '{agent_name}' heartbeat is stale[/yellow]"
+                f" ({seconds:.0f}s since last turn)"
+            )
+
     def _on_agent_dead(dead_agent, abandoned_tasks):
         task_subjects = ", ".join(t.subject for t in abandoned_tasks)
         if _json_output:
@@ -2640,6 +2653,7 @@ def task_wait(
         on_message=_on_message,
         on_progress=_on_progress,
         on_agent_dead=_on_agent_dead,
+        on_worker_stalled=_on_worker_stalled,
     )
     result = waiter.wait()
 
