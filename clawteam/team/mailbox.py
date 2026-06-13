@@ -6,6 +6,8 @@ import json
 import os
 import time
 import uuid
+from datetime import datetime, timezone
+from typing import Literal
 
 from clawteam.paths import ensure_within_root, validate_identifier
 from clawteam.team.models import MessageType, TeamMessage, get_data_dir
@@ -45,6 +47,18 @@ class MailboxManager:
         self._transport = transport or _default_transport(team_name)
         self._events_dir = ensure_within_root(get_data_dir() / "teams", team_name, "events")
         self._events_dir.mkdir(parents=True, exist_ok=True)
+        self._file_transport_cache: Transport | None = None
+
+
+    def _get_file_transport(self) -> Transport:
+        """Return a file transport for durable fallback delivery."""
+        from clawteam.transport.file import FileTransport
+
+        if isinstance(self._transport, FileTransport):
+            return self._transport
+        if self._file_transport_cache is None:
+            self._file_transport_cache = FileTransport(team_name=self.team_name)
+        return self._file_transport_cache
 
     def _log_event(self, msg: TeamMessage) -> None:
         """Persist message to event log (never consumed, for history)."""
@@ -90,6 +104,7 @@ class MailboxManager:
         last_task: str | None = None,
         status: str | None = None,
         idempotency_key: str | None = None,
+        transport_preference: Literal["auto", "push_first", "file_only"] = "auto",
     ) -> TeamMessage:
         from clawteam.team.manager import TeamManager
 
@@ -120,9 +135,14 @@ class MailboxManager:
             last_task=last_task,
             status=status,
             idempotency_key=idempotency_key,
+            transport_preference=transport_preference,
         )
+        msg.notified_at = datetime.now(timezone.utc)
         data = msg.model_dump_json(indent=2, by_alias=True, exclude_none=True).encode("utf-8")
-        self._transport.deliver(delivery_target, data)
+        if msg.transport_preference == "file_only":
+            self._get_file_transport().deliver(delivery_target, data)
+        else:
+            self._transport.deliver(delivery_target, data)
         self._log_event(msg)
         try:
             from clawteam.team.redis_wakeup import agent_channel, publish_wakeup, team_channel
@@ -238,6 +258,10 @@ class MailboxManager:
             raw = self._transport.fetch(agent_name, limit=limit, consume=True)
             msgs = self._parse_messages(raw)
         if msgs:
+            now = datetime.now(timezone.utc)
+            for msg in msgs:
+                msg.delivered_at = now
+                self._log_event(msg)
             try:
                 from clawteam.events.global_bus import get_event_bus
                 from clawteam.events.types import AfterInboxReceive

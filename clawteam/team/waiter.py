@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -10,6 +12,29 @@ from clawteam.platform_compat import install_signal_handlers, restore_signal_han
 from clawteam.team.mailbox import MailboxManager
 from clawteam.team.models import TaskItem, TaskStatus, TeamMessage
 from clawteam.team.tasks import TaskStore
+
+
+def _check_stalled_workers(team_dir: Path, threshold_s: float = 120.0) -> list[tuple[str, float]]:
+    """Return workers whose heartbeat age exceeds threshold_s.
+
+    Heartbeat support is optional while v2 slices land; absence of the
+    heartbeat module is treated as no stalled workers.
+    """
+    try:
+        from clawteam.team.heartbeat import list_heartbeats
+    except Exception:
+        return []
+
+    now = datetime.now(timezone.utc)
+    stalled: list[tuple[str, float]] = []
+    for heartbeat in list_heartbeats(team_dir):
+        try:
+            age = (now - heartbeat.last_turn_at.astimezone(timezone.utc)).total_seconds()
+        except Exception:
+            continue
+        if age > threshold_s:
+            stalled.append((heartbeat.agent, age))
+    return stalled
 
 
 @dataclass
@@ -49,6 +74,7 @@ class TaskWaiter:
         on_message: Callable[[TeamMessage], None] | None = None,
         on_progress: Callable[[int, int, int, int, int], None] | None = None,
         on_agent_dead: Callable[[str, list[TaskItem]], None] | None = None,
+        on_worker_stalled: Callable[[str, float], None] | None = None,
     ):
         self.team_name = team_name
         self.agent_name = agent_name
@@ -59,9 +85,49 @@ class TaskWaiter:
         self.on_message = on_message
         self.on_progress = on_progress
         self.on_agent_dead = on_agent_dead
+        self.on_worker_stalled = on_worker_stalled
         self._running = False
         self._messages_received = 0
         self._known_dead: set[str] = set()
+        self._already_flagged_stalled: set[str] = set()
+
+
+    def _team_dir(self) -> Path:
+        from clawteam.team.models import get_data_dir
+
+        return get_data_dir() / "teams" / self.team_name
+
+    def _run_stall_check(self) -> None:
+        """Emit a one-shot callback/event for newly stalled heartbeat workers."""
+        try:
+            stalled = dict(_check_stalled_workers(self._team_dir()))
+        except Exception:
+            return
+
+        for agent_name, seconds in stalled.items():
+            if agent_name in self._already_flagged_stalled:
+                continue
+            self._already_flagged_stalled.add(agent_name)
+            if self.on_worker_stalled:
+                self.on_worker_stalled(agent_name, seconds)
+            try:
+                from clawteam.events.global_bus import get_event_bus
+                from clawteam.events.types import HeartbeatTimeout
+                from clawteam.team.heartbeat import read_heartbeat
+
+                heartbeat = read_heartbeat(self._team_dir(), agent_name)
+                last_seen = heartbeat.last_turn_at.isoformat() if heartbeat else ""
+                get_event_bus().emit_async(
+                    HeartbeatTimeout(
+                        team_name=self.team_name,
+                        agent_name=agent_name,
+                        last_seen=last_seen,
+                    )
+                )
+            except Exception:
+                pass
+
+        self._already_flagged_stalled.intersection_update(stalled)
 
     def wait(self) -> WaitResult:
         """Block until all tasks are completed, timeout, or interrupted."""
@@ -86,6 +152,9 @@ class TaskWaiter:
 
                 # 2. Detect dead agents and recover their tasks
                 self._check_dead_agents()
+
+                # 2.5 Detect stalled heartbeat workers
+                self._run_stall_check()
 
                 # 3. Check task status
                 tasks = self.task_store.list_tasks()

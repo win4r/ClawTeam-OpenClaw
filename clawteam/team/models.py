@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -124,6 +124,13 @@ class TeamMessage(BaseModel):
     confidence: float | None = None
     # idempotency: dedup key to prevent duplicate messages on retry
     idempotency_key: str | None = Field(default=None, alias="idempotencyKey")
+    # lifecycle timestamps for non-destructive mailbox audit/event log compatibility
+    notified_at: datetime | None = Field(default=None, alias="notifiedAt")
+    delivered_at: datetime | None = Field(default=None, alias="deliveredAt")
+    # transport routing preference (per-message override of configured transport)
+    transport_preference: Literal["auto", "push_first", "file_only"] = Field(
+        default="auto", alias="transportPreference"
+    )
 
 
 class TaskItem(BaseModel):
