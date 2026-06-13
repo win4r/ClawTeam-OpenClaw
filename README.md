@@ -138,10 +138,10 @@ clawteam board attach my-team   # Linux/macOS/WSL with tmux
 | Agent | Spawn Command | Status |
 |-------|--------------|--------|
 | [OpenClaw](https://openclaw.ai) | `clawteam spawn --team ...` | **Default** |
-| [Claude Code](https://claude.ai/claude-code) | `clawteam spawn claude --team ...` | Full support |
-| [Codex](https://openai.com/codex) | `clawteam spawn codex --team ...` | Full support |
-| [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn nanobot --team ...` | Full support |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `clawteam spawn hermes --team ...` | Full support (tmux + subprocess) |
+| [Claude Code](https://claude.ai/claude-code) | `clawteam spawn tmux claude --team ...` | Full support |
+| [Codex](https://openai.com/codex) | `clawteam spawn tmux codex --team ...` | Full support |
+| [nanobot](https://github.com/HKUDS/nanobot) | `clawteam spawn tmux nanobot --team ...` | Full support |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `clawteam spawn tmux hermes --team ...` or `clawteam spawn subprocess hermes --team ...` | Full support |
 | [Cursor](https://cursor.com) | `clawteam spawn subprocess cursor --team ...` | Experimental |
 | Custom scripts | `clawteam spawn subprocess python --team ...` | Full support |
 
@@ -287,7 +287,7 @@ cp skills/hermes/SKILL.md ~/.hermes/skills/openclaw-imports/clawteam/SKILL.md
 - Route multi-agent/swarm/team queries to clawteam (not `delegate_task`)
 - Use `--team-name` (not `--team`), `-g`/`--goal`, `--force` on `launch`
 - Always pass `--command hermes` on `launch` -- templates default to `openclaw`
-- On `spawn`, pass `hermes` as a trailing positional arg (not `--command hermes`)
+- On `spawn`, specify a backend before the `hermes` command (for example, `clawteam spawn tmux hermes ...` or `clawteam spawn subprocess hermes ...`); do not use `--command hermes` there.
 - Wait `sleep 60` after launch for worker boot, then poll the board every 30s
 - Never peek inboxes within the first 60s (they'll be empty)
 - Read inboxes and produce a consolidated report before `clawteam team cleanup`
@@ -506,10 +506,10 @@ All built-in templates (`hedge-fund`, `research-paper`, `code-review`, `strategy
 clawteam launch hedge-fund --team-name <name> --goal "..." --command hermes --force
 ```
 
-Or spawn manually, passing `hermes` as the trailing positional argument:
+Or spawn manually, putting the backend before the `hermes` command:
 
 ```bash
-clawteam spawn --team <team> --agent-name <name> --task "..." --no-workspace hermes
+clawteam spawn subprocess hermes --team <team> --agent-name <name> --task "..." --no-workspace
 ```
 
 Note: the built-in templates were designed around OpenClaw's `clawteam inbox send` coordination pattern. Hermes workers sometimes complete their analysis without executing the inbox-send command. If `clawteam inbox peek` returns empty while the kanban shows `COMPLETED`, capture tmux scrollback directly:
@@ -573,8 +573,8 @@ clawteam team cleanup <team> --force      # Delete team
 
 # Spawn agents (note: `spawn` uses --team; `launch` uses --team-name)
 clawteam spawn --team <team> --agent-name <name> --task "do this"
-clawteam spawn codex --team <team> --agent-name <name> --task "do this"
-clawteam spawn --team <team> --agent-name <name> --task "do this" hermes
+clawteam spawn tmux codex --team <team> --agent-name <name> --task "do this"
+clawteam spawn tmux hermes --team <team> --agent-name <name> --task "do this"
 clawteam spawn subprocess hermes --team <team> --agent-name <name> --task "do this"
 
 # Task management
