@@ -93,6 +93,31 @@ class LifecycleManager:
         except Exception:
             pass
 
+    def send_worker_heartbeat(
+        self,
+        agent_name: str,
+        agent_id: str,
+        leader_name: str,
+        task: str = "",
+        status: str = "",
+    ) -> None:
+        """Send a lightweight worker heartbeat to the leader mailbox."""
+        detail = []
+        if task:
+            detail.append(f"task={task}")
+        if status:
+            detail.append(f"status={status}")
+        suffix = f" ({', '.join(detail)})" if detail else ""
+        self.mailbox.send(
+            from_agent=agent_name,
+            to=leader_name,
+            content=f"Heartbeat: {agent_name} is alive{suffix}.",
+            msg_type=MessageType.message,
+            agent_id=agent_id,
+            key="worker_heartbeat",
+            status=status or None,
+        )
+
     def approve_shutdown_and_notify(
         self,
         agent_name: str,
