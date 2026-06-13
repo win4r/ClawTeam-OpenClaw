@@ -307,13 +307,17 @@ class TmuxBackend(SpawnBackend):
             f"{exit_cmd} lifecycle on-exit --team {shlex.quote(team_name)} "
             f"--agent {shlex.quote(agent_name)}"
         )
+        heartbeat_hook = (
+            f"{exit_cmd} lifecycle worker-heartbeat {shlex.quote(team_name)} "
+            f"--status spawned >/dev/null 2>&1 || true"
+        )
         # Unset nesting-detection env vars so spawned agents
         # don't refuse to start when the leader is itself a session.
         unset_clause = "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION OPENCLAW_NESTED 2>/dev/null; "
         if cwd:
-            full_cmd = f"{unset_clause}{env_source_cmd}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{env_source_cmd}; cd {shlex.quote(cwd)} && {heartbeat_hook}; trap \"{exit_hook}\" EXIT; {cmd_str}"
         else:
-            full_cmd = f"{unset_clause}{env_source_cmd}; trap \"{exit_hook}\" EXIT; {cmd_str}"
+            full_cmd = f"{unset_clause}{env_source_cmd}; {heartbeat_hook}; trap \"{exit_hook}\" EXIT; {cmd_str}"
 
         # Check if tmux session exists
         check = subprocess.run(

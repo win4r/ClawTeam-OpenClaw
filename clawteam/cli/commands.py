@@ -3001,6 +3001,46 @@ def lifecycle_idle(
     )
 
 
+@lifecycle_app.command("worker-heartbeat")
+def lifecycle_worker_heartbeat(
+    team: str = typer.Argument(..., help="Team name"),
+    task: Optional[str] = typer.Option(None, "--task", help="Current task ID or short description"),
+    status: Optional[str] = typer.Option(None, "--status", help="Current worker status"),
+):
+    """Send a lightweight worker heartbeat notification to the leader."""
+    from clawteam.identity import AgentIdentity
+    from clawteam.team.lifecycle import LifecycleManager
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
+
+    identity = AgentIdentity.from_env()
+    leader_name = TeamManager.get_leader_name(team)
+    if not leader_name:
+        _output({"error": "No leader found"}, lambda d: console.print(f"[red]{d['error']}[/red]"))
+        raise typer.Exit(1)
+
+    mailbox = MailboxManager(team)
+    lm = LifecycleManager(team, mailbox)
+    lm.send_worker_heartbeat(
+        agent_name=identity.agent_name,
+        agent_id=identity.agent_id,
+        leader_name=leader_name,
+        task=task or "",
+        status=status or "",
+    )
+
+    _output(
+        {
+            "status": "heartbeat_sent",
+            "agent": identity.agent_name,
+            "leader": leader_name,
+            "task": task or None,
+            "workerStatus": status or None,
+        },
+        lambda d: console.print(f"[green]OK[/green] Heartbeat sent to '{leader_name}'"),
+    )
+
+
 @lifecycle_app.command("on-exit")
 def lifecycle_on_exit(
     team: str = typer.Option(..., "--team", "-t", help="Team name"),
