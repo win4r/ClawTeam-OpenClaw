@@ -88,3 +88,23 @@ class TestSendIdle:
         msgs = mailbox.receive("leader")
         assert len(msgs) == 1
         assert msgs[0].type == MessageType.idle
+
+
+class TestSendWorkerHeartbeat:
+    def test_worker_heartbeat_reaches_leader(self, team_name):
+        lm, mailbox = _setup(team_name)
+        lm.send_worker_heartbeat(
+            agent_name="worker",
+            agent_id="wid",
+            leader_name="leader",
+            task="task-1",
+            status="in_progress",
+        )
+
+        msgs = mailbox.receive("leader")
+        assert len(msgs) == 1
+        assert msgs[0].type == MessageType.message
+        assert msgs[0].from_agent == "worker"
+        assert msgs[0].key == "worker_heartbeat"
+        assert msgs[0].status == "in_progress"
+        assert "task=task-1" in (msgs[0].content or "")

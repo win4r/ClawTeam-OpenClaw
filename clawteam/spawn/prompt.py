@@ -148,6 +148,8 @@ def build_agent_prompt(
         f'  `clawteam inbox send {team_name} {leader_name} "Blocked: <exact error>"`',
         f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
         f"- Before finishing, save your session: `clawteam session save {team_name} --session-id <id>`",
+        "- Send a lightweight progress heartbeat during startup and long-running work:",
+        f"  `clawteam lifecycle worker-heartbeat {team_name} --task <task-id> --status in_progress`",
         "- Do not exit after the first task unless the leader explicitly tells you to stop.",
         "",
         "## Worker Loop Protocol\n",
