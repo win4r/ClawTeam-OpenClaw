@@ -518,3 +518,43 @@ class TestEventLog:
 
         events = mb.get_event_log(limit=5)
         assert len(events) == 5
+
+
+class TestMessageLifecycleCompatibility:
+    def test_send_and_receive_record_lifecycle_timestamps_in_event_log(self, team_name):
+        mb = _make_mailbox(team_name)
+
+        sent = mb.send(from_agent="alice", to="bob", content="tracked")
+        received = mb.receive("bob")
+
+        assert sent.notified_at is not None
+        assert received[0].delivered_at is not None
+        events = mb.get_event_log(limit=10)
+        assert any(event.notified_at is not None for event in events)
+        assert any(event.delivered_at is not None for event in events)
+
+    def test_file_only_transport_preference_delivers_through_file_fallback(self, team_name):
+        class BrokenTransport:
+            def deliver(self, recipient, data):
+                raise AssertionError("primary transport should not be used")
+
+            def fetch(self, agent_name, limit=10, consume=False):
+                return []
+
+            def count(self, agent_name):
+                return 0
+
+            def list_recipients(self):
+                return []
+
+        mb = MailboxManager(team_name, transport=BrokenTransport())
+
+        sent = mb.send(
+            from_agent="alice",
+            to="bob",
+            content="fallback",
+            transport_preference="file_only",
+        )
+
+        assert sent.transport_preference == "file_only"
+        assert [msg.content for msg in mb.receive("bob")] == ["fallback"]

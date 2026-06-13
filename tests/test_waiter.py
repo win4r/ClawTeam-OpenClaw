@@ -347,6 +347,42 @@ class TestDeadAgentRecovery:
         assert result.status == "completed"
 
 
+class TestStalledWorkerDetection:
+    def test_stalled_worker_callback_emitted_once_and_recovers(self, store, mailbox, monkeypatch):
+        tasks = [_make_task("t1", TaskStatus.in_progress, owner="worker1")]
+        done = [_make_task("t1", TaskStatus.completed, owner="worker1")]
+        store.list_tasks.side_effect = [tasks, tasks, done, done]
+        mailbox.receive.return_value = []
+
+        stall_checks = [ [("worker1", 240.0)], [("worker1", 245.0)], [], [] ]
+
+        def fake_stalled(_team_dir):
+            return stall_checks.pop(0) if stall_checks else []
+
+        monkeypatch.setattr("clawteam.team.waiter._check_stalled_workers", fake_stalled)
+        callback = MagicMock()
+        waiter = TaskWaiter(
+            team_name="test-team",
+            agent_name="leader",
+            mailbox=mailbox,
+            task_store=store,
+            poll_interval=0.01,
+            on_worker_stalled=callback,
+        )
+
+        result = waiter.wait()
+
+        assert result.status == "completed"
+        callback.assert_called_once_with("worker1", 240.0)
+
+    def test_stall_check_is_optional_when_heartbeat_module_missing(self, waiter, store):
+        store.list_tasks.return_value = []
+
+        result = waiter.wait()
+
+        assert result.status == "completed"
+
+
 class TestWaitResult:
 
     def test_default_values(self):
