@@ -9,6 +9,10 @@ Versioning follows [PEP 440](https://peps.python.org/pep-0440/) with `+openclaw`
 
 ### Added
 
+- **Auto-respawn for abnormal agent exits** — `trap EXIT` hook invokes `clawteam lifecycle on-exit`, which resets the agent's in-progress tasks to pending and respawns the agent (max 2 attempts, circuit-breaker tracked) when pending tasks remain ([#59](https://github.com/win4r/ClawTeam-OpenClaw/issues/59), [#60](https://github.com/win4r/ClawTeam-OpenClaw/pull/60))
+- **`subprocess_wrapper` keepalive recovery** for subprocess-backend workers ([#60](https://github.com/win4r/ClawTeam-OpenClaw/pull/60))
+- **Hermes Agent as native spawn target** — `chat` subcommand insertion, `--source tool` session tagging, `-q` prompt path, skill file with timing + routing guidance ([#63](https://github.com/win4r/ClawTeam-OpenClaw/issues/63))
+- **Docker nanobot runtime support** and keepalive recovery hardening (2026-04-14)
 - **Upstream sync 2026-05-28** — merged 197 upstream commits, including PR #154 (session capture/resume + leader watcher + runtime injection), keepalive subprocess worker recovery, generalized runtime injection for interactive backends, MCP support, harness/conductor/exit_journal scaffolding, multi-backend runtime resolution (`_resolve_runtime_backend`), `scalar_config_keys`, `format_timestamp`, gource board, profiles/hooks/plugins, and CJK README (`README_KR.md`).
 - **`is_pi_command` predicate** integrated into spawn validation and runtime injection paths.
 - **Skill injection via `--skill`** (claude-only `--append-system-prompt`).
@@ -22,6 +26,13 @@ Versioning follows [PEP 440](https://peps.python.org/pep-0440/) with `+openclaw`
 - Qwen now uses `--yolo` (consistent with Gemini/Kimi/Opencode/Hermes) instead of `--dangerously-skip-permissions`.
 - Gemini tmux interactive flag changed from `-p` to `-i`.
 
+### Fixed
+
+- **Bare `openclaw` spawn against OpenClaw ≥ 2026.6** — `openclaw agent` became a single-turn command requiring an explicit session target, so spawned workers exited immediately. Bare `openclaw` now normalizes to the resident `openclaw tui` form; the tmux backend supplies `--session`/`--message`/`--model` (verified live on OpenClaw 2026.6.11).
+- **Respawn no longer leaves duplicate same-name tmux windows** — spawn kills stale same-name windows first (never its own trap-handler window) and records the unique `#{window_id}` as the agent's tmux target, so name-based addressing can't go ambiguous.
+- **`runtime inject` now targets the window id recorded at spawn time** instead of the `session:window_name` form, keeping injection working after a respawn (live-verified: inject lands on the respawned agent).
+- **OpenClaw flag expansion is idempotent** — respawn re-runs the recorded command without duplicating `--session`/`--message`/`--model`/`--agent`.
+
 ### Fork-specific protections retained
 
 - Default agent remains `openclaw` (not `claude`).
@@ -34,6 +45,12 @@ Versioning follows [PEP 440](https://peps.python.org/pep-0440/) with `+openclaw`
 ### Known follow-ups (xfail)
 
 5 spawn-backend tests are marked `pytest.mark.xfail(strict=False)` because upstream PR #154's `build_keepalive_shell_command` / tmux `set-hook pane-exited` / docker-wrapped-nanobot path / `--append-system-prompt` ordering are not yet ported to fork's `subprocess_wrapper` / `trap EXIT` / manual-flag path. Tracked for a follow-up port. None of these block bot operation.
+
+### Known issues (from 2026-07-04 bot smoke test)
+
+- **Hard-killed agents lose conversation context on resume** — OpenClaw may not have flushed the session transcript when the process dies, so reconnecting with the same session key rotates to a fresh sessionId. Task-store recovery + identity re-injection still restore the working state. Mitigation direction: graceful termination before respawn.
+- **`clawteam session show` stays empty for openclaw agents** — the session locator inspects the command before flag expansion, so the exact `--session` key is never captured. OpenClaw resume does not depend on this record (deterministic session keys), cosmetic only.
+- **Idle `openclaw tui` workers may time out and exit** — long-lived teams should tune `agents.defaults.timeoutSeconds` (or accept worker churn + auto-respawn as the recovery path).
 
 ## [0.3.0+openclaw1] - 2026-04-04
 

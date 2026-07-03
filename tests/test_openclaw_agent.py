@@ -31,6 +31,160 @@ def _make_tmux_mocks(monkeypatch, captured: dict, *, tmux_ok: bool = True, agent
     monkeypatch.setattr("clawteam.spawn.tmux_backend._confirm_workspace_trust_if_prompted", lambda *a, **kw: False)
 
 
+def test_normalize_bare_openclaw_to_tui():
+    """Bare `openclaw` must normalize to the resident TUI form, not the
+    single-turn `agent --local` form (OpenClaw >= 2026.6 exits immediately
+    without a session target)."""
+    from clawteam.spawn.command_validation import normalize_spawn_command
+
+    assert normalize_spawn_command(["openclaw"]) == ["openclaw", "tui"]
+    # Explicit subcommands must pass through untouched.
+    assert normalize_spawn_command(["openclaw", "tui"]) == ["openclaw", "tui"]
+    assert normalize_spawn_command(["openclaw", "agent", "--local"]) == [
+        "openclaw",
+        "agent",
+        "--local",
+    ]
+
+
+def test_tmux_backend_bare_openclaw_spawns_tui_with_session(monkeypatch):
+    """Bare `openclaw` spawn must run `openclaw tui` with per-agent --session
+    isolation and the task injected via --message."""
+    from clawteam.spawn.tmux_backend import TmuxBackend
+
+    captured: dict = {}
+    _make_tmux_mocks(monkeypatch, captured)
+
+    backend = TmuxBackend()
+    backend.spawn(
+        command=["openclaw"],
+        agent_name="w1",
+        agent_id="agent-tui",
+        agent_type="general-purpose",
+        team_name="reltest",
+        prompt="do the thing",
+        openclaw_agent=None,
+    )
+
+    spawn_cmd = captured.get("spawn_cmd", [])
+    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    openclaw_segment = next(
+        (seg for seg in full_shell_cmd.split(";") if "openclaw" in seg and "lifecycle" not in seg),
+        "",
+    )
+    assert " tui " in openclaw_segment or openclaw_segment.rstrip().endswith(" tui"), (
+        f"Expected 'openclaw tui' form, got: {openclaw_segment!r}"
+    )
+    assert "--session clawteam-reltest-w1" in openclaw_segment, (
+        f"Expected per-agent --session key, got: {openclaw_segment!r}"
+    )
+    assert "--message" in openclaw_segment, (
+        f"Expected task injected via --message, got: {openclaw_segment!r}"
+    )
+    assert "agent --local" not in openclaw_segment, (
+        f"Single-turn `agent --local` form must not be used: {openclaw_segment!r}"
+    )
+
+
+def test_tmux_backend_respawn_command_is_idempotent(monkeypatch):
+    """respawn_agent re-runs the recorded final_command, which already carries
+    --session/--message. The openclaw flag expansion must not append duplicates."""
+    from clawteam.spawn.tmux_backend import TmuxBackend
+
+    captured: dict = {}
+    _make_tmux_mocks(monkeypatch, captured)
+
+    backend = TmuxBackend()
+    backend.spawn(
+        command=[
+            "openclaw", "tui",
+            "--session", "clawteam-reltest-w1",
+            "--message", "recorded prompt",
+        ],
+        agent_name="w1",
+        agent_id="agent-r",
+        agent_type="general-purpose",
+        team_name="reltest",
+        prompt=None,
+        openclaw_agent=None,
+    )
+
+    spawn_cmd = captured.get("spawn_cmd", [])
+    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    assert full_shell_cmd.count("--session") == 1, (
+        f"--session must not be duplicated on respawn, got: {full_shell_cmd!r}"
+    )
+    assert full_shell_cmd.count("--message") == 1, (
+        f"--message must not be duplicated on respawn, got: {full_shell_cmd!r}"
+    )
+
+
+def test_kill_stale_same_name_windows_skips_own_window(monkeypatch):
+    """Stale same-name windows are killed, but never the window the current
+    process (the dying agent's trap handler) runs in."""
+    from clawteam.spawn.tmux_backend import _kill_stale_same_name_windows
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = MagicMock()
+        result.returncode = 0
+        if cmd[:2] == ["tmux", "list-windows"]:
+            result.stdout = "@1 w3\n@2 w3\n@3 other\n"
+        elif cmd[:2] == ["tmux", "display-message"]:
+            result.stdout = "@1\n"
+        else:
+            result.stdout = ""
+        return result
+
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
+    monkeypatch.setenv("TMUX_PANE", "%0")
+
+    _kill_stale_same_name_windows("clawteam-reltest", "w3")
+
+    killed = [c[-1] for c in calls if c[:2] == ["tmux", "kill-window"]]
+    assert killed == ["@2"], f"Expected only stale @2 killed (own @1 kept, @3 other name), got: {killed}"
+
+
+def test_inject_runtime_message_prefers_registry_target(monkeypatch):
+    """inject must address the precise window id recorded at spawn time, not the
+    ambiguous session:window_name form."""
+    from clawteam.spawn.tmux_backend import TmuxBackend
+
+    probed: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.returncode = 0
+        if cmd[:2] == ["tmux", "list-panes"]:
+            probed.append(cmd[cmd.index("-t") + 1])
+            result.stdout = "%9\n"
+        else:
+            result.stdout = ""
+        return result
+
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.shutil.which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr("clawteam.spawn.tmux_backend.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "clawteam.spawn.registry.get_agent_info",
+        lambda team, agent: {"backend": "tmux", "tmux_target": "@7"},
+    )
+    monkeypatch.setattr(
+        "clawteam.spawn.tmux_backend._inject_prompt_via_buffer", lambda *a, **kw: None
+    )
+
+    backend = TmuxBackend()
+    envelope = MagicMock()
+    envelope.source, envelope.channel, envelope.priority = "system", "direct", "medium"
+    envelope.summary, envelope.evidence, envelope.recommended_next_action = "hi", [], None
+    envelope.message_type = "manual"
+    ok, status = backend.inject_runtime_message("reltest", "w3", envelope)
+
+    assert ok, f"inject should succeed, got: {status}"
+    assert probed == ["@7"], f"Expected probe against registry target @7, got: {probed}"
+
+
 def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, capsys):
     """tmux_backend.spawn() with openclaw_agent='researcher' should include --agent researcher in command."""
     from clawteam.spawn.tmux_backend import TmuxBackend
