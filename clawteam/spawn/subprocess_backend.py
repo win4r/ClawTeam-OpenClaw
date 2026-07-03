@@ -129,7 +129,7 @@ class SubprocessBackend(SpawnBackend):
         # Pass --model if specified (claude, openclaw)
         if model and is_claude_command(normalized_command):
             final_command.extend(["--model", model])
-        if model and is_openclaw_command(normalized_command):
+        if model and is_openclaw_command(normalized_command) and "--model" not in final_command:
             final_command.extend(["--model", model])
         # Hermes Agent: insert 'chat' only when the user's original command is
         # bare `hermes` (don't clobber user-supplied global options or subcommands).

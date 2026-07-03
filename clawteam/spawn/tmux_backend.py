@@ -225,31 +225,27 @@ class TmuxBackend(SpawnBackend):
         if model and is_claude_command(normalized_command):
             final_command.extend(["--model", model])
 
-        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
+        # OpenClaw TUI: pass --message for initial prompt and --session for isolation.
+        # normalize_spawn_command() already expands bare `openclaw` to `openclaw tui`.
+        # Every flag is guarded so this stays idempotent: respawn_agent re-runs the
+        # recorded final_command, which already carries these flags.
         if is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
-            if final_command[0].endswith("openclaw") and len(final_command) == 1:
-                final_command = [final_command[0], "tui", "--session", session_key]
-                if model:
+            if "tui" in final_command:
+                if "--session" not in final_command:
+                    final_command.extend(["--session", session_key])
+                if model and "--model" not in final_command:
                     final_command.extend(["--model", model])
-                if openclaw_agent:
+                if openclaw_agent and "--agent" not in final_command:
                     final_command.extend(["--agent", openclaw_agent])
-                if prompt:
-                    final_command.extend(["--message", prompt])
-            elif "tui" in final_command:
-                final_command.extend(["--session", session_key])
-                if model:
-                    final_command.extend(["--model", model])
-                if openclaw_agent:
-                    final_command.extend(["--agent", openclaw_agent])
-                if prompt:
+                if prompt and "--message" not in final_command:
                     final_command.extend(["--message", prompt])
             elif "agent" in final_command:
-                if model:
+                if model and "--model" not in final_command:
                     final_command.extend(["--model", model])
-                if openclaw_agent:
+                if openclaw_agent and "--agent" not in final_command:
                     final_command.extend(["--agent", openclaw_agent])
-                if prompt:
+                if prompt and "--message" not in final_command:
                     final_command.extend(["--message", prompt])
 
         # Hermes Agent: tag as tool-sourced so clawteam spawns don't pollute the
@@ -326,13 +322,19 @@ class TmuxBackend(SpawnBackend):
 
         if check.returncode != 0:
             launch = subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session_name, "-n", agent_name, full_cmd],
+                ["tmux", "new-session", "-d", "-s", session_name, "-n", agent_name,
+                 "-P", "-F", "#{window_id}", full_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
         else:
+            # Respawn safety: kill stale same-name windows first, otherwise
+            # name-based tmux addressing (session:window_name) becomes ambiguous
+            # and every downstream lookup (ready poll, inject, capture) fails.
+            _kill_stale_same_name_windows(session_name, agent_name)
             launch = subprocess.run(
-                ["tmux", "new-window", "-t", session_name, "-n", agent_name, full_cmd],
+                ["tmux", "new-window", "-t", session_name, "-n", agent_name,
+                 "-P", "-F", "#{window_id}", full_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -340,6 +342,13 @@ class TmuxBackend(SpawnBackend):
         if launch.returncode != 0:
             stderr = launch.stderr.decode() if isinstance(launch.stderr, bytes) else launch.stderr
             return f"Error: failed to launch tmux session: {(stderr or '').strip()}"
+
+        # Prefer the unique window id (@N) printed by -P -F over the
+        # session:window_name form: window names are not unique, ids are.
+        launch_stdout = launch.stdout.decode() if isinstance(launch.stdout, bytes) else (launch.stdout or "")
+        window_id = launch_stdout.strip().splitlines()[-1].strip() if launch_stdout.strip() else ""
+        if window_id.startswith("@"):
+            target = window_id
 
         # Keep leader pane alive even if the agent process exits, so it can be
         # re-activated or inspected later (upstream PR #154 new feature).
@@ -457,7 +466,15 @@ class TmuxBackend(SpawnBackend):
         if not shutil.which("tmux"):
             return False, "tmux not installed"
 
+        # Prefer the unique window id recorded at spawn time; the
+        # session:window_name form breaks when duplicate names exist
+        # (e.g. after a respawn).
+        from clawteam.spawn.registry import get_agent_info
+
         target = f"{self.session_name(team)}:{agent_name}"
+        info = get_agent_info(team, agent_name)
+        if info and info.get("backend") == "tmux" and info.get("tmux_target"):
+            target = info["tmux_target"]
         probe = subprocess.run(
             ["tmux", "list-panes", "-t", target, "-F", "#{pane_id}"],
             capture_output=True,
@@ -612,6 +629,43 @@ def _startup_prompt_action(command: list[str], pane_text: str) -> str | None:
     if _looks_like_workspace_trust_prompt(command, pane_text):
         return "enter"
     return None
+
+
+def _kill_stale_same_name_windows(session_name: str, window_name: str) -> None:
+    """Kill leftover windows with the same name so name-based addressing stays unique.
+
+    Skips the window this process itself runs in: respawn executes inside the
+    dying agent's ``trap EXIT`` handler, and killing our own window would abort
+    the respawn mid-flight.
+    """
+    listing = subprocess.run(
+        ["tmux", "list-windows", "-t", session_name, "-F", "#{window_id} #{window_name}"],
+        capture_output=True,
+        text=True,
+    )
+    if listing.returncode != 0:
+        return
+    own_window_id = ""
+    own_pane = os.environ.get("TMUX_PANE", "")
+    if own_pane:
+        own = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", own_pane, "#{window_id}"],
+            capture_output=True,
+            text=True,
+        )
+        if own.returncode == 0:
+            own_window_id = own.stdout.strip()
+    for line in listing.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        window_id, name = parts
+        if name == window_name and window_id != own_window_id:
+            subprocess.run(
+                ["tmux", "kill-window", "-t", window_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
 
 
 def _wait_for_tmux_pane(
