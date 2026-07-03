@@ -300,7 +300,11 @@ def normalize_spawn_command(command: list[str]) -> list[str]:
         if Path(remainder[0]).name.lower() == "nanobot" and len(remainder) == 1:
             return prefix + ["nanobot", "agent"]
     if executable == "openclaw" and len(command) == 1:
-        return [command[0], "agent", "--local"]
+        # OpenClaw >= 2026.6 made `openclaw agent` a single-turn command that
+        # requires an explicit session target, so a resident worker must run
+        # the interactive TUI instead. The tmux backend appends
+        # --session/--message/--model to bare `openclaw tui` commands.
+        return [command[0], "tui"]
 
     return list(command)
 
