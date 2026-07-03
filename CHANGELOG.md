@@ -5,7 +5,7 @@ All notable changes to ClawTeam-OpenClaw are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [PEP 440](https://peps.python.org/pep-0440/) with `+openclaw` local identifier.
 
-## [Unreleased]
+## [0.3.0+openclaw2] - 2026-07-04
 
 ### Added
 
